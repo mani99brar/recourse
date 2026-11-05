@@ -194,12 +194,12 @@ export class LiveChains implements Chains {
   }
 
   async caseParams(): Promise<CaseParams> {
-    const [caseDeadline, maxOpenCases, resendGap, maxSends] = await this.o.arbitrum.client.readContract({
-      address: this.o.arbitrum.case,
-      abi: caseAbi,
-      functionName: 'params',
-    });
-    return { caseDeadline: Number(caseDeadline), maxOpenCases, resendGap: Number(resendGap), maxSends };
+    const a = this.o.arbitrum;
+    const [[caseDeadline, maxOpenCases, resendGap, maxSends], claimTimeout] = await Promise.all([
+      a.client.readContract({ address: a.case, abi: caseAbi, functionName: 'params' }),
+      a.client.readContract({ address: a.case, abi: caseAbi, functionName: 'claimTimeout' }),
+    ]);
+    return { caseDeadline: Number(caseDeadline), maxOpenCases, resendGap: Number(resendGap), maxSends, claimTimeout: Number(claimTimeout) };
   }
 
   feePool(): Promise<bigint> {

@@ -7,11 +7,14 @@
 import {
   BridgeMode,
   CaseState,
-  ClaimStatus,
+  DecodeStatus,
   ExecutionState,
+  canExpireClaim,
   encodeClaimToCourt,
   externalIdUint,
   isSendPaused,
+  tryDecodeClaimToCourt,
+  ClaimStatus,
   type SendPauseWindow,
 } from '@recourse/shared';
 import type { Hex } from 'viem';
@@ -38,6 +41,11 @@ import type {
 } from './types.js';
 
 const ZERO32 = `0x${'0'.repeat(64)}` as Hex;
+
+/** Case states `markStale` moves to Stale once the case has expired. */
+const STALEABLE: readonly CaseState[] = [CaseState.Received, CaseState.Opened, CaseState.RefilePending];
+/** Phases in which the Arbitrum case may be in one of those states. */
+const CASE_PHASES: readonly Phase[] = ['Sent', 'Delivered', 'Opened', 'Watching', 'RefilePending'];
 
 export interface KeeperOptions {
   chains: Chains;
@@ -160,7 +168,7 @@ export class Keeper {
         this.log(`claim ${c.claimId}: ${msg(err)}`);
       }
     }
-    for (const c of this.book.claims.values()) if (isTerminal(c)) await this.guard('terminal', () => this.terminal(c));
+    for (const c of this.book.claims.values()) if (isTerminal(c)) await this.guard('terminal', () => this.terminal(c, now));
     const counts: Record<string, number> = {};
     for (const c of this.book.claims.values()) counts[phaseOf(c)] = (counts[phaseOf(c)] ?? 0) + 1;
     this.health.claimsByPhase = counts;
@@ -258,14 +266,15 @@ export class Keeper {
 
   /**
    * Makes a call at most once per retry interval. Reverts count as failed tries; when the row's
-   * limit is used up the claim is held and the row's alert goes out.
+   * limit is used up the claim is held and the row's alert goes out. A revert named in `benign`
+   * is a timing race (the chain moved first, or its clock trails ours): it is logged, not counted.
    */
   private async tryCall(
     c: KeeperClaim,
     row: Row,
     call: KeeperCall,
     now: number,
-    opts: { retryEveryS?: number; maxTries?: number; exhausted?: AlertKind; key?: string } = {},
+    opts: { retryEveryS?: number; maxTries?: number; exhausted?: AlertKind; key?: string; benign?: readonly string[] } = {},
   ): Promise<CallResult | undefined> {
     const key = opts.key ?? call.fn;
     const t = c.tries[key];
@@ -275,8 +284,11 @@ export class Keeper {
     if (!this.canSend(call.chain, call.fn, now)) return undefined;
     const r = await this.o.chains.send({ ...call, claimId: c.claimId });
     if (r.kind === 'busy') return r;
-    c.tries[key] = { count: (t?.count ?? 0) + (r.kind === 'reverted' ? 1 : 0), lastAt: now };
-    if (r.kind === 'reverted') {
+    const benign = r.kind === 'reverted' && r.error !== undefined && (opts.benign ?? []).includes(r.error);
+    c.tries[key] = { count: (t?.count ?? 0) + (r.kind === 'reverted' && !benign ? 1 : 0), lastAt: now };
+    if (benign) {
+      this.log(`claim ${c.claimId}: ${call.fn} reverted with ${r.error} (a timing race, not counted)`);
+    } else if (r.kind === 'reverted') {
       c.lastError = `${call.fn} reverted${r.error ? ` with ${r.error}` : ''}${r.message ? `: ${r.message}` : ''}`;
       this.log(`claim ${c.claimId}: ${c.lastError}`);
       const max = opts.maxTries ?? row.maxTries;
@@ -323,6 +335,7 @@ export class Keeper {
     const row = phase === 'Opened' && a && c.done.includes(`evidence-missed-${a.attempt}`) ? rowOf('Watching') : rowOf(phase);
     this.stalls(c, row, now);
     if (row.expirable && (await this.expiry(c, now))) return;
+    if (CASE_PHASES.includes(phase) && (await this.markStale(c, now))) return;
     switch (phase) {
       case 'PreChecked':
         return this.preChecked(c, row, now);
@@ -349,10 +362,18 @@ export class Keeper {
     }
   }
 
-  /** Expires a claim past its timeout. Returns true when the row's own call must not run. */
+  /**
+   * Expires a claim on Hedera once `expireClaim` would succeed: a Filed claim after filedAt +
+   * claimTimeout, a Contested or AtCourt one after preCheckedAt + claimTimeout (strictly after, in
+   * both cases); a PreChecked claim never. Returns true when the row's own call must not run.
+   */
   private async expiry(c: KeeperClaim, now: number): Promise<boolean> {
-    if (this.claimsParams === undefined || c.filedAt === undefined) return false;
-    if (now <= c.filedAt + this.claimsParams.claimTimeout) return false;
+    if (this.claimsParams === undefined) return false;
+    const timeout = this.claimsParams.claimTimeout;
+    // No claim expires before filedAt + claimTimeout, so skip the read until then.
+    if (c.filedAt !== undefined && now <= c.filedAt + timeout) return false;
+    const claim = await this.o.chains.getClaim(c.claimId);
+    if (!canExpireClaim(claim, BigInt(timeout), BigInt(now))) return false;
     // A ruling still on its way to Hedera would arrive after expiry and be ignored: wait for it.
     let changed = false;
     let inFlight: Hex | undefined;
@@ -374,18 +395,79 @@ export class Keeper {
       this.alertClaim(c, 'expiry_race', 'claim timeout passed with a final ruling not yet recorded on Hedera; recordRuling goes first');
       return false;
     }
-    const claim = await this.o.chains.getClaim(c.claimId);
-    const s = claim.status;
-    if (s !== ClaimStatus.Filed && s !== ClaimStatus.Contested && s !== ClaimStatus.AtCourt) return false;
     // Expiry is the escrow's way out, so a hold from some other call's failures does not stop it;
     // an operator hold, or a failed expiry, does.
     if (operatorHolds(this.control, c.claimId) || c.autoHold?.reason.startsWith('expireClaim')) return true;
+    // NotExpired here means the chain's latest block trails our clock by a second or two.
     const r = await this.tryCall(c, rowOf(phaseOf(c)), { chain: 'hedera', contract: 'claims', fn: 'expireClaim', args: [c.claimId] }, now, {
       retryEveryS: 120,
+      benign: ['NotExpired'],
     });
-    if (r?.kind === 'reverted') {
+    if (r?.kind === 'reverted' && r.error !== 'NotExpired') {
       this.hold(c, `expireClaim reverted (${r.error ?? 'reverted'})`);
       this.alertClaim(c, 'expire_failed', `expireClaim reverted with ${r.error ?? 'no reason'}; claim held, escrow untouched. Read the claim status before keeper-ctl release`);
+    }
+    return true;
+  }
+
+  /**
+   * The case's expiresAt on Arbitrum: the payload's filedAt plus the case contract's own claim
+   * timeout (or the value the contract reported in a NotExpired revert). From that second on the
+   * case cannot open or refile and `markStale` succeeds.
+   */
+  private caseExpiresAt(c: KeeperClaim): number | undefined {
+    if (c.caseExpiresAt !== undefined) return c.caseExpiresAt;
+    if (this.caseParams === undefined) return undefined;
+    let filedAt = c.filedAt;
+    if (c.received) {
+      const d = tryDecodeClaimToCourt(c.received.payload);
+      if (d.status === DecodeStatus.Ok) filedAt = Number(d.value.filedAt);
+    }
+    return filedAt === undefined ? undefined : filedAt + this.caseParams.claimTimeout;
+  }
+
+  /** Earlier of a case deadline (exclusive) and the case's expiresAt (also exclusive). */
+  private openBy(c: KeeperClaim, deadline: number): number {
+    const exp = this.caseExpiresAt(c);
+    return exp !== undefined && exp < deadline ? exp : deadline;
+  }
+
+  /**
+   * Frees an expired case on Arbitrum: once expiresAt has passed, `markStale` moves a Received,
+   * Opened or RefilePending case to Stale and releases its open-case slot. NotExpired and
+   * WrongState are races, never failures: WrongState ends the attempts for good, NotExpired waits
+   * for the expiresAt it names. Returns true when the phase's own call must not run this tick.
+   */
+  private async markStale(c: KeeperClaim, now: number): Promise<boolean> {
+    if (!c.received || c.staleAt !== undefined || c.done.includes('case-settled')) return false;
+    const exp = this.caseExpiresAt(c);
+    if (exp === undefined || now < exp) return false;
+    const cv = await this.o.chains.caseOf(c.claimId);
+    if (cv.state === CaseState.Stale) return true; // ClaimStale is on its way
+    if (cv.state === CaseState.Ruled || cv.state === CaseState.Relayed) {
+      this.once(c, 'case-settled'); // ruled before it expired: the ruling goes on as usual
+      return false;
+    }
+    if (!STALEABLE.includes(cv.state)) return false;
+    if (operatorHolds(this.control, c.claimId)) return true;
+    const r = await this.tryCall(c, rowOf(phaseOf(c)), { chain: 'arbitrum', contract: 'case', fn: 'markStale', args: [c.claimId] }, now, {
+      retryEveryS: 300,
+      benign: ['NotExpired', 'WrongState'],
+    });
+    if (r?.kind === 'reverted') {
+      if (r.error === 'WrongState') {
+        this.once(c, 'case-settled');
+      } else if (r.error === 'NotExpired') {
+        const at = Number(r.args?.[0] ?? 0);
+        if (at > 0) {
+          c.caseExpiresAt = at;
+          this.book.save(c);
+        }
+      } else {
+        this.alertClaim(c, 'call_failed', `markStale reverted with ${r.error ?? 'no reason'}; the case keeps its open-case slot until it goes through`);
+      }
+    } else if (r?.kind === 'ok' || r?.kind === 'pending') {
+      this.log(`claim ${c.claimId}: case expired at ${exp}; markStale sent to free its slot`);
     }
     return true;
   }
@@ -525,7 +607,7 @@ export class Keeper {
     if (!c.received || this.caseParams === undefined || this.held(c)) return;
     const cv = await this.o.chains.caseOf(c.claimId);
     if (cv.state !== CaseState.Received) return;
-    const deadline = Number(cv.receivedAt) + this.caseParams.caseDeadline;
+    const deadline = this.openBy(c, Number(cv.receivedAt) + this.caseParams.caseDeadline);
     if (now >= deadline) return; // opening now would only mark it stale
     const ev = await this.ensureEvidence(c, 1, now);
     if (ev === 'blocked') return;
@@ -641,8 +723,8 @@ export class Keeper {
     if (now < c.refileNeededAt + this.timing.refileHoldS || this.held(c)) return;
     const cv = await this.o.chains.caseOf(c.claimId);
     if (cv.state !== CaseState.RefilePending) return;
-    const deadline = Number(cv.ruledAt) + this.caseParams.caseDeadline;
-    if (now >= deadline) return;
+    const deadline = this.openBy(c, Number(cv.ruledAt) + this.caseParams.caseDeadline);
+    if (now >= deadline) return; // refiling now would only mark it stale
     const ev = await this.ensureEvidence(c, 2, now);
     if (ev === 'blocked') return;
     if (ev === 'retry' && now < deadline - this.timing.openWithoutEvidenceS) return;
@@ -722,7 +804,10 @@ export class Keeper {
     await this.tryCall(c, row, { chain: 'hedera', contract: 'claims', fn: 'settle', args: [c.claimId] }, now);
   }
 
-  private async terminal(c: KeeperClaim): Promise<void> {
+  private async terminal(c: KeeperClaim, now: number): Promise<void> {
+    // Hedera's court-stage expiry comes after the case's expiresAt, so an expired claim may still
+    // hold an open-case slot on Arbitrum (say the keeper was down across both): free it.
+    if (c.terminal === 'Expired') await this.markStale(c, now);
     if (c.terminal === 'Settled' && c.shop && !c.done.includes('withdraw-due')) {
       const credit = await this.o.chains.creditOf(c.shop);
       if (credit > 0n) {

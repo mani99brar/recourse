@@ -79,6 +79,32 @@ export const claimsAbi = parseAbi([
 export const vaultAbi = parseAbi([
   'function creditOf(address account) view returns (uint256)',
   'event OutcomeApplied(bytes32 indexed claimId, address indexed platform, address indexed shop, uint256 paid, uint256 refund, uint256 toPool)',
+  // errors: closeUncontested, settle and expireClaim call into the vault, so its reverts can
+  // surface on those calls. ExitDue only comes from escrowFee/fileClaim, which the keeper never sends.
+  'error AlreadyBound()',
+  'error AmountZero()',
+  'error AssociationFailed(int256 responseCode)',
+  'error BelowMinDeposit(uint256 amount, uint256 minDeposit)',
+  'error ClaimsNotBound()',
+  'error ConfigIsLocked()',
+  'error EscrowExists(bytes32 claimId)',
+  'error ExitDue()',
+  'error ExitNotRequested()',
+  'error ExitPending()',
+  'error ExitTooSoon(uint256 availableAt)',
+  'error NoCredit()',
+  'error NoDeposit()',
+  'error NotAssociated(address account)',
+  'error NotAssociatedYet()',
+  'error OnlyClaims()',
+  'error OpenClaims(uint256 count)',
+  'error OwnableInvalidOwner(address owner)',
+  'error OwnableUnauthorizedAccount(address account)',
+  'error ReentrancyGuardReentrantCall()',
+  'error RefundAboveEscrow(uint256 refund, uint256 escrow)',
+  'error TransferFailed()',
+  'error UnknownEscrow(bytes32 claimId)',
+  'error ZeroAddress()',
 ]);
 
 export const caseAbi = parseAbi([
@@ -111,6 +137,7 @@ export const caseAbi = parseAbi([
   'error InvalidRouter(address router)',
   'error MaxSendsReached()',
   'error NotArbitrator()',
+  'error NotExpired(uint64 expiresAt)',
   'error NotTrustedRelay()',
   'error OwnableInvalidOwner(address owner)',
   'error OwnableUnauthorizedAccount(address account)',
@@ -132,8 +159,11 @@ export const caseAbi = parseAbi([
   'function refile(bytes payload) returns (uint256 disputeId)',
   'function relayRuling(bytes32 claimId) payable returns (bytes32 messageId)',
   'function relayClaim(bytes payload)',
+  'function markStale(bytes32 claimId)',
   // views
   'function caseOf(bytes32 claimId) view returns (CaseView)',
+  'function expiresAt(bytes32 claimId) view returns (uint64)',
+  'function claimTimeout() view returns (uint64)',
   'function claimOfDispute(uint256 disputeId) view returns (bytes32 claimId, uint8 attempt)',
   'function openCases() view returns (uint16)',
   'function feePool() view returns (uint256)',
@@ -161,5 +191,6 @@ export const erc20Abi = parseAbi(['function balanceOf(address) view returns (uin
 /** Every custom error the keeper may need to decode from a revert. */
 export const knownErrorsAbi = [
   ...claimsAbi.filter((x) => x.type === 'error'),
+  ...vaultAbi.filter((x) => x.type === 'error'),
   ...caseAbi.filter((x) => x.type === 'error'),
 ] as const;

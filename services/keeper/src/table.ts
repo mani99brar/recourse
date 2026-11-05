@@ -1,6 +1,9 @@
 // The claim lifecycle as data: for each keeper phase, what puts a claim there, which call the
 // keeper makes, how long that normally takes, when it alerts, and what it does when time runs
 // out. The machine reads these rows; the handlers only add the chain reads each call needs.
+// Across Sent to RefilePending (and after a Hedera expiry) the keeper also calls the case's
+// markStale once its expiresAt (filedAt + the case's claimTimeout) has passed, so an expired case
+// never keeps an open-case slot.
 
 import type { AlertKind } from './alerts.js';
 import type { Chain, Phase } from './types.js';
@@ -27,7 +30,11 @@ export interface Row {
   maxTries?: number;
   /** Alert raised when `maxTries` is used up (defaults to the first stall kind). */
   exhaustedAlert?: AlertKind;
-  /** The Hedera claim can be expired from this phase once `filedAt + claimTimeout` has passed. */
+  /**
+   * The Hedera claim can be expired from this phase: a Filed claim strictly after filedAt +
+   * claimTimeout, a Contested or AtCourt claim strictly after preCheckedAt + claimTimeout. A
+   * PreChecked claim never expires (it closes uncontested).
+   */
   expirable: boolean;
   /** What happens when the phase's own time runs out. */
   onTimeout: string;
@@ -41,7 +48,7 @@ export const TABLE: readonly Row[] = [
     expectedS: 300,
     stalls: [{ kind: 'precheck_late', afterS: 600 }],
     expirable: true,
-    onTimeout: 'expireClaim after filedAt + claimTimeout',
+    onTimeout: 'expireClaim once now > filedAt + claimTimeout',
   },
   {
     phase: 'PreChecked',
@@ -64,7 +71,7 @@ export const TABLE: readonly Row[] = [
     retryEveryS: 60,
     maxTries: 5,
     expirable: true,
-    onTimeout: 'hold after 5 failed tries; expireClaim after the claim timeout',
+    onTimeout: 'hold after 5 failed tries; expireClaim once now > preCheckedAt + claimTimeout',
   },
   {
     phase: 'Sent',
@@ -85,7 +92,7 @@ export const TABLE: readonly Row[] = [
     stalls: [{ kind: 'open_late', afterS: 300 }],
     retryEveryS: 120,
     expirable: true,
-    onTimeout: 'retry every 2 min until caseDeadline; alert on a short fee pool or the case cap',
+    onTimeout: 'retry every 2 min until caseDeadline or expiresAt; alert on a short fee pool or the case cap',
   },
   {
     phase: 'Opened',
@@ -161,12 +168,12 @@ export const TABLE: readonly Row[] = [
   },
   {
     phase: 'Stale',
-    enteredOn: 'ClaimStale (Arbitrum)',
+    enteredOn: 'ClaimStale (Arbitrum): openCase or refile past its deadline or expiresAt, or markStale',
     call: null,
     expectedS: null,
     stalls: [{ kind: 'claim_stale', afterS: 0 }],
     expirable: true,
-    onTimeout: 'expireClaim on Hedera once allowed',
+    onTimeout: 'expireClaim on Hedera once now > preCheckedAt + claimTimeout',
   },
   { phase: 'Settled', enteredOn: 'Settled (Hedera)', call: null, expectedS: null, stalls: [], expirable: false, onTimeout: 'terminal' },
   { phase: 'Closed', enteredOn: 'ClosedUncontested (Hedera)', call: null, expectedS: null, stalls: [], expirable: false, onTimeout: 'terminal' },

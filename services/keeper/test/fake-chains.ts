@@ -9,6 +9,8 @@ import {
   ClaimStatus,
   DecodeStatus,
   ExecutionState,
+  canExpireClaim,
+  claimExpiresAfter,
   encodeClaimToCourt,
   tryDecodeClaimToCourt,
   type CaseView,
@@ -51,8 +53,8 @@ export class FakeChains implements Chains {
 
   /** Chain time, unix seconds (both chains share it here). */
   t = 1_800_000_000;
-  claimsParamsV: ClaimsParams = { contestWindow: 600, claimTimeout: 4 * 3600, resendGap: 3600, maxSends: 3 };
-  caseParamsV: CaseParams = { caseDeadline: 3600, maxOpenCases: 10, resendGap: 3600, maxSends: 3 };
+  claimsParamsV: ClaimsParams = { contestWindow: 600, claimTimeout: 64_800, resendGap: 3600, maxSends: 3 };
+  caseParamsV: CaseParams = { caseDeadline: 3600, maxOpenCases: 10, resendGap: 3600, maxSends: 3, claimTimeout: 64_800 };
   mode: BridgeMode = BridgeMode.Both;
   readonly claims = new Map<string, Claim>();
   readonly cases = new Map<string, CaseView>();
@@ -125,8 +127,9 @@ export class FakeChains implements Chains {
   async costNow(): Promise<bigint> {
     return this.costV;
   }
+  /** Cases holding an open-case slot: Opened and RefilePending, as on the real contract. */
   async openCases(): Promise<number> {
-    return [...this.cases.values()].filter((c) => c.state === CaseState.Opened).length;
+    return [...this.cases.values()].filter((c) => c.state === CaseState.Opened || c.state === CaseState.RefilePending).length;
   }
   async execState(destination: Chain, messageId: Hex): Promise<ExecutionState> {
     return this.exec.get(`${destination}:${messageId.toLowerCase()}`) ?? ExecutionState.Untouched;
@@ -206,9 +209,11 @@ export class FakeChains implements Chains {
         return;
       }
       case 'expireClaim': {
+        // Filed counts from filedAt, Contested and AtCourt from preCheckedAt; strictly after.
         if (!c) return revert('WrongStatus', 0);
-        if (BigInt(this.t) <= c.filedAt + BigInt(p.claimTimeout)) return revert('NotExpired');
-        if (c.status !== ClaimStatus.Filed && c.status !== ClaimStatus.Contested && c.status !== ClaimStatus.AtCourt) return revert('WrongStatus', c.status);
+        const after = claimExpiresAfter(c, BigInt(p.claimTimeout));
+        if (after === null) return revert('WrongStatus', c.status);
+        if (!canExpireClaim(c, BigInt(p.claimTimeout), BigInt(this.t))) return revert('NotExpired', after);
         c.status = ClaimStatus.Expired;
         this.emitH('ClaimExpired', { claimId: id });
         return;
@@ -235,6 +240,12 @@ export class FakeChains implements Chains {
         const cv = this.cases.get(cid);
         const want = call.fn === 'openCase' ? CaseState.Received : CaseState.RefilePending;
         if (!cv || cv.state !== want) return revert('WrongState', cid, cv?.state ?? 0);
+        // At or after the case deadline or expiresAt: Stale, nothing spent, the call succeeds.
+        const from = call.fn === 'openCase' ? cv.receivedAt : cv.ruledAt;
+        if (BigInt(this.t) >= from + BigInt(this.caseParamsV.caseDeadline) || BigInt(this.t) >= (cv.expiresAt ?? 0n)) {
+          this.stale(cid as Hex);
+          return;
+        }
         if (this.feePoolV < this.costV) return revert('FeePoolLow', this.feePoolV, this.costV);
         const attempt = call.fn === 'openCase' ? 1 : 2;
         const disputeId = this.nextDispute++;
@@ -266,13 +277,21 @@ export class FakeChains implements Chains {
         this.emitA('case', 'RulingRelayed', { claimId: id, disputeId: cv.disputeIds[cv.attempts - 1], ruling: cv.ruling, messageId });
         return;
       }
+      case 'markStale': {
+        const cv = this.cases.get(id);
+        const staleable: readonly CaseState[] = [CaseState.Received, CaseState.Opened, CaseState.RefilePending];
+        if (!cv || !staleable.includes(cv.state)) return revert('WrongState', id, cv?.state ?? 0);
+        if (BigInt(this.t) < (cv.expiresAt ?? 0n)) return revert('NotExpired', cv.expiresAt);
+        this.stale(id as Hex);
+        return;
+      }
       case 'relayClaim': {
         if (this.mode !== BridgeMode.None) return revert('RelayDisabled');
         const d = tryDecodeClaimToCourt(call.args[0] as Hex);
         if (d.status !== DecodeStatus.Ok) return revert('BadPayload');
         const cid = d.value.claimId.toLowerCase();
         if (this.cases.has(cid)) return revert('WrongState', cid, this.cases.get(cid)!.state);
-        this.cases.set(cid, { ...emptyCase(), state: CaseState.Received, receivedAt: BigInt(this.t) });
+        this.cases.set(cid, { ...emptyCase(), state: CaseState.Received, receivedAt: BigInt(this.t), expiresAt: this.expiresAtOf(d.value.filedAt) });
         this.emitA('case', 'ClaimReceived', { claimId: cid, messageId: ZERO32, payload: call.args[0] });
         return;
       }
@@ -352,9 +371,14 @@ export class FakeChains implements Chains {
     const messageId = (opts.messageId ?? this.claims.get(id)!.lastMessageId).toLowerCase() as Hex;
     this.exec.set(`arbitrum:${messageId}`, ExecutionState.Success);
     if (opts.record === false) return messageId;
-    this.cases.set(id, { ...emptyCase(), state: CaseState.Received, receivedAt: BigInt(this.t) });
+    this.cases.set(id, { ...emptyCase(), state: CaseState.Received, receivedAt: BigInt(this.t), expiresAt: this.expiresAtOf(this.claims.get(id)!.filedAt) });
     this.emitA('case', 'ClaimReceived', { claimId: id, messageId, payload: this.payloadOf(id) });
     return messageId;
+  }
+
+  /** The case contract's expiresAt: filedAt from the payload plus its own claim timeout. */
+  expiresAtOf(filedAt: bigint): bigint {
+    return filedAt + BigInt(this.caseParamsV.claimTimeout);
   }
 
   disputeOf(id: Hex): bigint {
@@ -370,6 +394,10 @@ export class FakeChains implements Chains {
   rule(id: Hex, ruling: number): void {
     const cv = this.cases.get(id)!;
     const disputeId = this.disputeOf(id);
+    if (cv.state !== CaseState.Opened) {
+      this.emitA('case', 'RuleIgnored', { disputeId, ruling: BigInt(ruling) });
+      return;
+    }
     this.rulings.set(disputeId.toString(), { ruling: BigInt(ruling), tied: false, overridden: false });
     cv.ruledAt = BigInt(this.t);
     if (ruling === 0 && cv.attempts === 1) {

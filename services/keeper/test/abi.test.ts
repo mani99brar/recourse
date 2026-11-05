@@ -53,7 +53,7 @@ describe('ABI fragments match the generated ABIs', () => {
 
   it('every contract error decodes', () => {
     const known = new Set((knownErrorsAbi as readonly Item[]).map(shape));
-    const errors = ['RecourseClaims.json', 'RecourseCase.json'].flatMap((f) => load(f).filter((x) => x.type === 'error').map(shape));
+    const errors = ['RecourseClaims.json', 'DepositVault.json', 'RecourseCase.json'].flatMap((f) => load(f).filter((x) => x.type === 'error').map(shape));
     expect(errors.filter((e) => !known.has(e))).toEqual([]);
   });
 

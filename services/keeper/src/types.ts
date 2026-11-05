@@ -38,6 +38,11 @@ export interface CaseParams {
   maxOpenCases: number;
   resendGap: number;
   maxSends: number;
+  /**
+   * The case contract's own claim timeout (`claimTimeout()`, fixed at deploy): a case expires at
+   * the payload's filedAt + this, and from then on anyone may `markStale` it.
+   */
+  claimTimeout: number;
 }
 
 export interface DisputeInfo {
@@ -210,6 +215,8 @@ export interface KeeperClaim {
   rulingReceivedAt?: number;
   rulingIgnored?: { reason: number; at: number; messageId?: Hex }[];
   staleAt?: number;
+  /** The case's expiresAt as the case contract reported it in a NotExpired revert; wins over the local sum. */
+  caseExpiresAt?: number;
   terminal?: 'Settled' | 'Closed' | 'Expired';
   terminalAt?: number;
   /** Per call: tries so far and the time of the last one (s). */

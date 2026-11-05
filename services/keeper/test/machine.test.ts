@@ -11,6 +11,7 @@ import { Alerter } from '../src/alerts.js';
 import { phaseOf } from '../src/claims.js';
 import { emptyControl, writeControl, type Control } from '../src/control.js';
 import type { EvidencePort } from '../src/evidence.js';
+import type { CallResult } from '../src/types.js';
 import { openJournal, type Journal } from '../src/journal.js';
 import { Keeper, type KeeperOptions } from '../src/machine.js';
 import { FakeChains, SHOP } from './fake-chains.js';
@@ -477,6 +478,205 @@ describe('expiry', () => {
     await run(r, 2 * 3600, 300);
     expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Expired);
   });
+
+  /** Ticks once at chain time `t` and returns how many expireClaim calls the claim has had. */
+  async function expiresAt(r: Rig, id: Hex, t: number): Promise<number> {
+    r.fake.t = t;
+    await r.k.tick();
+    return fns(r, id).filter((f) => f === 'expireClaim').length;
+  }
+
+  it('a contested claim counts from preCheckedAt: not at filedAt + T + 1, not at preCheckedAt + T, at the second after', async () => {
+    const r = rig();
+    r.fake.overrides.set('sendToCourt', () => ({ kind: 'reverted', error: 'LinkShort' }));
+    const id = r.fake.file(1);
+    await run(r, 30);
+    await run(r, 1200, 300); // a late pre-check
+    r.fake.precheck(id);
+    r.fake.contest(id);
+    await run(r, 30);
+    const c = r.fake.claims.get(id)!;
+    expect(c.status).toBe(ClaimStatus.Contested);
+    const T = r.fake.claimsParamsV.claimTimeout;
+    expect(await expiresAt(r, id, Number(c.filedAt) + T + 1)).toBe(0);
+    expect(await expiresAt(r, id, Number(c.preCheckedAt) + T)).toBe(0);
+    expect(await expiresAt(r, id, Number(c.preCheckedAt) + T + 1)).toBe(1);
+    await r.k.tick();
+    expect(phase(r, id)).toBe('Expired');
+  });
+
+  it('an at-court claim counts from preCheckedAt too', async () => {
+    const r = rig();
+    const id = r.fake.file(1);
+    await run(r, 900, 300);
+    r.fake.precheck(id);
+    r.fake.contest(id);
+    await run(r, 30);
+    const c = r.fake.claims.get(id)!;
+    expect(c.status).toBe(ClaimStatus.AtCourt);
+    const T = r.fake.claimsParamsV.claimTimeout;
+    expect(await expiresAt(r, id, Number(c.filedAt) + T + 1)).toBe(0);
+    expect(await expiresAt(r, id, Number(c.preCheckedAt) + T)).toBe(0);
+    expect(await expiresAt(r, id, Number(c.preCheckedAt) + T + 1)).toBe(1);
+  });
+
+  it('a pre-checked claim never expires; it waits for closeUncontested', async () => {
+    const r = rig();
+    r.fake.overrides.set('closeUncontested', () => ({ kind: 'reverted', error: 'TransferFailed' }));
+    const id = r.fake.file(1);
+    await run(r, 30);
+    r.fake.precheck(id);
+    const c = r.fake.claims.get(id)!;
+    const T = r.fake.claimsParamsV.claimTimeout;
+    expect(await expiresAt(r, id, Number(c.filedAt) + T + 1)).toBe(0);
+    expect(await expiresAt(r, id, Number(c.preCheckedAt) + T + 1)).toBe(0);
+    expect(await expiresAt(r, id, Number(c.preCheckedAt) + 3 * T)).toBe(0);
+    expect(fns(r, id)).toContain('closeUncontested');
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.PreChecked);
+  });
+
+  it('NotExpired from expireClaim is a clock race: no hold, tried again', async () => {
+    const r = rig();
+    const id = r.fake.file(1);
+    await r.k.tick();
+    let first = true;
+    r.fake.overrides.set('expireClaim', (): CallResult | undefined => {
+      if (!first) return undefined;
+      first = false;
+      return { kind: 'reverted', error: 'NotExpired' };
+    });
+    const T = r.fake.claimsParamsV.claimTimeout;
+    expect(await expiresAt(r, id, Number(r.fake.claims.get(id)!.filedAt) + T + 1)).toBe(1);
+    expect(r.k.book.claims.get(id)!.autoHold).toBeUndefined();
+    expect(kinds(r)).not.toContain('expire_failed');
+    await run(r, 150, 30);
+    expect(fns(r, id).filter((f) => f === 'expireClaim')).toHaveLength(2);
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Expired);
+  });
+});
+
+describe('stale cases on Arbitrum', () => {
+  /** A Watching claim whose case expires (filedAt + the case's timeout) long before the Hedera claim can. */
+  async function watchingWithCaseTimeout(caseTimeout: number): Promise<{ r: Rig; id: Hex; exp: number }> {
+    const fake = new FakeChains();
+    fake.caseParamsV.claimTimeout = caseTimeout;
+    const r = rig({ fake });
+    const id = await toWatching(r);
+    return { r, id, exp: Number(r.fake.cases.get(id)!.expiresAt) };
+  }
+
+  it('marks an expired case stale at expiresAt, not a second before, and frees its slot', async () => {
+    const { r, id, exp } = await watchingWithCaseTimeout(7200);
+    expect(exp).toBe(Number(r.fake.claims.get(id)!.filedAt) + 7200);
+    expect(await r.fake.openCases()).toBe(1);
+    r.fake.t = exp - 1;
+    await r.k.tick();
+    expect(fns(r, id)).not.toContain('markStale');
+    r.fake.t = exp;
+    await r.k.tick();
+    expect(fns(r, id).filter((f) => f === 'markStale')).toHaveLength(1);
+    await run(r, 30);
+    expect(phase(r, id)).toBe('Stale');
+    expect(await r.fake.openCases()).toBe(0);
+    expect(fns(r, id).filter((f) => f === 'markStale')).toHaveLength(1);
+    expect(r.k.book.claims.get(id)!.autoHold).toBeUndefined();
+  });
+
+  it('frees the slot of a refused case waiting on its refile', async () => {
+    const { r, id, exp } = await watchingWithCaseTimeout(7200);
+    // Attempt 1 is refused; an operator hold keeps the refile back past the case deadline.
+    r.fake.rule(id, 0);
+    await run(r, 30);
+    expect(phase(r, id)).toBe('RefilePending');
+    control(r, { holds: { [id]: Date.now() } });
+    await run(r, 600, 60);
+    expect(fns(r, id)).not.toContain('refile');
+    control(r, {});
+    r.fake.t = exp;
+    await r.k.tick();
+    expect(fns(r, id)).toContain('markStale');
+    expect(fns(r, id)).not.toContain('refile');
+    await run(r, 30);
+    expect(phase(r, id)).toBe('Stale');
+    expect(await r.fake.openCases()).toBe(0);
+  });
+
+  it('WrongState from markStale is a race: not counted, never sent again', async () => {
+    const { r, id, exp } = await watchingWithCaseTimeout(7200);
+    r.fake.overrides.set('markStale', () => ({ kind: 'reverted', error: 'WrongState' }));
+    r.fake.t = exp;
+    await run(r, 1800, 60);
+    expect(fns(r, id).filter((f) => f === 'markStale')).toHaveLength(1);
+    const c = r.k.book.claims.get(id)!;
+    expect(c.autoHold).toBeUndefined();
+    expect(c.tries.markStale!.count).toBe(0);
+    expect(kinds(r)).not.toContain('call_failed');
+  });
+
+  it('NotExpired from markStale waits for the expiresAt the contract names, then goes through', async () => {
+    const { r, id, exp } = await watchingWithCaseTimeout(7200);
+    const later = exp + 1800;
+    r.fake.overrides.set('markStale', () => ({ kind: 'reverted', error: 'NotExpired', args: [BigInt(later)] }));
+    r.fake.t = exp;
+    await r.k.tick();
+    r.fake.overrides.delete('markStale');
+    r.fake.cases.get(id)!.expiresAt = BigInt(later);
+    await run(r, 1800 - 60, 60);
+    expect(fns(r, id).filter((f) => f === 'markStale')).toHaveLength(1);
+    const c = r.k.book.claims.get(id)!;
+    expect(c.caseExpiresAt).toBe(later);
+    expect(c.tries.markStale!.count).toBe(0);
+    expect(c.autoHold).toBeUndefined();
+    await run(r, 120, 60);
+    expect(fns(r, id).filter((f) => f === 'markStale')).toHaveLength(2);
+    await run(r, 30);
+    expect(phase(r, id)).toBe('Stale');
+  });
+
+  it('an openCase that lands at expiresAt goes Stale, spends nothing and is not a failure', async () => {
+    const fake = new FakeChains();
+    fake.caseParamsV.claimTimeout = 3000;
+    // The keeper's clock trails the chain by a second: it still sees an open window.
+    const r = rig({ fake, keeper: { now: () => fake.t - 1 } });
+    const id = await toCourt(r);
+    r.fake.feePoolV = 1n; // openCase waits on the fee pool
+    r.fake.deliver(id);
+    const exp = Number(r.fake.cases.get(id)!.expiresAt);
+    await run(r, exp - r.fake.t - 30, 60);
+    expect(fns(r, id)).not.toContain('openCase');
+    r.fake.feePoolV = 10n ** 17n;
+    r.fake.t = exp;
+    await r.k.tick();
+    expect(fns(r, id).filter((f) => f === 'openCase')).toHaveLength(1);
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Stale);
+    expect(r.fake.feePoolV).toBe(10n ** 17n);
+    await run(r, 30);
+    const c = r.k.book.claims.get(id)!;
+    expect(phase(r, id)).toBe('Stale');
+    expect(c.tries.openCase!.count).toBe(0);
+    expect(c.autoHold).toBeUndefined();
+    expect(kinds(r)).not.toContain('call_failed');
+    expect(fns(r, id)).not.toContain('markStale');
+    // Hedera then expires the claim from its own clock.
+    r.fake.t = Number(r.fake.claims.get(id)!.preCheckedAt) + r.fake.claimsParamsV.claimTimeout + 2;
+    await run(r, 60);
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Expired);
+  });
+
+  it('after a downtime past both deadlines: expires on Hedera first, then frees the case from the expired claim', async () => {
+    const r = rig();
+    const id = await toWatching(r);
+    expect(await r.fake.openCases()).toBe(1);
+    r.fake.t = Number(r.fake.claims.get(id)!.preCheckedAt) + r.fake.claimsParamsV.claimTimeout + 10;
+    await run(r, 90, 30);
+    const order = fns(r, id).filter((f) => f === 'expireClaim' || f === 'markStale');
+    expect(order).toEqual(['expireClaim', 'markStale']);
+    expect(phase(r, id)).toBe('Expired');
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Stale);
+    expect(await r.fake.openCases()).toBe(0);
+    await run(r, 600, 60);
+    expect(fns(r, id).filter((f) => f === 'markStale')).toHaveLength(1);
+  });
 });
 
 describe('one-leg modes', () => {
@@ -520,7 +720,7 @@ describe('one-leg modes', () => {
     fake.claimsParamsV.claimTimeout = 3600;
     const r = rig({ fake });
     const id = await toWatching(r);
-    r.fake.t = Number(r.fake.claims.get(id)!.filedAt) + 3601;
+    r.fake.t = Number(r.fake.claims.get(id)!.preCheckedAt) + 3601;
     r.fake.rule(id, 1);
     await run(r, 60);
     expect(fns(r, id)).toContain('recordRuling');
