@@ -94,6 +94,6 @@ export function loadConfig(env: Env = process.env): Config {
     docketUrl: v.DOCKET_URL.replace(/\/+$/, ''),
     precheckUrl: v.PRECHECK_URL.replace(/\/+$/, ''),
     webOrigin: v.WEB_ORIGIN === '' ? null : v.WEB_ORIGIN,
-    courtUrlTemplate: env.COURT_URL_TEMPLATE ?? 'https://v2.kleros.builders/#/cases/{id}/overview',
+    courtUrlTemplate: env.COURT_URL_TEMPLATE ?? 'https://v2-testnet.kleros.builders/#/cases/{id}/overview',
   };
 }
