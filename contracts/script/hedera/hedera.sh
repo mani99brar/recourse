@@ -240,7 +240,8 @@ case "$cmd" in
       mv "$tmp.2" "$tmp"
     fi
     mv "$tmp" "$OUT"
-    log "wrote $OUT" ;;
+    log "wrote $OUT"
+    [ "$REHEARSAL" = 1 ] || log "commit it together with contracts/broadcast/*/$CHAIN_ID/ (deploy evidence)" ;;
 
   wire)
     require_chain; keystore deployer
