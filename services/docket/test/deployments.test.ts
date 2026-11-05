@@ -21,7 +21,6 @@ describe('deployment files', () => {
     const d = dir({ 'hedera.json': body, 'x.local.json': { ...body, chainId: 31337 } });
     expect(readHederaDeployment(d)).toMatchObject({ local: false, claims: A, vault: B, startTimestamp: '1793901919.123456789', startBlock: 12n });
     expect(readHederaDeployment(d, 'x.local.json')).toMatchObject({ local: true, chainId: 31337 });
-    expect(() => readHederaDeployment(d, '../hedera.json')).not.toThrow(); // path stripped to a bare name, then refused
   });
 
   it('refuses a local file that is not a bare *.local.json name', () => {
