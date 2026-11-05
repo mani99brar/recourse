@@ -1,17 +1,19 @@
 // TEST ONLY helpers: an in-process shop on a free port, wired to fake facilitators.
 
 import type { Server } from 'node:http';
+import { getAddress } from 'viem';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Journal, memoryLogger } from '@recourse/records';
-import { createShopApp, type ShopJournalRow } from '../src/app.js';
+import { createShopApp, type ShopAppDeps, type ShopJournalRow } from '../src/app.js';
 import type { ShopConfig } from '../src/config.js';
 import { FacilitatorLadder } from '../src/facilitators.js';
 import { NETWORK } from '../src/payments.js';
 import type { FakeFacilitator } from './fake-facilitator.js';
 
 export const TEST_SHOP_ACCOUNT = '0.0.990100';
+export const TEST_SHOP_ADDRESS = getAddress('0x00000000000000000000000000000000000000b2');
 
 export function testConfig(overrides: Partial<ShopConfig> = {}): ShopConfig {
   return {
@@ -26,12 +28,17 @@ export function testConfig(overrides: Partial<ShopConfig> = {}): ShopConfig {
     standingCheck: 'off',
     topicId: null,
     displayName: 'Test Shop',
+    shopAddress: TEST_SHOP_ADDRESS,
     ...overrides,
   };
 }
 
-export async function startTestShop(fakes: FakeFacilitator[], overrides: Partial<ShopConfig> = {}) {
-  const config = testConfig(overrides);
+export async function startTestShop(
+  fakes: FakeFacilitator[],
+  overrides: Partial<ShopConfig> = {},
+  extra: Pick<ShopAppDeps, 'parties' | 'standing' | 'reader'> = {},
+) {
+  const config = { ...testConfig(overrides), shopAddress: overrides.shopAddress ?? TEST_SHOP_ADDRESS };
   const log = memoryLogger();
   const journal = Journal.open<ShopJournalRow>(join(config.stateDir, 'journal.jsonl'));
   let initialize: (() => Promise<void>) | undefined;
@@ -40,7 +47,7 @@ export async function startTestShop(fakes: FakeFacilitator[], overrides: Partial
     { network: NETWORK, log, onSwitch: async () => initialize?.() },
   );
   await ladder.select();
-  const shop = createShopApp({ config, facilitator: ladder, journal, log });
+  const shop = createShopApp({ config, facilitator: ladder, journal, log, ...extra });
   initialize = shop.initialize;
   await shop.initialize();
   const server = await new Promise<Server>((resolve) => {

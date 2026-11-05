@@ -1,16 +1,18 @@
 // Builds and starts the shop from the environment. Shared by the long-running service and by the
 // agent's one-shot payment check, which runs a shop in-process with a chosen facilitator rung.
 
+import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadKeyBytes } from '@recourse/shared/node';
-import { Journal, createLogger, hederaAccountOf, type Logger } from '@recourse/records';
+import { loadKeyBytes, loadSigner, readParties } from '@recourse/shared/node';
+import { Journal, TopicReader, createLogger, hederaAccountOf, mirrorFromEnv, type Logger } from '@recourse/records';
 import { createShopApp, type ShopApp, type ShopJournalRow } from './app.js';
 import { loadShopConfig, type ShopConfig } from './config.js';
 import { FacilitatorLadder, SELF_HOSTED, httpRung, type RungSpec } from './facilitators.js';
 import { NETWORK } from './payments.js';
 import { createSelfFacilitator } from './self-facilitator.js';
+import { vaultStandingReader } from './standing.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -60,7 +62,19 @@ export async function startShop(
     },
   });
   await ladder.select(Math.max(0, (options.firstRung ?? 1) - 1));
-  shop = createShopApp({ config, facilitator: ladder, journal, log });
+  // The order id's shop address: the party map's, else the address of the shop key.
+  const shopAddress = config.shopAddress ?? loadSigner('SHOP_KEY_FILE', env).address;
+  const parties = env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? readParties(env) : null;
+  if (!parties) log.warn('parties_missing', { note: 'any platform is accepted and payers are not checked until the party map exists' });
+  shop = createShopApp({
+    config: { ...config, shopAddress },
+    facilitator: ladder,
+    journal,
+    log,
+    parties,
+    standing: config.standingCheck === 'vault' ? vaultStandingReader(env) : null,
+    reader: config.topicId ? new TopicReader(mirrorFromEnv(env), config.topicId) : null,
+  });
   await shop.initialize();
   log.info('shop_config', {
     payTo: config.payTo,

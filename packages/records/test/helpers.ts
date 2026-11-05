@@ -3,7 +3,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Hex } from 'viem';
+import { getAddress, type Hex } from 'viem';
 import { RECORD_KEYS, canonicalBytes, type CanonicalValue, type Parties, type RecordKind } from '@recourse/shared';
 import { Journal } from '../src/journal.js';
 import { RecordsClient, type RecordsJournalRow, type WriterRole } from '../src/records-client.js';
@@ -21,14 +21,14 @@ export const OTHER_ORDER: Hex = '0x222222222222222222222222222222222222222222222
 export const PARTIES: Parties = [
   {
     role: 'platform',
-    evmAddress: '0x00000000000000000000000000000000000000A1',
+    evmAddress: getAddress('0x00000000000000000000000000000000000000a1'),
     hederaAccountId: '0.0.1001',
     hcsWriters: [AGENT_PAYER],
     displayName: 'Demo Agent Co',
   },
   {
     role: 'shop',
-    evmAddress: '0x00000000000000000000000000000000000000B2',
+    evmAddress: getAddress('0x00000000000000000000000000000000000000b2'),
     hederaAccountId: SHOP_PAYER,
     hcsWriters: [SHOP_PAYER],
     displayName: 'Demo Shop',

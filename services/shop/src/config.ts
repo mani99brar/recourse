@@ -1,8 +1,11 @@
 // Shop configuration, from the environment only. Key material is never read here; key file paths
 // are passed on to the loaders by env var name.
 
-import { addressBook } from '@recourse/shared';
-import { displayNameOf, hederaAccountOf } from '@recourse/records';
+import { existsSync } from 'node:fs';
+import type { Address } from 'viem';
+import { addressBook, partyByRole } from '@recourse/shared';
+import { readParties } from '@recourse/shared/node';
+import { displayNameOf, hederaAccountOf, recordsTopicId } from '@recourse/records';
 import { parseFacilitatorUrls } from './facilitators.js';
 
 type Env = Record<string, string | undefined>;
@@ -24,6 +27,8 @@ export interface ShopConfig {
   standingCheck: StandingCheck;
   topicId: string | null;
   displayName: string;
+  /** The shop's EVM address (the order id's shop), from the party map; null until it exists. */
+  shopAddress: Address | null;
 }
 
 export function loadShopConfig(env: Env = process.env, defaults: { stateDir: string }): ShopConfig {
@@ -44,7 +49,16 @@ export function loadShopConfig(env: Env = process.env, defaults: { stateDir: str
     mirrorUrl: env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl,
     stateDir: defaults.stateDir,
     standingCheck,
-    topicId: env.HCS_RECORDS_TOPIC_ID || null,
+    topicId: topicIdOrNull(env),
     displayName: displayNameOf('shop', env),
+    shopAddress: env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? partyByRole(readParties(env), 'shop').evmAddress : null,
   };
+}
+
+function topicIdOrNull(env: Env): string | null {
+  try {
+    return recordsTopicId(env);
+  } catch {
+    return null;
+  }
 }

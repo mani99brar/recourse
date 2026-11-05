@@ -11,6 +11,7 @@ import {
   type RoutesConfig,
 } from '@x402/core/server';
 import type { SettleResponse } from '@x402/core/types';
+import { inspectHederaTransaction } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/server';
 import { addressBook } from '@recourse/shared';
 import type { Request, RequestHandler } from 'express';
@@ -79,19 +80,56 @@ export interface ShopPayments {
   settlements: SettlementBook;
 }
 
+/** The parts of the HTTP request a payment hook can see. */
+export interface RequestView {
+  header(name: string): string | undefined;
+  path: string;
+  paymentHeader: string | undefined;
+}
+
 export interface PaymentsOptions {
   facilitator: FacilitatorClient;
   routes: RoutesConfig;
+  /**
+   * Runs before the payment is verified or settled; return a reason to refuse it, so no money
+   * moves. `payer` is the account the transfer debits.
+   */
+  beforePayment?: (payment: { payer: string; amount: string; asset: string; payTo: string }, request: RequestView) => Promise<string | null>;
   /** Called once per settled payment, before the handler runs. Must not throw. */
-  onSettled?: (settled: SettledPayment, paymentHeader: string | undefined) => void;
+  onSettled?: (settled: SettledPayment, request: RequestView) => void;
+}
+
+/** The account debited by a Hedera `exact` payment payload, or null when it cannot be read. */
+export function payerOfPayload(payload: unknown, requirements: { asset: string }): string | null {
+  const tx = (payload as { payload?: { transaction?: unknown } })?.payload?.transaction;
+  if (typeof tx !== 'string') return null;
+  try {
+    const info = inspectHederaTransaction(tx);
+    const transfers = requirements.asset === HBAR_ASSET_ID ? info.hbarTransfers : (info.tokenTransfers[requirements.asset] ?? []);
+    const debits = transfers.filter((t) => BigInt(t.amount) < 0n);
+    return debits.length === 1 ? debits[0]!.accountId : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createPayments(options: PaymentsOptions): ShopPayments {
   const settlements = new SettlementBook();
   const resourceServer = new x402ResourceServer(options.facilitator).register(NETWORK, new ExactHederaScheme());
+  resourceServer.onBeforeVerify(async (ctx) => {
+    if (!options.beforePayment) return;
+    const view = viewOf(ctx.transportContext);
+    const payer = payerOfPayload(ctx.paymentPayload, ctx.requirements);
+    if (!payer) return { abort: true, reason: 'payer_unreadable', message: 'the payment does not name one paying account' };
+    const reason = await options.beforePayment(
+      { payer, amount: ctx.requirements.amount, asset: ctx.requirements.asset, payTo: ctx.requirements.payTo },
+      view,
+    );
+    return reason ? { abort: true, reason, message: reason } : undefined;
+  });
   resourceServer.onAfterSettle(async (ctx) => {
     if (ctx.phase !== 'before-handler') return;
-    const header = headerFromTransport(ctx.transportContext);
+    const view = viewOf(ctx.transportContext);
     const r = ctx.result as SettleResponse;
     const settled: SettledPayment = {
       transaction: r.transaction,
@@ -101,8 +139,8 @@ export function createPayments(options: PaymentsOptions): ShopPayments {
       payTo: ctx.requirements.payTo,
       network: r.network,
     };
-    if (header) settlements.put(header, settled);
-    options.onSettled?.(settled, header);
+    if (view.paymentHeader) settlements.put(view.paymentHeader, settled);
+    options.onSettled?.(settled, view);
   });
   const httpServer = new x402HTTPResourceServer(resourceServer, options.routes);
   // Initialisation is explicit at boot (and after a facilitator switch), not on the first request.
@@ -110,9 +148,13 @@ export function createPayments(options: PaymentsOptions): ShopPayments {
   return { resourceServer, httpServer, middleware, settlements };
 }
 
-function headerFromTransport(transportContext: unknown): string | undefined {
-  const adapter = (transportContext as { request?: { adapter?: { getHeader(name: string): string | undefined } } })
+function viewOf(transportContext: unknown): RequestView {
+  const adapter = (transportContext as { request?: { adapter?: { getHeader(name: string): string | undefined; getPath(): string } } })
     ?.request?.adapter;
-  if (!adapter) return undefined;
-  return adapter.getHeader('payment-signature') ?? adapter.getHeader('x-payment') ?? undefined;
+  const header = (name: string) => adapter?.getHeader(name) ?? undefined;
+  return {
+    header,
+    path: adapter?.getPath() ?? '',
+    paymentHeader: header('payment-signature') ?? header('x-payment'),
+  };
 }

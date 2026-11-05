@@ -83,22 +83,39 @@ export interface ChainClients {
   hedera: boolean;
 }
 
+function chainFor(rpcUrl: string, chainId: number): Chain {
+  if (chainId === HEDERA_TESTNET_CHAIN_ID) return hederaTestnet;
+  return defineChain({
+    id: chainId,
+    name: `local-${chainId}`,
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+    rpcUrls: { default: { http: [rpcUrl] } },
+  });
+}
+
+/** Read-only client; polls faster on a local chain. */
+export function publicClientFor(rpcUrl: string, chainId: number): PublicClient {
+  const pollingInterval = chainId === HEDERA_TESTNET_CHAIN_ID ? 2_000 : 200;
+  return createPublicClient({
+    chain: chainFor(rpcUrl, chainId),
+    transport: http(rpcUrl, { timeout: 30_000, retryCount: 2 }),
+    pollingInterval,
+  }) as PublicClient;
+}
+
 export function chainClients(options: { rpcUrl: string; chainId: number; account: LocalAccount }): ChainClients {
   const hedera = options.chainId === HEDERA_TESTNET_CHAIN_ID;
-  const chain = hedera
-    ? hederaTestnet
-    : defineChain({
-        id: options.chainId,
-        name: `local-${options.chainId}`,
-        nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-        rpcUrls: { default: { http: [options.rpcUrl] } },
-      });
-  const transport = http(options.rpcUrl, { timeout: 30_000, retryCount: 2 });
+  const chain = chainFor(options.rpcUrl, options.chainId);
   const pollingInterval = hedera ? 2_000 : 200;
   return {
     chain,
-    publicClient: createPublicClient({ chain, transport, pollingInterval }) as PublicClient,
-    walletClient: createWalletClient({ chain, transport, account: options.account, pollingInterval }),
+    publicClient: publicClientFor(options.rpcUrl, options.chainId),
+    walletClient: createWalletClient({
+      chain,
+      transport: http(options.rpcUrl, { timeout: 30_000, retryCount: 2 }),
+      account: options.account,
+      pollingInterval,
+    }),
     account: options.account,
     hedera,
   };
