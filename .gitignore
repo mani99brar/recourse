@@ -19,3 +19,5 @@ deployments/*.local.json
 contracts/lib/
 *.tsbuildinfo
 contracts/broadcast/*/dry-run/
+contracts/broadcast/*/*/dry-run/
+contracts/cache/
