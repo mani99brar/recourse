@@ -62,6 +62,8 @@ export interface SendRequest {
   claimId?: Hex;
   /** Fixed gas limit; otherwise estimated with headroom. */
   gas?: bigint;
+  /** Lowest gas limit to send with when estimating (measured execution gas of the call). */
+  gasFloor?: bigint;
 }
 
 export type SendOutcome =
@@ -198,6 +200,7 @@ export class Sender {
       if (gas === undefined) {
         const est = await this.o.rpc.estimateGas({ from, to: req.to, data: req.data, value: req.value });
         gas = (est * (this.o.gasHeadroomBps ?? 13_000n)) / 10_000n;
+        if (req.gasFloor !== undefined && gas < req.gasFloor) gas = req.gasFloor;
       }
       if (this.o.gasCap !== undefined && gas > this.o.gasCap) gas = this.o.gasCap;
       const tag = this.o.nonceTag ?? 'pending';
