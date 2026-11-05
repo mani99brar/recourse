@@ -77,6 +77,7 @@ async function main(): Promise<number> {
         vault: deployment.vault,
         usdc: deployment.usdc,
         claimsAbi: loadAbi('RecourseClaims', env),
+        vaultAbi: loadAbi('DepositVault', env),
         journal,
         log,
       });

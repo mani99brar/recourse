@@ -7,11 +7,10 @@
 // `fileClaim` can ever be mined per order.
 //
 // Local refusals come first: `net_loss_above_basket`, `no_order_record` (no ordered record in the
-// refs). The caller checks the shop's own payment record (`not_paid`) before calling.
+// refs). The caller checks the shop's own payment record (`not_paid`) before calling. `exit_due`:
+// the platform's exit from the deposit vault is due, and the vault takes no new claim against it.
 
 import {
-  BaseError,
-  ContractFunctionRevertedError,
   decodeEventLog,
   encodeFunctionData,
   erc20Abi,
@@ -24,6 +23,7 @@ import {
 import { RecordKind, ZERO_HASH, claimIdOf, orderIdOf, type RecordRefs } from '@recourse/shared';
 import type { Journal, Logger } from '@recourse/records';
 import type { ChainClients } from './chain.js';
+import { explainRevert, revertOf, withErrorsOf } from './reverts.js';
 
 export type FilingErrorCode =
   | 'net_loss_above_basket'
@@ -32,6 +32,7 @@ export type FilingErrorCode =
   | 'claim_id_mismatch'
   | 'approve_failed'
   | 'escrow_failed'
+  | 'exit_due'
   | 'reverted'
   | 'tx_pending';
 
@@ -77,6 +78,8 @@ export interface ClaimFilerDeps {
   vault: Address;
   usdc: Address;
   claimsAbi: Abi;
+  /** The vault's ABI, so reverts raised in the fee escrow (`ExitDue`, say) decode by name. */
+  vaultAbi?: Abi;
   journal: Journal<FilingJournalRow>;
   log?: Logger;
   /** Receipt wait per transaction, ms. */
@@ -86,19 +89,13 @@ export interface ClaimFilerDeps {
 const GAS_MARGIN_NUM = 13n;
 const GAS_MARGIN_DEN = 10n;
 
-function errorNameOf(error: unknown): string | null {
-  if (error instanceof BaseError) {
-    const revert = error.walk((e) => e instanceof ContractFunctionRevertedError);
-    if (revert instanceof ContractFunctionRevertedError) return revert.data?.errorName ?? revert.reason ?? 'reverted';
-  }
-  return null;
-}
-
 export class ClaimFiler {
   private readonly rows: FilingJournalRow[];
+  private readonly simulateAbi: Abi;
 
   constructor(private readonly deps: ClaimFilerDeps) {
     this.rows = [...deps.journal.rows()];
+    this.simulateAbi = deps.vaultAbi ? withErrorsOf(deps.claimsAbi, deps.vaultAbi) : deps.claimsAbi;
   }
 
   private write(row: FilingJournalRow): void {
@@ -166,6 +163,7 @@ export class ClaimFiler {
       if (receipt?.status === 'success') return this.markFiled(claimId, orderId, receipt.transactionHash, receipt);
     }
     if ((await this.statusOf(claimId)) !== 0) return this.markFiled(claimId, orderId, null, null);
+    await this.refuseIfExitDue(input.platform);
 
     // Exact allowance for the court fee; never unlimited.
     const fee = await this.courtFee();
@@ -202,21 +200,23 @@ export class ClaimFiler {
     try {
       await this.deps.clients.publicClient.simulateContract({
         address: call.to,
-        abi: call.abi,
+        abi: this.simulateAbi,
         functionName: call.functionName,
         args: [...call.args],
         account: this.shop,
       });
     } catch (error) {
-      const name = errorNameOf(error);
+      const revert = revertOf(error);
+      const name = revert?.name ?? null;
       if (name === 'ClaimExists') return this.markFiled(claimId, orderId, null, null);
-      if (name === 'TransferFailed' || name === 'EscrowExists' || name === 'NotAssociatedYet') {
-        this.stop(claimId, `fee escrow refused: ${name}`);
-        throw new FilingError('escrow_failed', `fee escrow refused: ${name}`);
+      if (revert && name === 'ExitDue') throw new FilingError('exit_due', explainRevert(revert));
+      if (revert && (name === 'TransferFailed' || name === 'EscrowExists' || name === 'NotAssociatedYet')) {
+        this.stop(claimId, `fee escrow refused: ${explainRevert(revert)}`);
+        throw new FilingError('escrow_failed', `fee escrow refused: ${explainRevert(revert)}`);
       }
       if (name === 'NetLossAboveBasket') throw new FilingError('net_loss_above_basket', 'refused by the contract');
       if (name === 'MissingOrdered') throw new FilingError('no_order_record', 'refused by the contract');
-      throw new FilingError('reverted', `fileClaim would revert: ${name ?? (error instanceof Error ? error.message.slice(0, 200) : String(error))}`);
+      throw new FilingError('reverted', `fileClaim would revert: ${revert ? explainRevert(revert) : error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
     }
     const signed = await this.sign(claimId, orderId, 'file', call);
     const receipt = await this.send(signed);
@@ -227,6 +227,24 @@ export class ClaimFiler {
       throw new FilingError('reverted', `fileClaim reverted: ${receipt.transactionHash}`);
     }
     return this.markFiled(claimId, orderId, receipt.transactionHash, receipt);
+  }
+
+  /**
+   * The vault refuses the fee escrow once the platform's requested exit is due; checking first
+   * saves an approve that could never be used. Needs the vault ABI; without it the simulate below
+   * still refuses.
+   */
+  private async refuseIfExitDue(platform: Address): Promise<void> {
+    if (!this.deps.vaultAbi) return;
+    const { publicClient } = this.deps.clients;
+    const [requestedAt, params, block] = await Promise.all([
+      publicClient.readContract({ address: this.deps.vault, abi: this.deps.vaultAbi, functionName: 'exitRequestedAt', args: [platform] }) as Promise<bigint>,
+      publicClient.readContract({ address: this.deps.vault, abi: this.deps.vaultAbi, functionName: 'params' }) as Promise<readonly [bigint, bigint, bigint]>,
+      publicClient.getBlock({ blockTag: 'latest' }),
+    ]);
+    if (requestedAt !== 0n && block.timestamp >= requestedAt + params[1]) {
+      throw new FilingError('exit_due', explainRevert({ name: 'ExitDue', args: [] }));
+    }
   }
 
   private lastSigned(claimId: Hex, step: 'approve' | 'file') {

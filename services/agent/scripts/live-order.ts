@@ -122,7 +122,7 @@ async function main(): Promise<number> {
       const claimsJournal = Journal.open<FilingJournalRow>(join(DEFAULT_STATE_DIR, 'claims.jsonl'));
       const filer =
         deployment && clients
-          ? new ClaimFiler({ clients, claims: deployment.claims, vault: deployment.vault, usdc: deployment.usdc, claimsAbi: loadAbi('RecourseClaims', env), journal: claimsJournal, log })
+          ? new ClaimFiler({ clients, claims: deployment.claims, vault: deployment.vault, usdc: deployment.usdc, claimsAbi: loadAbi('RecourseClaims', env), vaultAbi: loadAbi('DepositVault', env), journal: claimsJournal, log })
           : null;
       if (filer && deployment && clients) {
         const [fee, balance] = await Promise.all([

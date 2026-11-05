@@ -34,6 +34,7 @@ function filer(journalPath: string, override?: Partial<ChainClients>) {
     vault: chain.deployment.vault,
     usdc: chain.deployment.usdc,
     claimsAbi: loadAbi('RecourseClaims'),
+    vaultAbi: loadAbi('DepositVault'),
     journal: Journal.open<FilingJournalRow>(journalPath),
     log: memoryLogger(),
     receiptTimeoutMs: 20_000,

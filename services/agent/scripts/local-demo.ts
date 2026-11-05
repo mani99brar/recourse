@@ -278,6 +278,7 @@ export async function runLocalDemo(options: DemoOptions): Promise<DemoResult & {
       vault: chain.deployment.vault,
       usdc: chain.deployment.usdc,
       claimsAbi: loadAbi('RecourseClaims'),
+      vaultAbi: loadAbi('DepositVault'),
       journal: claimsJournal,
       log,
       receiptTimeoutMs: 30_000,
