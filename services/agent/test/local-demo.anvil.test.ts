@@ -2,11 +2,12 @@
 // simulated topic, then fileClaim on the locally deployed RecourseClaims. Slow (deploys once); run
 // under the suite lock.
 
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { claimIdOf } from '@recourse/shared';
+import { readParties } from '@recourse/shared/node';
 import { memoryLogger } from '@recourse/records';
 import { readHederaDeployment } from '../../shop/src/chain.js';
 import { DEMO_AGENT_ACCOUNT, DEMO_SHOP_ACCOUNT, DEMO_TOPIC, runLocalDemo } from '../scripts/local-demo.js';
@@ -50,6 +51,6 @@ describe('local demo order', () => {
     const ordered = result.records.find((r) => r.kind === 'ordered')!;
     const doc = await (await fetch(`${result.env.IPFS_GATEWAY_URL}/ipfs/${ordered.cid}`)).json();
     expect(doc).toMatchObject({ kind: 'ordered', orderId: result.orderId, x402TxId: result.settlement });
-    expect(JSON.parse(readFileSync(result.env.PARTIES_FILE!, 'utf8'))).toHaveLength(2);
+    expect(readParties({ PARTIES_FILE: result.env.PARTIES_FILE }).map((p) => p.role)).toEqual(['platform', 'agent', 'shop', 'buyer']);
   }, 600_000);
 });

@@ -8,6 +8,7 @@ export * from './h0-ids.js';
 export * from './hcs.js';
 export * from './ipfs.js';
 export * from './journal.js';
+export * from './lock.js';
 export * from './log.js';
 export * from './mirror.js';
 export * from './open.js';

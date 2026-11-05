@@ -14,8 +14,9 @@
 // - Documents go to a local content store (a directory, IPFS_PIN_API_URL=file://...) under the
 //   same CIDs a public pin would get; with --serve the mirror port also serves them at /ipfs/<cid>.
 //
-// Usage: tsx scripts/local-demo.ts [--serve] [--anvil-port 8573] [--mirror-port 8574] [--shop-port 8575] [--state <dir>]
-// Ports must be in 8570-8579. Run it under the suite lock (it deploys contracts).
+// Usage: pnpm --filter @recourse/agent local-demo [--serve] [--anvil-port 8573] [--mirror-port 8574] [--shop-port 8575] [--state <dir>]
+// Ports must be in 8570-8579. Do not wrap it in the suite lock: it takes that lock itself for the
+// contract deploy only, so a --serve run does not hold it while it waits.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -25,7 +26,7 @@ import { PrivateKey } from '@hiero-ledger/sdk';
 import { createClientHederaSigner } from '@x402/hedera';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Hex } from 'viem';
-import { RECORD_KEYS, decodeRecordMsg, type Parties } from '@recourse/shared';
+import { ENV_DEFAULTS, RECORD_KEYS, decodeRecordMsg, type Parties } from '@recourse/shared';
 import {
   Journal,
   LocalPinProvider,
@@ -56,6 +57,7 @@ export const DEMO_TOPIC = '0.0.7000001';
 export const DEMO_AGENT_ACCOUNT = '0.0.990300';
 export const DEMO_SHOP_ACCOUNT = '0.0.990100';
 export const DEMO_PLATFORM_ACCOUNT = '0.0.990200';
+export const DEMO_BUYER_ACCOUNT = '0.0.990400';
 const MERCHANT = 'Northwind Demo Shop';
 
 export interface DemoOptions {
@@ -65,6 +67,8 @@ export interface DemoOptions {
   stateDir: string;
   /** Deployment file name; default `hedera.lane04-demo-<anvil port>.local.json`. */
   deploymentFile?: string;
+  /** Lock file taken for the contract deploy (see startLocalChain); none inside a locked test run. */
+  deployLock?: string;
   log?: Logger;
 }
 
@@ -131,7 +135,7 @@ export async function runLocalDemo(options: DemoOptions): Promise<DemoResult & {
   try {
     // Chain: Claims, vault and USDC mock on anvil. Platform = account 3, shop = account 4.
     const file = options.deploymentFile ?? `hedera.lane04-demo-${anvilPort}.local.json`;
-    const chain = await startLocalChain(anvilPort, { file });
+    const chain = await startLocalChain(anvilPort, { file, ...(options.deployLock ? { deployLock: options.deployLock } : {}) });
     closers.push(() => chain.stop());
     const platform = chain.deployment.roles?.platform;
     const shopAddress = chain.deployment.roles?.shop;
@@ -156,9 +160,13 @@ export async function runLocalDemo(options: DemoOptions): Promise<DemoResult & {
     closers.push(() => new Promise<void>((r) => mirror.close(() => r())));
     const mirrorUrl = `http://127.0.0.1:${mirrorPort}`;
 
+    const agentAccount = privateKeyToAccount(generatePrivateKey());
+    const buyerAccount = privateKeyToAccount(generatePrivateKey());
     const parties: Parties = [
       { role: 'platform', evmAddress: platform, hederaAccountId: DEMO_PLATFORM_ACCOUNT, hcsWriters: [DEMO_AGENT_ACCOUNT], displayName: 'Demo Agent Co' },
+      { role: 'agent', evmAddress: agentAccount.address, hederaAccountId: DEMO_AGENT_ACCOUNT, hcsWriters: [], displayName: 'Demo Shopping Agent' },
       { role: 'shop', evmAddress: shopAddress, hederaAccountId: DEMO_SHOP_ACCOUNT, hcsWriters: [DEMO_SHOP_ACCOUNT], displayName: MERCHANT },
+      { role: 'buyer', evmAddress: buyerAccount.address, hederaAccountId: DEMO_BUYER_ACCOUNT, hcsWriters: [], displayName: 'Demo Buyer' },
     ];
     const partiesFile = join(options.stateDir, 'parties.json');
     writeFileSync(partiesFile, `${JSON.stringify(parties, null, 2)}\n`);
@@ -216,14 +224,13 @@ export async function runLocalDemo(options: DemoOptions): Promise<DemoResult & {
     };
     const agentJournal = Journal.open<AgentRow>(join(options.stateDir, 'agent', 'orders.jsonl'));
     closers.push(() => agentJournal.close());
-    const buyerAccount = privateKeyToAccount(generatePrivateKey());
     const buyer = new Buyer({
       platform,
       shop: { x402Base: `${shopUrl}/x402/`, apiBase: shopUrl, payTo: DEMO_SHOP_ACCOUNT, shopAddress, source: 'local demo' },
       records: recordsClient('agent', DEMO_AGENT_ACCOUNT, 'agent/records.jsonl'),
       pin,
       payer: createClientHederaSigner(DEMO_AGENT_ACCOUNT, PrivateKey.generateECDSA(), { network: NETWORK }),
-      agentAccount: privateKeyToAccount(generatePrivateKey()),
+      agentAccount,
       mirror: ledger.mirror(),
       journal: agentJournal,
       limits: DEFAULT_LIMITS,
@@ -329,6 +336,7 @@ async function main(): Promise<void> {
     mirrorPort: Number(arg(args, '--mirror-port', '8574')),
     shopPort: Number(arg(args, '--shop-port', '8575')),
     stateDir,
+    deployLock: process.env.SUITE_LOCK_FILE || ENV_DEFAULTS.SUITE_LOCK_FILE!,
   });
   const { close, env, ...summary } = result;
   console.log('\nLOCAL RUN: simulated records topic and facilitator, local anvil chain; no public network was used.');

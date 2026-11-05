@@ -45,6 +45,11 @@ export interface LocalChainOptions {
   file?: string;
   /** Keep the deployment file when the chain stops (other processes may still read it). */
   keepFile?: boolean;
+  /**
+   * Take this lock file (with `flock`) for the deploy step only. For a long-running caller that is
+   * not itself run under the suite lock; never pass it from inside a run that already holds it.
+   */
+  deployLock?: string;
 }
 
 export async function startLocalChain(port: number, options: LocalChainOptions = {}): Promise<LocalChain> {
@@ -71,11 +76,10 @@ export async function startLocalChain(port: number, options: LocalChainOptions =
     }
     const file = options.file ?? `hedera.lane04-test-${port}.local.json`;
     if (!/^[A-Za-z0-9_.-]+\.local\.json$/.test(file)) throw new Error(`deployment file ${file} must be a bare *.local.json name`);
-    const run = spawnSync(
-      join(bin, 'forge'),
-      ['script', 'script/hedera/DeployLocal.s.sol', '--rpc-url', rpcUrl, '--broadcast', '--unlocked', '--sender', DEPLOYER],
-      { cwd: CONTRACTS, env: { ...env, HEDERA_LOCAL_FILE: file }, encoding: 'utf8', timeout: 600_000 },
-    );
+    const forge = [join(bin, 'forge'), 'script', 'script/hedera/DeployLocal.s.sol', '--rpc-url', rpcUrl, '--broadcast', '--unlocked', '--sender', DEPLOYER];
+    const [cmd, ...args] = options.deployLock ? ['flock', '-o', '-w', '900', options.deployLock, ...forge] : forge;
+    const run = spawnSync(cmd!, args, { cwd: CONTRACTS, env: { ...env, HEDERA_LOCAL_FILE: file }, encoding: 'utf8', timeout: 960_000 });
+    if (run.status === 1 && options.deployLock && !run.stdout && !run.stderr) throw new Error(`the lock ${options.deployLock} stayed busy; retry later`);
     if (run.status !== 0) throw new Error(`local deploy failed: ${(run.stderr || run.stdout).slice(-2000)}`);
     const deployment = readHederaDeployment({ file, env: { DEPLOYMENTS_DIR: DEPLOYMENTS } });
     return {

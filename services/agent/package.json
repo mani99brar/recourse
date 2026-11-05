@@ -13,7 +13,11 @@
     "pay-once": "tsx scripts/pay-once.ts",
     "h0-setup": "tsx scripts/h0-setup.ts",
     "test:anvil": "vitest run --passWithNoTests anvil.test",
-    "local-demo": "tsx scripts/local-demo.ts"
+    "local-demo": "tsx scripts/local-demo.ts",
+    "order": "tsx scripts/order.ts",
+    "approve": "tsx scripts/approve.ts",
+    "complain": "tsx scripts/complain.ts",
+    "live-order": "tsx scripts/live-order.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "2.85.0",

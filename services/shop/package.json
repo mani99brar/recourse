@@ -10,7 +10,9 @@
     "start": "tsx src/main.ts",
     "test": "vitest run --passWithNoTests --exclude '**/*.anvil.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test:anvil": "vitest run --passWithNoTests anvil.test"
+    "test:anvil": "vitest run --passWithNoTests anvil.test",
+    "pack": "tsx scripts/pack.ts",
+    "file-claim": "tsx scripts/file-claim.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "2.85.0",

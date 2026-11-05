@@ -15,6 +15,7 @@ import {
   readH0Ids,
   x402EndpointOf,
   type Logger,
+  type MirrorClient,
 } from '@recourse/records';
 import { Buyer, type AgentRow, type ShopTarget } from './buy.js';
 import { loadAgentPayer } from './hedera-signer.js';
@@ -70,14 +71,16 @@ export async function discoverShop(env: Env, log?: Logger): Promise<ShopTarget> 
 export interface OpenedAgent {
   buyer: Buyer;
   shop: ShopTarget;
+  mirror: MirrorClient;
   close(): void;
 }
 
-export async function openAgent(env: Env, log: Logger): Promise<OpenedAgent> {
+/** Builds the agent. `options.shop` names the shop directly (an in-process one) instead of discovering it. */
+export async function openAgent(env: Env, log: Logger, options: { shop?: ShopTarget } = {}): Promise<OpenedAgent> {
   const parties = partiesOrNull(env);
   if (!parties) throw new Error('PARTIES_FILE is not set or missing; the agent needs the party map');
   const platform = partyByRole(parties, 'platform').evmAddress;
-  const shop = await discoverShop(env, log);
+  const shop = options.shop ?? (await discoverShop(env, log));
   const records = openRecordsClient({ role: 'agent', journalPath: RECORDS_JOURNAL, env, log });
   const payer = loadAgentPayer(env);
   if (payer.accountId !== records.payer) throw new Error('agent payer and records payer differ');
@@ -98,6 +101,7 @@ export async function openAgent(env: Env, log: Logger): Promise<OpenedAgent> {
   return {
     buyer,
     shop,
+    mirror: records.mirror,
     close: () => {
       journal.close();
       records.close();

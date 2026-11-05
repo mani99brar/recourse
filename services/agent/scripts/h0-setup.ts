@@ -8,7 +8,10 @@
 //                                                          # point agentURIs at the current URLs
 //
 // Idempotent: ids already in packages/records/h0-ids.json are read back (topic on the mirror node,
-// agent owner on chain) and never created again. The file is rewritten after each step.
+// agent owner on chain) and never created again. The file is rewritten after each step. At the end
+// the ids go where the services read them: HCS_RECORDS_TOPIC_ID into the env file
+// (RECOURSE_ENV_FILE, default ~/.config/recourse/recourse.env) and each agentId into the party map
+// (PARTIES_FILE), once that file exists. A dry run prints those changes instead.
 //
 // Topic: memo `recourse.records.v1`, no admin key and no submit key (the agent and the shop both
 // write to it; readers filter by payer account). Paid by the ops account.
@@ -30,6 +33,7 @@ import {
   checkAccount,
   describeCheck,
   displayNameOf,
+  publishIds,
   readH0Ids,
   shopRegistration,
   toDataUri,
@@ -200,12 +204,14 @@ async function main(): Promise<number> {
     console.log(`${role} agent ${registered.agentId}: registered, tx ${registered.txHash}`);
   }
 
-  if (!mode.broadcast) {
-    console.log('dry run complete; rerun with --broadcast to send');
-  } else {
+  if (mode.broadcast) {
     save();
     console.log('h0-ids.json written');
   }
+  const published = publishIds(out, { env, write: mode.broadcast });
+  for (const c of published.changes) console.log(`${mode.broadcast ? 'wrote' : 'would write'} ${c}`);
+  for (const p of published.pending) console.log(`pending: ${p}`);
+  if (!mode.broadcast) console.log('dry run complete; rerun with --broadcast to send');
   return 0;
 }
 

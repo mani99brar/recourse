@@ -23,7 +23,7 @@ import { render, type RenderInput } from '@recourse/renderer';
 import { validStartSeconds, type Journal, type Logger, type MirrorClient, type Pinned, type RecordsClient } from '@recourse/records';
 import { signApproval, signReport } from './approval.js';
 import { approvalDoc, arrivedBody, arrivedDoc, askedDoc, mandateDoc, orderedDoc, saltedBuyer, shownDoc } from './docs.js';
-import { decideLimit, utcDay, type Limits } from './limits.js';
+import { decideLimit, utcDay, type LimitDecision, type Limits } from './limits.js';
 import { NETWORK, PaymentRefused, chooseRequirement, payExactly, probe402, type FetchLike, type Terms } from './x402-pay.js';
 
 export const PLATFORM_HEADER = 'x-recourse-platform';
@@ -92,6 +92,17 @@ export type OrderOutcome =
   | { state: 'awaiting_approval'; orderId: Hex; approvalId: string; expiresAt: number }
   | { state: 'refused' | 'abandoned' | 'declined' | 'expired'; orderId: Hex; reason: string }
   | { state: 'pay_failed'; orderId: Hex; reason: string };
+
+export interface OrderPreview {
+  orderId: Hex;
+  url: string;
+  terms: Terms;
+  offer: Omit<Attrs, 'price'>;
+  text: string;
+  textHash: Hex;
+  changes: string[];
+  decision: LimitDecision;
+}
 
 export interface OrderDraft {
   sku: string;
@@ -250,6 +261,37 @@ export class Buyer {
     if (this.rowsOf(orderId).some((r) => r.type === 'committed' && r.kind === kind)) return;
     const c = await this.deps.records.commitRecord(kind, orderId, bytes);
     this.write({ type: 'committed', at: iso(), orderId, kind, seq: c.seq, hash: c.hash, cid: c.cid, ...(c.simulated ? { simulated: true as const } : {}) });
+  }
+
+  /**
+   * What `run` would show and decide for a new order, with a throwaway nonce: probes the 402 and
+   * reads the catalogue, and journals, commits and pays nothing.
+   */
+  async preview(input: OrderDraft): Promise<OrderPreview> {
+    const orderNonce = newOrderNonce();
+    const orderId = orderIdOf(this.deps.platform, this.deps.shop.shopAddress, orderNonce);
+    const draft: Extract<AgentRow, { type: 'draft' }> = {
+      type: 'draft',
+      at: iso(),
+      orderId,
+      orderNonce,
+      platform: this.deps.platform,
+      shop: this.deps.shop.shopAddress,
+      sku: input.sku,
+      quantity: input.quantity,
+      asked: input.asked,
+      buyer: {},
+      salts: {},
+      day: utcDay(this.now()),
+    };
+    const url = this.orderUrl(draft);
+    const probe = await probe402(url, { method: 'POST', headers: this.headers(draft), body: '{}' }, this.fetchImpl);
+    const requirement = chooseRequirement(probe.paymentRequired, { asset: this.deps.asset, expectedPayTo: this.deps.shop.payTo });
+    const terms = { network: requirement.network, asset: requirement.asset, amount: requirement.amount, payTo: requirement.payTo };
+    const offer = await this.offerOf(draft);
+    const r = render({ orderId, asked: input.asked, offer, ...terms });
+    const decision = decideLimit(BigInt(terms.amount), this.spentToday(draft.day, orderId), this.deps.limits);
+    return { orderId, url, terms, offer, text: r.text, textHash: r.textHash, changes: r.changes, decision };
   }
 
   /** Drives the order as far as it can go now. Safe to call again at any point, after any crash. */
