@@ -3,3 +3,4 @@
 
 export * from './addresses.js';
 export * from './abi/erc8004.js';
+export * from './parties.js';
