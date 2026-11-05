@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check:secrets": "node scripts/check-secrets.mjs"
   },
   "dependencies": {
     "@arkiv-network/sdk": "1.0.1",
