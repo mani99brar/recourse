@@ -54,14 +54,15 @@ export const addressBook: AddressBook = {
     onRamp: '0x023B31f937cFb8ce59A264C73D3D4CB345Fb3Aef',
     offRamp: '0x7752798D2fD9e28b7020135A619dDD162d705f20',
     link: '0x90a386d59b9A6a4795a011e8f032Fc21ED6FEFb6',
-    usdc: { tokenId: '0.0.429274', facade: '0x0000000000000000000000000000000000068cda', decimals: 6 },
+    usdc: { tokenId: '0.0.429274', facade: '0x0000000000000000000000000000000000068cDa', decimals: 6 },
     hts: '0x0000000000000000000000000000000000000167',
     prng: '0x0000000000000000000000000000000000000169',
     erc8004Identity: '0x8004A818BFB912233c491871b3d84c89A494BD9e',
     erc8004IdentityAccountId: '0.0.7919997',
     erc8004Reputation: '0x8004B663056A597Dffe9eCcC1965A193B7388713',
     erc8004ReputationAccountId: '0.0.7919998',
-    mirrorUrl: 'https://testnet.mirrornode.hedera.com/api/v1',
+    // Base URL; REST paths start with /api/v1.
+    mirrorUrl: 'https://testnet.mirrornode.hedera.com',
   },
   arbitrum: {
     chainId: 421614,

@@ -1,0 +1,51 @@
+{
+  "units": {
+    "time": "seconds",
+    "money": "micro-USDC (6 decimals)",
+    "rate": "basis points"
+  },
+  "preLock": {
+    "batchSize": 8,
+    "caseDeadline": 7200,
+    "claimTimeout": 14400,
+    "contestWindow": 600,
+    "courtFeeUsdc": 3000000,
+    "exitDelay": 600,
+    "feePoolAlertMultiple": 3,
+    "gasCap": 3000000,
+    "gasClaimToCourt": 300000,
+    "gasRulingBack": 400000,
+    "handlingBase": 15000000,
+    "handlingBps": 500,
+    "handlingCap": 40000000,
+    "maxOpenCases": 10,
+    "maxSends": 5,
+    "pBps": 2500,
+    "publishThreshold": 20,
+    "resendGap": 1800,
+    "stuckAfter": 3600,
+    "topUpWindow": 604800
+  },
+  "locked": {
+    "batchSize": 8,
+    "caseDeadline": 7200,
+    "claimTimeout": 64800,
+    "contestWindow": 1800,
+    "courtFeeUsdc": 3000000,
+    "exitDelay": 10368000,
+    "feePoolAlertMultiple": 3,
+    "gasCap": 3000000,
+    "gasClaimToCourt": 300000,
+    "gasRulingBack": 400000,
+    "handlingBase": 15000000,
+    "handlingBps": 500,
+    "handlingCap": 40000000,
+    "maxOpenCases": 10,
+    "maxSends": 5,
+    "pBps": 2500,
+    "publishThreshold": 20,
+    "resendGap": 1800,
+    "stuckAfter": 3600,
+    "topUpWindow": 604800
+  }
+}

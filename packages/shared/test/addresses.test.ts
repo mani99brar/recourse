@@ -6,7 +6,7 @@ describe('address book', () => {
   it('holds checksummed EVM addresses', () => {
     for (const chain of [addressBook.hedera, addressBook.arbitrum]) {
       for (const [key, value] of Object.entries(chain)) {
-        if (typeof value === 'string' && value.startsWith('0x') && value.length === 42 && key !== 'facade') {
+        if (typeof value === 'string' && value.startsWith('0x') && value.length === 42) {
           expect(getAddress(value), key).toBe(value);
         }
       }

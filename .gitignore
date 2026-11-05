@@ -18,3 +18,4 @@ contracts/broadcast/*/31337/
 deployments/*.local.json
 contracts/lib/
 *.tsbuildinfo
+contracts/broadcast/*/dry-run/

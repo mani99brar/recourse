@@ -1,0 +1,949 @@
+{
+  "ruleVersion": "1",
+  "attributes": ["brand", "size", "colour", "quantity", "price", "merchant"],
+  "rows": [
+    {
+      "id": 1,
+      "name": "ordered departs from asked on brand; shown lacks brand; change slot empty; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-ii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "brand"},
+          {"record": "shown", "attribute": "brand"},
+          {"record": "ordered", "attribute": "brand"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 2,
+      "name": "shown keeps to asked; ordered, packed and arrived differ from shown on size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "l", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "l"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "l"}}
+      },
+      "expect": {
+        "gap": 2, "answer": 1, "side": "platform",
+        "reasonKey": "gap2_shown_vs_ordered", "step": "3",
+        "flaggedCells": [
+          {"record": "shown", "attribute": "size"},
+          {"record": "ordered", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 3,
+      "name": "asked, shown and ordered agree; packed and arrived differ from ordered on size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "l"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "l"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_ordered_vs_packed", "step": "4",
+        "flaggedCells": [
+          {"record": "ordered", "attribute": "size"},
+          {"record": "packed", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 4,
+      "name": "shown departs from asked on brand; change slot lists brand; approved; ordered, packed and arrived follow shown",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}, "changes": ["brand"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_approved_change", "step": "11",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 5,
+      "name": "asked present with blank values and shown present but empty (neither held); ordered, packed and arrived agree",
+      "input": {
+        "asked": {"attrs": {"brand": "", "size": "   "}},
+        "shown": {"attrs": {"colour": ""}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "mandate"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 255, "answer": 1, "side": "platform",
+        "reasonKey": "missing_record_platform", "step": "8",
+        "flaggedCells": [],
+        "notCompared": ["price"],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 6,
+      "name": "approved brand change shown and ordered; packed and arrived differ from ordered on size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}, "changes": ["brand"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "l"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "l"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_ordered_vs_packed", "step": "4",
+        "flaggedCells": [
+          {"record": "ordered", "attribute": "size"},
+          {"record": "packed", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 7,
+      "name": "approved brand change shown; ordered also differs from shown on size; packed and arrived follow ordered",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}, "changes": ["brand"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "l", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "l"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "l"}}
+      },
+      "expect": {
+        "gap": 2, "answer": 1, "side": "platform",
+        "reasonKey": "gap2_shown_vs_ordered", "step": "3",
+        "flaggedCells": [
+          {"record": "shown", "attribute": "size"},
+          {"record": "ordered", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 8,
+      "name": "approved brand change shown, ordered and packed; arrived differs from packed on size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}, "changes": ["brand"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "l"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_packed_vs_arrived", "step": "5",
+        "flaggedCells": [
+          {"record": "packed", "attribute": "size"},
+          {"record": "arrived", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 9,
+      "name": "brand change shown with change slot filled and ordered, but approval absent",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}, "changes": ["brand"]},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-iii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "brand"},
+          {"record": "ordered", "attribute": "brand"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 10,
+      "name": "all records agree; shown price within the asked cap; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_all_agree", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 11,
+      "name": "all records agree but approval absent",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 255, "answer": 1, "side": "platform",
+        "reasonKey": "missing_record_platform", "step": "9",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 12,
+      "name": "asked, shown and ordered agree; approval absent; packed present but blank; arrived absent",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": ""}}
+      },
+      "expect": {
+        "gap": 255, "answer": 0, "side": "none",
+        "reasonKey": "not_enough_record", "step": "7",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 13,
+      "name": "asked holds a price cap; shown and ordered hold the same unparseable price text; change slot empty",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-ii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "price"},
+          {"record": "shown", "attribute": "price"},
+          {"record": "ordered", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": ["shown", "ordered"]
+      }
+    },
+    {
+      "id": 14,
+      "name": "asked holds no price; shown and ordered hold the same unparseable price text",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_all_agree", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": ["shown", "ordered"]
+      }
+    },
+    {
+      "id": 15,
+      "name": "asked, shown and ordered hold the same unparseable price text",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_all_agree", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": ["asked", "shown", "ordered"]
+      }
+    },
+    {
+      "id": 16,
+      "name": "asked holds no price; shown price unparseable; ordered price parses",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "on request"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 2, "answer": 1, "side": "platform",
+        "reasonKey": "gap2_shown_vs_ordered", "step": "3",
+        "flaggedCells": [
+          {"record": "shown", "attribute": "price"},
+          {"record": "ordered", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": ["shown"]
+      }
+    },
+    {
+      "id": 17,
+      "name": "asked price holds two numbers (unparseable); shown and ordered hold the same parseable price; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120 or 130"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-ii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "price"},
+          {"record": "shown", "attribute": "price"},
+          {"record": "ordered", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": ["asked"]
+      }
+    },
+    {
+      "id": 18,
+      "name": "asked price unparseable; shown and ordered hold the same parseable price; approval absent",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120 or 130"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-ii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "price"},
+          {"record": "shown", "attribute": "price"},
+          {"record": "ordered", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": ["asked"]
+      }
+    },
+    {
+      "id": 19,
+      "name": "asked, shown, ordered and packed agree; arrived differs from packed on size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "l"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_packed_vs_arrived", "step": "5",
+        "flaggedCells": [
+          {"record": "packed", "attribute": "size"},
+          {"record": "arrived", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 20,
+      "name": "only ordered and arrived held; arrived agrees on brand and size; ordered price compared with nothing",
+      "input": {
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "42", "price": "95.50"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "42"}}
+      },
+      "expect": {
+        "gap": 255, "answer": 0, "side": "none",
+        "reasonKey": "not_enough_record", "step": "7",
+        "flaggedCells": [],
+        "notCompared": ["price"],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 21,
+      "name": "asked, shown and ordered agree; approved; packed and arrived absent",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}}
+      },
+      "expect": {
+        "gap": 255, "answer": 2, "side": "shop",
+        "reasonKey": "missing_record_shop", "step": "10",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 22,
+      "name": "no record held: present records carry only empty or blank values",
+      "input": {
+        "asked": {"attrs": {}},
+        "shown": {"attrs": {"brand": "  "}, "changes": []},
+        "ordered": {"attrs": {"size": "", "price": "  "}},
+        "arrived": {"attrs": {"colour": " "}}
+      },
+      "expect": {
+        "gap": 255, "answer": 0, "side": "none",
+        "reasonKey": "not_enough_record", "step": "1",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 23,
+      "name": "asked, shown and ordered hold brand and price within the cap; packed and arrived hold only size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "mandate"},
+        "ordered": {"attrs": {"brand": "northwind", "price": "95.50"}},
+        "packed": {"attrs": {"size": "m"}},
+        "arrived": {"attrs": {"size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_in_compared", "step": "12",
+        "flaggedCells": [],
+        "notCompared": ["size"],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 24,
+      "name": "shown departs from asked on size while ordered keeps to asked; change slot empty; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "l"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2b",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "size"},
+          {"record": "shown", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 25,
+      "name": "shown departs from asked on size while ordered keeps to asked; change slot lists size; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "l"}, "changes": ["size"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 2, "answer": 1, "side": "platform",
+        "reasonKey": "gap2_shown_vs_ordered", "step": "3",
+        "flaggedCells": [
+          {"record": "shown", "attribute": "size"},
+          {"record": "ordered", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 26,
+      "name": "shown departs from asked on size while ordered keeps to asked; change slot lists size; not approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "l"}, "changes": ["size"]},
+        "approval": {"approval": "not_approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2b",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "size"},
+          {"record": "shown", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 27,
+      "name": "shown departs from asked on size while ordered keeps to asked; change slot lists size; approval absent",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "l"}, "changes": ["size"]},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2b",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "size"},
+          {"record": "shown", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 101,
+      "name": "commas dropped before parsing; ordered price equal to the asked cap is not above it; all prices equal",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "1,200"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "1200"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "1200.00"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m", "price": "1,200"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m", "price": "1200"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_all_agree", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 102,
+      "name": "trailing and leading zeros do not make prices differ: 95.50, 95.5, 95.500, 095.50",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.5"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m", "price": "95.500"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m", "price": "095.50"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_all_agree", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 103,
+      "name": "ordered price above the asked cap while shown keeps within it: price is not off, shown and ordered differ",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "130"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 2, "answer": 1, "side": "platform",
+        "reasonKey": "gap2_shown_vs_ordered", "step": "3",
+        "flaggedCells": [
+          {"record": "shown", "attribute": "price"},
+          {"record": "ordered", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 104,
+      "name": "shown price above the asked cap while ordered keeps within it; change slot empty; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "130"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2b",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "price"},
+          {"record": "shown", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 105,
+      "name": "shown and ordered both above the asked cap at the same price (130.00 and 130); change slot lists price; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "130.00"}, "changes": ["price"]},
+        "approval": {"approval": "approved", "approvalBasis": "mandate"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "130"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_approved_change", "step": "11",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 106,
+      "name": "a minus sign makes the packed price unparseable, so it differs from ordered by text",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m", "price": "-95.50"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_ordered_vs_packed", "step": "4",
+        "flaggedCells": [
+          {"record": "ordered", "attribute": "price"},
+          {"record": "packed", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": ["packed"]
+      }
+    },
+    {
+      "id": 107,
+      "name": "two numbers in the arrived price text make it unparseable, so it differs from packed by text",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50 + 4.50 fee"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_packed_vs_arrived", "step": "5",
+        "flaggedCells": [
+          {"record": "packed", "attribute": "price"},
+          {"record": "arrived", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": ["arrived"]
+      }
+    },
+    {
+      "id": 108,
+      "name": "case and surrounding whitespace differ across records but normalise equal",
+      "input": {
+        "asked": {"attrs": {"brand": "Northwind ", "size": " M", "colour": "Navy", "quantity": "2"}},
+        "shown": {"attrs": {"brand": "  NORTHWIND", "size": "m", "colour": "navy ", "quantity": " 2"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "M", "colour": " NAVY", "quantity": "2 "}},
+        "packed": {"attrs": {"brand": "NorthWind", "size": "m", "colour": "Navy\t", "quantity": "2"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": " m ", "colour": "navy", "quantity": "2"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_all_agree", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 109,
+      "name": "merchant differs between ordered and packed",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50", "merchant": "contoso market"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50", "merchant": "contoso market"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m", "merchant": "litware store"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m", "merchant": "litware store"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_ordered_vs_packed", "step": "4",
+        "flaggedCells": [
+          {"record": "ordered", "attribute": "merchant"},
+          {"record": "packed", "attribute": "merchant"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 110,
+      "name": "shown held only through a filled change slot (no attributes); approved; everything else agrees",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m"}},
+        "shown": {"attrs": {}, "changes": ["size"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_all_agree", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 111,
+      "name": "shown held only through a filled change slot; ordered departs from asked on brand",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {}, "changes": ["brand"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "m"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-ii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "brand"},
+          {"record": "shown", "attribute": "brand"},
+          {"record": "ordered", "attribute": "brand"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 112,
+      "name": "all held records agree and approved, but arrived absent",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_in_compared", "step": "12",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 113,
+      "name": "approved brand change shown, ordered and packed; arrived absent keeps the approved-change key",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}, "changes": ["brand"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_approved_change", "step": "11",
+        "flaggedCells": [],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 114,
+      "name": "approved brand change cleared; packed and arrived hold a colour that ordered lacks",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}, "changes": ["brand"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m", "colour": "teal"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "m", "colour": "teal"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_in_compared", "step": "11",
+        "flaggedCells": [],
+        "notCompared": ["colour"],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 115,
+      "name": "shown absent; ordered departs from asked on brand and on price above the cap",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "m", "price": "130"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "m"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "m"}}
+      },
+      "expect": {
+        "gap": 255, "answer": 1, "side": "platform",
+        "reasonKey": "missing_record_platform", "step": "2a-i",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "brand"},
+          {"record": "ordered", "attribute": "brand"},
+          {"record": "asked", "attribute": "price"},
+          {"record": "ordered", "attribute": "price"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 116,
+      "name": "packed absent; arrived differs from ordered on size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "l"}}
+      },
+      "expect": {
+        "gap": 3, "answer": 2, "side": "shop",
+        "reasonKey": "gap3_no_pack_record", "step": "6",
+        "flaggedCells": [
+          {"record": "ordered", "attribute": "size"},
+          {"record": "arrived", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 117,
+      "name": "ordered departs from asked on brand and size; shown matches ordered on brand only; change slot filled; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "fabrikam", "size": "l", "price": "95.50"}, "changes": ["brand", "size"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "fabrikam", "size": "xl", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "fabrikam", "size": "xl"}},
+        "arrived": {"attrs": {"brand": "fabrikam", "size": "xl"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-ii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "size"},
+          {"record": "shown", "attribute": "size"},
+          {"record": "ordered", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 118,
+      "name": "ordered and arrived hold a colour that asked, shown and a held packed lack",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "m", "price": "95.50"}, "changes": []},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "colour": "teal", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m", "colour": "teal"}}
+      },
+      "expect": {
+        "gap": 0, "answer": 3, "side": "neither",
+        "reasonKey": "no_gap_in_compared", "step": "12",
+        "flaggedCells": [],
+        "notCompared": ["colour"],
+        "unreadPrice": []
+      }
+    }
+  ],
+  "priceParse": [
+    {"text": "1,200", "parsed": "1200"},
+    {"text": "1,234.50", "parsed": "1234.5"},
+    {"text": "120,00", "parsed": "12000"},
+    {"text": "095.50", "parsed": "95.5"},
+    {"text": "007", "parsed": "7"},
+    {"text": "0.0", "parsed": "0"},
+    {"text": "0.050", "parsed": "0.05"},
+    {"text": "  120.00  ", "parsed": "120"},
+    {"text": "up to 120 usdc", "parsed": "120"},
+    {"text": "$95.5", "parsed": "95.5"},
+    {"text": "95.50 usdc.", "parsed": "95.5"},
+    {"text": "price: 95.50 (incl. tax)", "parsed": "95.5"},
+    {"text": "-5", "parsed": null},
+    {"text": "95-120", "parsed": null},
+    {"text": "12 or 15", "parsed": null},
+    {"text": "1 200", "parsed": null},
+    {"text": "5.", "parsed": null},
+    {"text": ".5", "parsed": null},
+    {"text": "1.2.3", "parsed": null},
+    {"text": "...95", "parsed": null},
+    {"text": "", "parsed": null},
+    {"text": "price on request", "parsed": null}
+  ]
+}
