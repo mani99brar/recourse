@@ -135,3 +135,54 @@ export class LocalDocStore implements DocStore {
     return cid;
   }
 }
+
+/** Fetch half of the records package's pin client: bytes checked against the CID, throws on a miss. */
+export interface CheckedFetcher {
+  fetch(cid: string): Promise<Uint8Array>;
+}
+
+export interface PinnedDocStoreOptions {
+  /** Reads a document; the bytes it returns always hash to their CID. */
+  source: CheckedFetcher;
+  /** Pins new documents. Without one, `pin` throws. */
+  pinClient?: PinClient;
+  cacheEntries?: number;
+}
+
+/**
+ * Store over the shared pin client (the host's local content store, or Filebase through the
+ * gateway). Every failure to read is a retry: a document that is not there yet, a gateway error,
+ * or bytes that do not match their CID.
+ */
+export class PinnedDocStore implements DocStore {
+  private readonly cache = new Map<string, Uint8Array>();
+
+  constructor(private readonly o: PinnedDocStoreOptions) {}
+
+  async fetch(cid: string, options: FetchOptions = {}): Promise<Uint8Array | null> {
+    if (!CID.test(cid)) return null;
+    if (options.fresh !== true) {
+      const hit = this.cache.get(cid);
+      if (hit !== undefined) return hit;
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = await this.o.source.fetch(cid);
+    } catch (err) {
+      throw new TransientError(`document ${cid} not readable yet: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    this.cache.delete(cid);
+    this.cache.set(cid, bytes);
+    while (this.cache.size > (this.o.cacheEntries ?? 256)) {
+      const oldest = this.cache.keys().next();
+      if (oldest.done === true) break;
+      this.cache.delete(oldest.value);
+    }
+    return bytes;
+  }
+
+  async pin(bytes: Uint8Array): Promise<string> {
+    if (this.o.pinClient === undefined) throw new Error('no pin client is configured');
+    return this.o.pinClient.pin(bytes);
+  }
+}

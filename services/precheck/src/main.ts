@@ -5,6 +5,10 @@
 // --once      runs one tick and exits.
 // --local-docs  LOCAL RUNS ONLY: keep documents as files in <dir> instead of pinning them. Refused
 //             unless the Hedera RPC is on this machine.
+//
+// Documents are pinned and read through the shared pin client from @recourse/records: the host's
+// content store when IPFS_PIN_API_URL is a file:// URL, Filebase when its key, secret and bucket
+// are set. A live start without one is refused.
 
 import { fileURLToPath } from 'node:url';
 import { MirrorClient, makeClient, viemTxRpc, type TxSigner } from '@recourse/keeper';
@@ -12,17 +16,27 @@ import { loadSigner, readParties } from '@recourse/shared/node';
 import { partyByRole } from '@recourse/shared';
 import { systemClock } from './clock.js';
 import { loadConfig, type PrecheckConfig } from './config.js';
-import { GatewayDocStore, LocalDocStore, type DocStore, type PinClient } from './docs.js';
+import { GatewayDocStore, LocalDocStore, PinnedDocStore, type DocStore, type PinClient } from './docs.js';
+import { openPinClient, type PinClient as RecordsPinClient } from '@recourse/records';
 import { createApp, listen } from './http.js';
 import { PrecheckService } from './service.js';
 import { viemClaimsChain } from './writer.js';
 
-/**
- * WIRING POINT for the real pin client. Return a PinClient built from the records package here
- * once its pin client is ready. Until then live sends are refused (see `makeDocs`).
- */
-function realPinClient(_cfg: PrecheckConfig): PinClient | undefined {
-  return undefined;
+/** The shared pin client: the host's local content store or Filebase, as the environment sets. */
+function openPins(dryRun: boolean): RecordsPinClient | undefined {
+  try {
+    return openPinClient(process.env);
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    if (!dryRun) throw new Error(`documents cannot be pinned, refusing to send: ${why}`);
+    console.error(`dry run without a pin client: ${why}`);
+    return undefined;
+  }
+}
+
+/** The pin half the pre-check uses: the CID of the pinned bytes. */
+function realPinClient(pins: RecordsPinClient): PinClient {
+  return { pin: async (bytes) => (await pins.pin(bytes)).cid };
 }
 
 function isLoopback(url: string): boolean {
@@ -42,11 +56,10 @@ function makeDocs(cfg: PrecheckConfig, dryRun: boolean, localDir: string | undef
     console.error(`LOCAL DOC STORE in ${localDir}: documents are written to files and are not pinned to IPFS`);
     return new LocalDocStore(localDir);
   }
-  const pinClient = realPinClient(cfg);
-  if (pinClient === undefined && !dryRun) {
-    throw new Error('no pin client is wired (see realPinClient in main.ts): refusing to send. Use --dry-run, or --local-docs on a local chain');
-  }
-  return new GatewayDocStore({ gatewayUrl: cfg.gatewayUrl, ...(pinClient === undefined ? {} : { pinClient }) });
+  const pins = openPins(dryRun);
+  if (pins !== undefined) return new PinnedDocStore({ source: { fetch: (cid) => pins.fetch(cid) }, pinClient: realPinClient(pins) });
+  if (cfg.gatewayUrl !== '') return new GatewayDocStore({ gatewayUrl: cfg.gatewayUrl });
+  throw new Error('nothing to read documents from: set IPFS_PIN_API_URL or IPFS_GATEWAY_URL');
 }
 
 function argValue(args: string[], name: string): string | undefined {

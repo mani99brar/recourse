@@ -12,6 +12,7 @@
 
 import { isAddress, type Address, type PublicClient } from 'viem';
 import { buildEvidence, rawCidOfHash } from '@recourse/court';
+import { fetchDocument, hashOfCid, ipfsOptionsFromEnv, type IpfsOptions } from '@recourse/records';
 import { loadSigner } from '@recourse/shared/node';
 import { caseAbi, claimsAbi } from './abi.js';
 import { DEFAULT_GAS_FLOORS, LiveChains } from './adapter.js';
@@ -24,7 +25,6 @@ import { openJournal } from './journal.js';
 import { BlockLogReader, MirrorEventSource, type EventSource } from './logs.js';
 import { Keeper } from './machine.js';
 import { HederaLogReader, MirrorClient } from './mirror.js';
-import { getBytes } from './net.js';
 import { makeClient, viemTxRpc } from './rpc.js';
 import { Sender, type TxSigner } from './sender.js';
 import { tsSeconds } from './timestamps.js';
@@ -171,14 +171,28 @@ async function main(): Promise<void> {
     log,
   });
 
-  const gateway = cfg.ipfsGatewayUrl?.replace(/\/+$/, '');
+  // Documents are read like every service on this host reads them: the local content store first
+  // (IPFS_PIN_API_URL=file://...), then the gateway. A miss is "not there yet".
+  let ipfs: IpfsOptions | undefined;
+  try {
+    ipfs = ipfsOptionsFromEnv(process.env);
+  } catch (err) {
+    log(`warning: ${err instanceof Error ? err.message : String(err)}; evidence cannot be built and cases open without it near the deadline`);
+  }
   const evidence = evidenceAssembler({
     ...(cfg.precheckUrl ? { precheckUrl: cfg.precheckUrl } : {}),
-    fetchDoc: async (cid) => (gateway ? getBytes(`${gateway}/ipfs/${cid}`) : null),
+    fetchDoc: async (cid) => {
+      const hash = hashOfCid(cid);
+      if (ipfs === undefined || !hash) return null;
+      try {
+        return await fetchDocument(cid, hash, ipfs);
+      } catch {
+        return null;
+      }
+    },
     rawCidOfHash,
     build: buildEvidence as unknown as BuildEvidence,
   });
-  if (!gateway) log('warning: IPFS_GATEWAY_URL is not set; evidence cannot be built and cases open without it near the deadline');
 
   const alerter = new Alerter({ service: 'keeper', append, log, ...(cfg.alertUrl ? { url: cfg.alertUrl } : {}) });
   const courtLink = (id: string) => cfg.courtUrlTemplate.replace('{id}', id);

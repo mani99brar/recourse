@@ -110,7 +110,7 @@ export function loadConfig(env: Env = process.env, options: { deploymentsFile?: 
       'SEND_PAUSE_WINDOWS',
       'DEPLOYMENTS_DIR',
     ],
-    { env, defaults: { HEDERA_RPC_URL_2: '', ALERT_URL: '' } },
+    { env, defaults: { HEDERA_RPC_URL_2: '', ALERT_URL: '', IPFS_GATEWAY_URL: '' } },
   );
   const deployment = readDeployment(e.DEPLOYMENTS_DIR, options.deploymentsFile);
   return {

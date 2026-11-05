@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TransientError } from '@recourse/keeper';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GatewayDocStore, LocalDocStore, rawBlockCid } from '../src/docs.js';
+import { openPinClient } from '@recourse/records';
+import { GatewayDocStore, LocalDocStore, PinnedDocStore, rawBlockCid } from '../src/docs.js';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -84,5 +85,17 @@ describe('docs', () => {
     expect(await local.fetch(cid)).toEqual(bytes);
     expect(await local.pin(bytes)).toBe(cid);
     expect(await local.fetch('bafymissing')).toBeNull();
+  });
+
+  it('pins and reads through the shared pin client on a file:// content store', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'precheck-pinstore-'));
+    dirs.push(dir);
+    const pins = openPinClient({ IPFS_PIN_API_URL: `file://${dir}` });
+    const store = new PinnedDocStore({ source: { fetch: (cid) => pins.fetch(cid) }, pinClient: { pin: async (b) => (await pins.pin(b)).cid } });
+    const bytes = new TextEncoder().encode('{"doc":"result"}');
+    const cid = await store.pin(bytes);
+    expect(cid).toBe(rawBlockCid(bytes));
+    expect(await store.fetch(cid)).toEqual(bytes);
+    await expect(store.fetch(rawBlockCid(new Uint8Array([4, 4, 4])))).rejects.toBeInstanceOf(TransientError);
   });
 });
