@@ -149,7 +149,9 @@ contract RecoursePing is CCIPReceiver, Ownable {
             data: data,
             tokenAmounts: new Client.EVMTokenAmount[](0),
             feeToken: feeToken,
-            extraArgs: Client._argsToBytes(Client.GenericExtraArgsV2({gasLimit: gasLimit, allowOutOfOrderExecution: true}))
+            extraArgs: Client._argsToBytes(
+                Client.GenericExtraArgsV2({gasLimit: gasLimit, allowOutOfOrderExecution: true})
+            )
         });
     }
 
