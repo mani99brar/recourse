@@ -8,7 +8,10 @@
   },
   "scripts": {
     "start": "tsx src/main.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pay-once": "tsx scripts/pay-once.ts",
+    "h0-setup": "tsx scripts/h0-setup.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "2.85.0",
