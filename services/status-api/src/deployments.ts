@@ -1,5 +1,6 @@
-// Deployment files: where the contracts this repo deploys live. A `*.local.json` beside a file
-// (written by local runs) wins over the testnet file and may replace the outside addresses.
+// Deployment files: where the contracts this repo deploys live. The testnet files are read unless
+// HEDERA_LOCAL_FILE / ARBITRUM_LOCAL_FILE name a `*.local.json` (written by local runs), which may
+// also replace the outside addresses. A local file is never picked up just because it exists.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,7 +25,7 @@ export interface Deployments {
 type Json = Record<string, unknown>;
 
 function read(dir: string, name: string, override?: string): { json: Json; file: string } | null {
-  for (const file of [...(override ? [override] : []), `${name}.local.json`, `${name}.json`]) {
+  for (const file of override ? [override] : [`${name}.json`]) {
     const p = join(dir, file);
     if (existsSync(p)) {
       try {
