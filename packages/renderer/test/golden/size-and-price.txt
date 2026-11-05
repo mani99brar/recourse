@@ -1,0 +1,25 @@
+Order approval
+Order: 0x5e1d4f4f0c3b7a8e9d2c1b0a99887766554433221100ffeeddccbbaa99887766
+You pay: 42.50 USDC to 0.0.5005001 on hedera:testnet
+
+You asked for:
+  Brand: "Northwind"
+  Size: "M"
+  Colour: "Navy"
+  Quantity: "1"
+  Price (most you will pay): "40"
+  Merchant: "Demo Shop"
+
+This order:
+  Brand: "Northwind"
+  Size: "L"
+  Colour: "Navy"
+  Quantity: "1"
+  Price: "42.50 USDC"
+  Merchant: "Demo Shop"
+
+Changes from your request: 2
+  Size: asked "M", now "L"
+  Price: asked at most "40", now "42.50 USDC"
+
+Renderer version 1

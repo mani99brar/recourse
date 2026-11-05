@@ -1,0 +1,31 @@
+{
+  "rendererVersion": "1",
+  "fixtures": {
+    "no-change": {
+      "textHash": "0xb8aee0ec661ddbf83b5ced3cfa20f10f45805144c3f5766b5ebde72c98fddca7",
+      "changeSlot": "empty",
+      "changes": []
+    },
+    "size-and-price": {
+      "textHash": "0x759e897c906f3f4c494c3774033ce86dcb5abf4f2e0d305f1469026160649548",
+      "changeSlot": "filled",
+      "changes": [
+        "size",
+        "price"
+      ]
+    },
+    "absent": {
+      "textHash": "0x405e7796e49c45f3c8c388dfd0f9f0ad455ba61659079e7273bd3dee65b7b350",
+      "changeSlot": "empty",
+      "changes": []
+    },
+    "hostile": {
+      "textHash": "0x84d2a1982d6697ae742be287320bc27b6c7ea88945c0aec1259591c95915d9b5",
+      "changeSlot": "filled",
+      "changes": [
+        "brand",
+        "colour"
+      ]
+    }
+  }
+}
