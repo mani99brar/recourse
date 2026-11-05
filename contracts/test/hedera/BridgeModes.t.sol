@@ -75,7 +75,8 @@ contract BridgeModesTest is ClaimsBase {
 
     function test_both_sendCarriesExactPayload() public {
         bytes32 id = _contested(2, 1);
-        Client.EVM2AnyMessage memory expected = _expectedMessage(id, address(linkToken), BridgeCodec.extraArgsFor(300_000));
+        Client.EVM2AnyMessage memory expected =
+            _expectedMessage(id, address(linkToken), BridgeCodec.extraArgsFor(300_000));
         vm.expectCall(address(router), abi.encodeCall(IRouterClient.ccipSend, (ARB_SEL, expected)));
         vm.prank(stranger);
         bytes32 mid = claims.sendToCourt(id);
@@ -215,7 +216,8 @@ contract BridgeModesTest is ClaimsBase {
 
     function test_feeTokenSwitch_keepsPayloadBytes() public {
         bytes32 id = _contested(1, 1);
-        Client.EVM2AnyMessage memory viaLink = _expectedMessage(id, address(linkToken), BridgeCodec.extraArgsFor(300_000));
+        Client.EVM2AnyMessage memory viaLink =
+            _expectedMessage(id, address(linkToken), BridgeCodec.extraArgsFor(300_000));
         claims.sendToCourt(id);
 
         router.setFee(NATIVE_FEE);
@@ -238,7 +240,8 @@ contract BridgeModesTest is ClaimsBase {
 
     function test_resend_gapAndCap() public {
         bytes32 id = _contested(1, 1);
-        Client.EVM2AnyMessage memory expected = _expectedMessage(id, address(linkToken), BridgeCodec.extraArgsFor(300_000));
+        Client.EVM2AnyMessage memory expected =
+            _expectedMessage(id, address(linkToken), BridgeCodec.extraArgsFor(300_000));
         bytes32 first = claims.sendToCourt(id);
 
         vm.warp(T0 + 30 minutes - 1);

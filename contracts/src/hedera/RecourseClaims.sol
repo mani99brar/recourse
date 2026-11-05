@@ -286,9 +286,7 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         _applyRuling(rb.claimId, rb.disputeId, rb.ruling, rb.attempts, messageId);
     }
 
-    function _applyRuling(bytes32 claimId, uint256 disputeId, uint8 ruling, uint8 attempts, bytes32 messageId)
-        private
-    {
+    function _applyRuling(bytes32 claimId, uint256 disputeId, uint8 ruling, uint8 attempts, bytes32 messageId) private {
         Claim storage c = _claims[claimId];
         ClaimStatus s = c.status;
         if (s == ClaimStatus.None) {
