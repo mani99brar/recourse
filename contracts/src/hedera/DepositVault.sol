@@ -6,6 +6,7 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+import {RecourseAddresses} from "../shared/RecourseAddresses.sol";
 import {IDepositVault} from "./interfaces/IDepositVault.sol";
 import {IHederaTokenService} from "./interfaces/IHederaTokenService.sol";
 import {IHRC719} from "./interfaces/IHRC719.sol";
@@ -20,7 +21,7 @@ import {IHRC719} from "./interfaces/IHRC719.sol";
 ///      Accounting never reads the token balance. No function accepts native value.
 contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     /// @dev Hedera Token Service system contract.
-    address internal constant HTS = address(0x167);
+    address internal constant HTS = RecourseAddresses.HEDERA_HTS;
     /// @dev Hedera `ResponseCodeEnum` values treated as a successful association.
     int256 internal constant HTS_SUCCESS = 22;
     int256 internal constant HTS_ALREADY_ASSOCIATED = 194;

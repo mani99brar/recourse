@@ -4,6 +4,8 @@ pragma solidity 0.8.37;
 import {Test} from "forge-std/Test.sol";
 
 import {DepositVault} from "../../src/hedera/DepositVault.sol";
+import {RecourseClaims} from "../../src/hedera/RecourseClaims.sol";
+import {RecourseAddresses} from "../../src/shared/RecourseAddresses.sol";
 import {MockHTS} from "./mocks/MockHTS.sol";
 import {MockHtsUsdc} from "./mocks/MockHtsUsdc.sol";
 import {MockPRNG} from "./mocks/MockPRNG.sol";
@@ -14,15 +16,22 @@ contract DeployHelper {
     function deployVault(address usdc, address pool, address owner) external returns (DepositVault) {
         return new DepositVault(usdc, pool, owner);
     }
+
+    function deployClaims(address router, address link, address vault, uint64 arbSelector, address owner)
+        external
+        returns (RecourseClaims)
+    {
+        return new RecourseClaims(router, link, vault, arbSelector, owner);
+    }
 }
 
 /// @notice Shared fixture: Hedera system-contract mocks at their real addresses, the mock USDC at
 ///         the testnet USDC facade address, and named actors.
 abstract contract HederaBase is Test {
-    address internal constant HTS_ADDR = address(0x167);
-    address internal constant PRNG_ADDR = address(0x169);
+    address internal constant HTS_ADDR = RecourseAddresses.HEDERA_HTS;
+    address internal constant PRNG_ADDR = RecourseAddresses.HEDERA_PRNG;
     /// @dev Long-zero EVM address of testnet USDC 0.0.429274.
-    address internal constant USDC_ADDR = 0x0000000000000000000000000000000000068cDa;
+    address internal constant USDC_ADDR = RecourseAddresses.HEDERA_USDC;
 
     uint256 internal constant T0 = 1_800_000_000;
     uint256 internal constant USDC = 1e6;
