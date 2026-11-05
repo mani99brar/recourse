@@ -80,8 +80,8 @@ contract DeployLocal is CaseScript {
         CaseDeploy memory d;
         d.hederaSelector = RecourseAddresses.HEDERA_SELECTOR;
         d.owner = sender;
-        d.params = _defaultParams();
-        d.relayGas = RELAY_GAS;
+        d.params = _sharedParams();
+        d.relayGas = _relayGas();
         d.variant = variant;
         d.parts = _parts(variant);
         d.policyURI = _policyURI();

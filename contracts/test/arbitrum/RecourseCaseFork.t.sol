@@ -31,6 +31,7 @@ contract RecourseCaseForkTest is Test {
     uint256 internal constant EXPECTED_COST = 810_000_000_000_000;
     string internal constant GOLDEN = "../packages/court/template/golden.json";
     string internal constant CODEC = "../packages/shared/vectors/codec.json";
+    string internal constant PARAMS = "../packages/shared/vectors/params.json";
 
     RecourseCase internal rc;
     address internal claimsPeer = makeAddr("hedera-claims");
@@ -65,7 +66,7 @@ contract RecourseCaseForkTest is Test {
             A.HEDERA_SELECTOR,
             address(this),
             RecourseCase.Params({caseDeadline: 2 hours, maxOpenCases: 10, resendGap: 30 minutes, maxSends: 5}),
-            400_000
+            vm.parseJsonUint(vm.readFile(PARAMS), ".preLock.gasRulingBack")
         );
         rc.setTemplateText(parts);
         rc.setPolicyURI(vm.parseJsonString(golden, ".policyURI"));

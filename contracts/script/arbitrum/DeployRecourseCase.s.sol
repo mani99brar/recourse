@@ -33,8 +33,8 @@ contract DeployRecourseCase is CaseScript {
         d.registry = A.DISPUTE_TEMPLATE_REGISTRY;
         d.hederaSelector = A.HEDERA_SELECTOR;
         d.owner = sender;
-        d.params = _defaultParams();
-        d.relayGas = RELAY_GAS;
+        d.params = _sharedParams();
+        d.relayGas = _relayGas();
         d.variant = vm.envOr("CASE_TEMPLATE_VARIANT", uint256(1));
         d.parts = _parts(d.variant);
         d.policyURI = _policyURI();

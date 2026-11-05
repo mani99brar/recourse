@@ -4,18 +4,14 @@ pragma solidity 0.8.37;
 import {Script} from "forge-std/Script.sol";
 import {RecourseCase} from "../../src/arbitrum/RecourseCase.sol";
 
-/// @notice Shared pieces of the RecourseCase deploy scripts: start parameters, template text from the court package's
+/// @notice Shared pieces of the RecourseCase deploy scripts: start parameters from the shared parameter set, template text from the court package's
 /// golden file, the deploy and configure step, and the JSON of the deploy keys.
 abstract contract CaseScript is Script {
     string internal constant GOLDEN = "../packages/court/template/golden.json";
     string internal constant ABI_PATH = "deployments/abi/RecourseCase.json";
 
-    uint64 internal constant CASE_DEADLINE = 2 hours;
-    uint16 internal constant MAX_OPEN_CASES = 10;
-    uint64 internal constant RESEND_GAP = 30 minutes;
-    uint8 internal constant MAX_SENDS = 5;
-    /// @dev Receive gas for `RulingBack` on Hedera until it is measured there.
-    uint256 internal constant RELAY_GAS = 400_000;
+    /// @dev The shared parameter set; RecourseCase's start parameters and the RulingBack receive gas come from it.
+    string internal constant PARAMS = "../packages/shared/vectors/params.json";
 
     struct CaseDeploy {
         address router;
@@ -33,10 +29,25 @@ abstract contract CaseScript is Script {
         uint256 deployedAtTs;
     }
 
-    function _defaultParams() internal pure returns (RecourseCase.Params memory) {
-        return RecourseCase.Params({
-            caseDeadline: CASE_DEADLINE, maxOpenCases: MAX_OPEN_CASES, resendGap: RESEND_GAP, maxSends: MAX_SENDS
-        });
+    /// @dev Start parameters from the shared set. RecourseCase cannot change them after `lockConfig`, so the pre-lock
+    /// and locked values must agree.
+    function _sharedParams() internal view returns (RecourseCase.Params memory p) {
+        string memory j = vm.readFile(PARAMS);
+        p.caseDeadline = uint64(_param(j, "caseDeadline"));
+        p.maxOpenCases = uint16(_param(j, "maxOpenCases"));
+        p.resendGap = uint64(_param(j, "resendGap"));
+        p.maxSends = uint8(_param(j, "maxSends"));
+    }
+
+    /// @dev Receive gas for `RulingBack` on Hedera, from the shared set.
+    function _relayGas() internal view returns (uint256) {
+        return _param(vm.readFile(PARAMS), "gasRulingBack");
+    }
+
+    function _param(string memory j, string memory name) internal pure returns (uint256 v) {
+        v = vm.parseJsonUint(j, string.concat(".preLock.", name));
+        require(v == vm.parseJsonUint(j, string.concat(".locked.", name)), string.concat("CaseScript: ", name));
+        require(v > 0, string.concat("CaseScript: zero ", name));
     }
 
     /// @dev Template parts of variant `variant` (1-based, as numbered in the golden file).

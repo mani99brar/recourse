@@ -85,7 +85,7 @@ contract RecourseCaseTest is CaseBase {
         assertEq(address(rc).balance, POOL);
     }
 
-    // ================================================================== R7 receive
+    // ================================================================== receive
 
     function test_receive_storesNewClaim() public {
         bytes memory payload = payloadOf(1);
@@ -256,7 +256,7 @@ contract RecourseCaseTest is CaseBase {
         assertLt(used, 150_000);
     }
 
-    // ================================================================== R8 openCase
+    // ================================================================== openCase
 
     function test_openCase_paysExactLiveCost_andRegistersPreview() public {
         bytes memory payload = payloadOf(1);
@@ -384,7 +384,7 @@ contract RecourseCaseTest is CaseBase {
         assertEq(uint8(stateOf(idOf(1))), uint8(CaseState.Opened));
     }
 
-    // ================================================================== R12 template bytes
+    // ================================================================== template bytes
 
     /// @dev The on-chain template equals the TypeScript builder byte for byte, for every variant and fixture.
     function test_previewTemplate_matchesGoldenFile() public {
@@ -412,7 +412,7 @@ contract RecourseCaseTest is CaseBase {
         assertEq(reg.templateHashOf(0), keccak256(bytes(template)));
     }
 
-    // ================================================================== R9 rule
+    // ================================================================== rule
 
     function test_rule_attempt1Refused_refilePending() public {
         uint256 disputeId = receiveAndOpen(1);
@@ -535,7 +535,7 @@ contract RecourseCaseTest is CaseBase {
         vm.stopPrank();
     }
 
-    // ================================================================== R10 refile
+    // ================================================================== refile
 
     function test_refile_opensAttempt2WithCurrentText() public {
         uint256 first = toRuled(1, 0);
@@ -622,7 +622,7 @@ contract RecourseCaseTest is CaseBase {
         assertEq(rc.openCases(), 1);
     }
 
-    // ================================================================== R11 relay
+    // ================================================================== relay
 
     function test_relay_linkPaysExactFee_andSendsRulingBack() public {
         uint256 disputeId = toRuled(1, 2);
@@ -780,7 +780,7 @@ contract RecourseCaseTest is CaseBase {
         emit log_named_uint("relayRuling gas (LINK, local router, includes delivery to mock peer)", g - gasleft());
     }
 
-    // ================================================================== R13 fee pool, LINK, config
+    // ================================================================== fee pool, LINK, config
 
     function test_feePool_fundAndWithdraw() public {
         vm.deal(stranger, 1 ether);
@@ -941,7 +941,7 @@ contract RecourseCaseTest is CaseBase {
         assertEq(rc.owner(), stranger);
     }
 
-    // ================================================================== R14 trusted relay
+    // ================================================================== trusted relay
 
     function test_relayClaim_offByDefault() public {
         vm.prank(stranger);
