@@ -37,11 +37,14 @@ ALL_ROLES=(deployer ops-hedera ops-arb precheck-signer platform agent shop schem
 HEDERA_ROLES=(deployer ops-hedera precheck-signer platform agent shop scheme buyer facilitator)
 USDC_ROLES=(platform agent shop scheme ops-hedera buyer facilitator)
 
-# HBAR the deployer sends to each other Hedera role (sized for about 200 HBAR in total with
-# the deployer keeping the rest for deploys and ops-hedera funded by the operator). Override
-# with e.g. HBAR_SHOP=12.
+# Optional top-up: HBAR the deployer sends to another role when its own faucet claim fell short.
+# The faucet pays at most 10 HBAR per address, so each role is normally funded directly and
+# these amounts are the floors a role needs, all under 10. Roles at 0 need nothing (the public
+# facilitators are used before the self-hosted one). Override with e.g. HBAR_SHOP=4.
+# Measured costs on 5 Nov: an account created by a value transfer costs 0.76 HBAR on top of
+# the value; completing a hollow account costs 0.026 HBAR.
 declare -A HBAR_DEFAULT=(
-  [precheck-signer]=15 [platform]=10 [agent]=10 [shop]=10 [scheme]=10 [buyer]=5 [facilitator]=15
+  [precheck-signer]=3 [platform]=1 [agent]=2 [shop]=3 [scheme]=1 [buyer]=0 [facilitator]=0
 )
 # Arbitrum Sepolia ETH the deployer sends to ops-arb (of about 0.05 ETH in total).
 ARB_ETH_TO_OPS=${ARB_ETH_TO_OPS:-0.035}

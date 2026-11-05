@@ -39,7 +39,7 @@ ASSOC_GAS=${HEDERA_ASSOC_GAS:-1000000}
 USDC=0x0000000000000000000000000000000000068cDa
 USDC_ID=0.0.429274
 ROUTER=0x802C5F84eAD128Ff36fD6a3f8a418e339f467Ce4
-MIN_HBAR=30
+MIN_HBAR=12
 PARAMS="$ROOT/packages/shared/vectors/params.json"
 PARAM_KEYS='["contestWindow","claimTimeout","courtFeeUsdc","handlingBase","handlingBps","handlingCap","resendGap","maxSends","topUpWindow","exitDelay","minDeposit","gasClaimToCourt","gasRulingBack"]'
 

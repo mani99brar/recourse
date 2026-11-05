@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# The deployer sends HBAR to every other Hedera role. A value transfer to an EVM address that has
+# OPTIONAL top-up, not the main path: each role is normally funded straight from the faucet
+# (at most 10 HBAR per address). If a role is short of its floor, the deployer sends the
+# difference. A value transfer to an EVM address that has
 # no account makes the network create a hollow account for it (lazy create); the role then pays
 # for one self transaction to complete it, so it is a normal ECDSA account (x402 payers must not
-# be hollow). Amounts: see HBAR_DEFAULT in lib.sh. Usage: 02-fund-hedera-roles.sh [--send]
+# be hollow). Floors: see HBAR_DEFAULT in lib.sh. A new account costs 0.76 HBAR extra. Usage: 02-fund-hedera-roles.sh [--send]
 source "$(dirname "$0")/lib.sh"; need_tools; parse_send_flag "$@"
 if ! is_complete deployer; then
   echo "deployer is not complete yet; run 01-complete-hedera.sh --send first" >&2
@@ -17,6 +19,7 @@ bal=$(cast balance "$(addr deployer)" --rpc-url "$HEDERA_RPC_URL_1" --ether 2>/d
 echo "deployer holds $bal HBAR; this run sends $total HBAR plus fees"
 for role in precheck-signer platform agent shop scheme buyer facilitator; do
   v=HBAR_${role//-/_}; v=${v^^}; amt=${!v:-${HBAR_DEFAULT[$role]}}
+  if [[ $amt == 0 ]]; then echo "$role: needs no HBAR, skipping"; continue; fi
   if [[ -n $(account_id "$role") && $(mirror_account "$role" | jq -r '.balance.balance') -ge $((amt * 100000000)) ]]; then
     echo "$role: already holds at least $amt HBAR, skipping transfer"
   else

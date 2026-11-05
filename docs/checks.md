@@ -2,7 +2,7 @@
 
 Every value below was read by `ops/checks/readonly.sh` on 2026-11-05 between 17:21 and 17:29 UTC from the build host. No transaction was sent and no role holds funds. Re-run with `bash ops/checks/readonly.sh` (about 2 minutes); endpoints come from `HEDERA_RPC_URL_1`, `HEDERA_RPC_URL_2`, `HEDERA_MIRROR_URL`, `ARB_RPC_URL`, `ARB_RPC_URL_2`, `SEPOLIA_RPC_URL` when set, otherwise the public ones named in the table (host names only are printed, so a keyed URL never reaches this file).
 
-No keyed RPC endpoint exists yet; everything here ran on free public endpoints.
+No keyed RPC endpoint exists yet; everything here ran on free public endpoints. The role balances and mirror rows in the table are a snapshot from this first run, when no role was funded; later funding is described in `docs/keys.md` and read with `ops/fund/balances.sh`.
 
 ## Items that fail or need attention
 
@@ -121,7 +121,7 @@ Reading the table:
 | Check | Why |
 |---|---|
 | `ccip-cli` fee quotes, `send --help` / `manual-exec --help` signing options, timed pings, `ccip-cli show` | The package download was not permitted in this session; pings also need funded wallets |
-| Hedera accounts exist, are ECDSA and not hollow; USDC association and balances; LINK and HBAR on ops roles | No account exists yet (mirror 404 for all ten addresses); see `docs/keys.md` and `ops/fund/` |
+| Hedera accounts exist, are ECDSA and not hollow; USDC association and balances; LINK and HBAR on ops roles | At the time of this run no account existed (mirror 404 for all ten addresses); see `docs/keys.md` and `ops/fund/` |
 | Arkiv RPC chain id and tGLM, LLM key, IPFS pin key, public HTTPS host, alert path | No credentials or host set up on this machine yet. The public gateway `gateway.pinata.cloud` served the court 8 policy CID with 200 in 8.7 s; `ipfs.io` and `dweb.link` returned 429 |
 | ERC-8004 `register` overloads and the self-feedback revert check | Needs the verified ABI; only code and `getVersion()` were read |
 | Facilitator `/supported` lists, Goldsky subgraph (recent court 8 disputes) | Not run |

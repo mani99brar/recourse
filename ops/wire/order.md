@@ -22,7 +22,7 @@ Rules that apply to every step:
 
 | # | Command | Expect |
 |---|---|---|
-| 0.1 | `bash ops/fund/balances.sh` | deployer at least 30 HBAR and some Arbitrum Sepolia ETH; ops-hedera and ops-arb hold LINK; platform holds USDC |
+| 0.1 | `bash ops/fund/balances.sh` | each address is faucet-funded directly (at most 10 HBAR per address, so there is no pooled balance). HBAR floors: deployer 12 before the Hedera deploy (the deploy costs about 8.4 HBAR) and at least 2 after it for wiring, `setParams`, `setRequired` and the lock; ops-hedera 10; precheck-signer 3; shop 3; agent 2; platform 1; scheme 1; buyer and facilitator 0. The deployer also holds some Arbitrum Sepolia ETH; ops-hedera and ops-arb hold LINK; platform holds USDC (20 per faucet claim, 18 of it deposited) |
 | 0.2 | `(cd contracts && forge test --jobs 1)` under the suite lock | green on the commit being deployed |
 | 0.3 | `bash ops/wire/rehearse.sh` under the suite lock | `rehearsal complete` (local anvils only) |
 
@@ -30,7 +30,7 @@ Rules that apply to every step:
 
 | Step | Command | Read-back |
 |---|---|---|
-| 1.1 | `contracts/script/hedera/hedera.sh preflight` | `preflight OK` (chain 296, deployer at least 30 HBAR, USDC token on the mirror, router code, inputs set) |
+| 1.1 | `contracts/script/hedera/hedera.sh preflight` | `preflight OK` (chain 296, deployer at least 12 HBAR, USDC token on the mirror, router code, inputs set) |
 | 1.2 | `hedera.sh deploy`, then `hedera.sh deploy --broadcast` | vault and claims addresses logged; transactions in `contracts/broadcast/Deploy.s.sol/296/run-latest.json` |
 | 1.3 | `hedera.sh associate --broadcast` | prints `USDC steps may proceed` after the mirror lists the vault's USDC row. **No USDC moves before this.** |
 | 1.4 | `hedera.sh record` | writes `deployments/hedera.json` (contract ids come from the mirror; rerun if it says not indexed) |
