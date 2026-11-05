@@ -1,39 +1,39 @@
 {
   "gas": {
-    "measuredAt": "2026-11-05T18:51:29Z",
-    "forkBlock": 326383959,
+    "measuredAt": "2026-11-05T19:43:06Z",
+    "forkBlock": 326395558,
     "marginPct": 25,
     "ccipReceive": {
-      "used": 94998,
-      "limit": 118748
+      "used": 95364,
+      "limit": 119205
     },
     "openCase": {
-      "used": 1016422,
-      "limit": 1270528
+      "used": 1016578,
+      "limit": 1270723
     },
     "refile": {
-      "used": 976906,
-      "limit": 1221133
+      "used": 977084,
+      "limit": 1221355
     },
     "ruleRefuse": {
-      "used": 37935,
-      "limit": 47419
+      "used": 37917,
+      "limit": 47397
     },
     "ruleFinal": {
-      "used": 37031,
-      "limit": 46289
+      "used": 37013,
+      "limit": 46267
     },
     "ruleIgnored": {
       "used": 32875,
       "limit": 41094
     },
     "relayRulingLink": {
-      "used": 339231,
-      "limit": 424039
+      "used": 339219,
+      "limit": 424024
     },
     "relayRulingNative": {
-      "used": 335826,
-      "limit": 419783
+      "used": 335811,
+      "limit": 419764
     }
   }
 }

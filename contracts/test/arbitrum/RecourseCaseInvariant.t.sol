@@ -102,6 +102,12 @@ contract CaseHandler is CommonBase, StdUtils {
         _check(n);
     }
 
+    function markStale(uint256 n) external {
+        n = n % CLAIMS;
+        try rc.markStale(TestPayloads.idOf(n)) {} catch {}
+        _check(n);
+    }
+
     function relay(uint256 n, bool native, uint256 extra) external {
         n = n % CLAIMS;
         bytes32 claimId = TestPayloads.idOf(n);

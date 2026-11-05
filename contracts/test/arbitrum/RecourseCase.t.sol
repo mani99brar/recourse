@@ -42,28 +42,31 @@ contract RecourseCaseTest is CaseBase {
         assertFalse(rc.locked());
         assertEq(rc.feePool(), POOL);
         assertEq(rc.costNow(), COST);
+        assertEq(rc.claimTimeout(), CLAIM_TIMEOUT);
     }
 
     function test_constructor_revertsOnZeroOrBadArgs() public {
         CaseDeployer d = new CaseDeployer();
         RecourseCase.Params memory ok = RecourseCase.Params(DEADLINE, MAX_OPEN, RESEND_GAP, MAX_SENDS);
         // One probe that always succeeds, so the reverts below are about the arguments.
-        d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, RELAY_GAS);
+        d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, RELAY_GAS, CLAIM_TIMEOUT);
 
         vm.expectRevert(abi.encodeWithSelector(CCIPReceiver.InvalidRouter.selector, address(0)));
-        d.deploy(address(0), address(link), address(arb), address(reg), sel, owner, ok, RELAY_GAS);
+        d.deploy(address(0), address(link), address(arb), address(reg), sel, owner, ok, RELAY_GAS, CLAIM_TIMEOUT);
         vm.expectRevert(IRecourseCase.ZeroAddress.selector);
-        d.deploy(address(router), address(0), address(arb), address(reg), sel, owner, ok, RELAY_GAS);
+        d.deploy(address(router), address(0), address(arb), address(reg), sel, owner, ok, RELAY_GAS, CLAIM_TIMEOUT);
         vm.expectRevert(IRecourseCase.ZeroAddress.selector);
-        d.deploy(address(router), address(link), address(0), address(reg), sel, owner, ok, RELAY_GAS);
+        d.deploy(address(router), address(link), address(0), address(reg), sel, owner, ok, RELAY_GAS, CLAIM_TIMEOUT);
         vm.expectRevert(IRecourseCase.ZeroAddress.selector);
-        d.deploy(address(router), address(link), address(arb), address(0), sel, owner, ok, RELAY_GAS);
+        d.deploy(address(router), address(link), address(arb), address(0), sel, owner, ok, RELAY_GAS, CLAIM_TIMEOUT);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
-        d.deploy(address(router), address(link), address(arb), address(reg), sel, address(0), ok, RELAY_GAS);
+        d.deploy(
+            address(router), address(link), address(arb), address(reg), sel, address(0), ok, RELAY_GAS, CLAIM_TIMEOUT
+        );
         vm.expectRevert(IRecourseCase.BadParams.selector);
-        d.deploy(address(router), address(link), address(arb), address(reg), 0, owner, ok, RELAY_GAS);
+        d.deploy(address(router), address(link), address(arb), address(reg), 0, owner, ok, RELAY_GAS, CLAIM_TIMEOUT);
         vm.expectRevert(IRecourseCase.ZeroGasLimit.selector);
-        d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, 0);
+        d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, 0, CLAIM_TIMEOUT);
         vm.expectRevert(IRecourseCase.BadParams.selector);
         d.deploy(
             address(router),
@@ -73,8 +76,11 @@ contract RecourseCaseTest is CaseBase {
             sel,
             owner,
             RecourseCase.Params(0, 1, 0, 1),
-            RELAY_GAS
+            RELAY_GAS,
+            CLAIM_TIMEOUT
         );
+        vm.expectRevert(IRecourseCase.BadParams.selector);
+        d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, RELAY_GAS, 0);
     }
 
     function test_plainEth_reverts() public {
@@ -407,8 +413,11 @@ contract RecourseCaseTest is CaseBase {
         (uint256 variant, bytes memory payload, string memory template) = goldenCase(0);
         vm.prank(owner);
         rc.setTemplateText(variantParts(variant - 1));
+        (, ClaimToCourt memory c) = BridgeCodec.tryDecodeClaimToCourt(payload);
+        vm.warp(uint256(c.filedAt) + 1 hours); // the fixture's own filing time, so the claim is live
         deliver(payload);
-        rc.openCase(payload);
+        assertGt(rc.openCase(payload) + 1, 0);
+        assertEq(uint8(stateOf(c.claimId)), uint8(CaseState.Opened));
         assertEq(reg.templateHashOf(0), keccak256(bytes(template)));
     }
 
@@ -941,6 +950,147 @@ contract RecourseCaseTest is CaseBase {
         assertEq(rc.owner(), stranger);
     }
 
+    // ================================================================== claim expiry
+
+    /// @dev A claim filed `age` seconds before now, so it expires `CLAIM_TIMEOUT - age` from now.
+    function _freshPayload(uint256 n, uint256 age) internal view returns (bytes memory) {
+        ClaimToCourt memory c = claimOf(n);
+        c.filedAt = uint64(block.timestamp - age);
+        return BridgeCodec.encodeClaimToCourt(c);
+    }
+
+    function test_expiresAt_isFiledAtPlusTimeout() public {
+        deliver(payloadOf(1));
+        assertEq(rc.expiresAt(idOf(1)), claimOf(1).filedAt + CLAIM_TIMEOUT);
+        assertEq(rc.expiresAt(idOf(2)), 0);
+    }
+
+    function test_expiresAt_saturatesInsteadOfReverting() public {
+        ClaimToCourt memory c = claimOf(1);
+        c.filedAt = type(uint64).max;
+        deliver(BridgeCodec.encodeClaimToCourt(c));
+        assertEq(uint8(stateOf(idOf(1))), uint8(CaseState.Received));
+        assertEq(rc.expiresAt(idOf(1)), type(uint40).max);
+    }
+
+    /// @dev Disputes that never rule would hold every slot for good, also after lock; once their claims expire,
+    /// anyone frees the slots and new claims open again. A late ruling for a freed case changes nothing.
+    function test_markStale_freesSlotsHeldByUnruledDisputes() public {
+        rc.fundFeePool{value: 1 ether}();
+        uint256[] memory ids = new uint256[](MAX_OPEN);
+        for (uint256 n = 1; n <= MAX_OPEN; ++n) {
+            ids[n - 1] = receiveAndOpen(n);
+        }
+        vm.prank(owner);
+        rc.lockConfig();
+        assertEq(rc.openCases(), MAX_OPEN);
+
+        vm.warp(rc.expiresAt(idOf(1)));
+        bytes memory fresh = _freshPayload(100, 1 hours);
+        deliver(fresh);
+        vm.prank(keeper);
+        vm.expectRevert(IRecourseCase.CapReached.selector);
+        rc.openCase(fresh);
+
+        uint256 pool = rc.feePool();
+        for (uint256 n = 1; n <= MAX_OPEN; ++n) {
+            vm.expectEmit(true, false, false, false, address(rc));
+            emit IRecourseCase.ClaimStale(idOf(n));
+            vm.prank(stranger);
+            rc.markStale(idOf(n));
+            assertEq(uint8(stateOf(idOf(n))), uint8(CaseState.Stale));
+        }
+        assertEq(rc.openCases(), 0);
+        assertEq(rc.feePool(), pool);
+
+        vm.prank(keeper);
+        assertGt(rc.openCase(fresh), 0);
+        assertEq(rc.openCases(), 1);
+
+        vm.expectEmit(true, false, false, true, address(rc));
+        emit IRecourseCase.RuleIgnored(ids[0], 1);
+        arb.giveRuling(ids[0], 1);
+        assertEq(uint8(stateOf(idOf(1))), uint8(CaseState.Stale));
+        assertEq(rc.openCases(), 1);
+    }
+
+    function test_markStale_notBeforeExpiry() public {
+        receiveAndOpen(1);
+        uint64 at = rc.expiresAt(idOf(1));
+        vm.warp(at - 1);
+        vm.expectRevert(abi.encodeWithSelector(IRecourseCase.NotExpired.selector, at));
+        rc.markStale(idOf(1));
+        vm.warp(at);
+        rc.markStale(idOf(1));
+        assertEq(rc.openCases(), 0);
+    }
+
+    function test_markStale_receivedAndRefilePending() public {
+        deliver(payloadOf(1));
+        toRuled(2, 0);
+        assertEq(rc.openCases(), 1);
+        vm.warp(rc.expiresAt(idOf(2)));
+        rc.markStale(idOf(1));
+        assertEq(rc.openCases(), 1, "a Received claim holds no slot");
+        rc.markStale(idOf(2));
+        assertEq(rc.openCases(), 0);
+        assertEq(uint8(stateOf(idOf(1))), uint8(CaseState.Stale));
+        assertEq(uint8(stateOf(idOf(2))), uint8(CaseState.Stale));
+    }
+
+    function test_markStale_wrongStates() public {
+        vm.warp(T0 + 30 days);
+        vm.expectRevert(abi.encodeWithSelector(IRecourseCase.WrongState.selector, idOf(1), CaseState.None));
+        rc.markStale(idOf(1));
+
+        vm.warp(T0);
+        toRuled(1, 2);
+        toRuled(2, 1);
+        rc.relayRuling(idOf(2));
+        deliver(payloadOf(3));
+        vm.warp(T0 + 30 days);
+        rc.markStale(idOf(3));
+        CaseState[3] memory states = [CaseState.Ruled, CaseState.Relayed, CaseState.Stale];
+        for (uint256 i = 0; i < 3; i++) {
+            vm.expectRevert(abi.encodeWithSelector(IRecourseCase.WrongState.selector, idOf(i + 1), states[i]));
+            rc.markStale(idOf(i + 1));
+        }
+        // A final ruling still relays after the claim's expiry; Hedera decides what to do with it.
+        rc.relayRuling(idOf(1));
+    }
+
+    /// @dev A refusal late in the claim's life: the refile window is still open, but the claim has expired, so the
+    /// second arbitration cost is not paid.
+    function test_refile_afterExpirySpendsNothing() public {
+        uint256 first = receiveAndOpen(1);
+        vm.warp(block.timestamp + 8100); // about one court round
+        arb.giveRuling(first, 0);
+        vm.warp(block.timestamp + DEADLINE - 1); // inside ruledAt + caseDeadline, past expiresAt
+        assertGe(block.timestamp, rc.expiresAt(idOf(1)));
+        uint256 pool = rc.feePool();
+        vm.expectEmit(true, false, false, false, address(rc));
+        emit IRecourseCase.ClaimStale(idOf(1));
+        vm.prank(keeper);
+        assertEq(rc.refile(payloadOf(1)), 0);
+        assertEq(rc.feePool(), pool);
+        assertEq(rc.openCases(), 0);
+        assertEq(arb.disputeCount(), 1);
+        assertEq(uint8(stateOf(idOf(1))), uint8(CaseState.Stale));
+    }
+
+    function test_openCase_afterExpirySpendsNothing() public {
+        // Filed 3.5 hours ago: expires in 30 minutes, well before receivedAt + caseDeadline.
+        bytes memory payload = _freshPayload(1, 3.5 hours);
+        deliver(payload);
+        vm.warp(block.timestamp + 30 minutes);
+        uint256 pool = rc.feePool();
+        assertEq(rc.openCase(payload), 0);
+        assertEq(uint8(stateOf(idOf(1))), uint8(CaseState.Stale));
+        assertEq(rc.feePool(), pool);
+        assertEq(rc.openCases(), 0);
+        assertEq(arb.disputeCount(), 0);
+    }
+
     // ================================================================== trusted relay
 
     function test_relayClaim_offByDefault() public {
@@ -1034,7 +1184,8 @@ contract RecourseCaseTest is CaseBase {
                 sel,
                 owner,
                 RecourseCase.Params(DEADLINE, MAX_OPEN, RESEND_GAP, MAX_SENDS),
-                RELAY_GAS
+                RELAY_GAS,
+                CLAIM_TIMEOUT
             ),
             at
         );

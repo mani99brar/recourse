@@ -60,6 +60,8 @@ abstract contract CaseBase is Test {
     uint64 internal constant RESEND_GAP = 30 minutes;
     uint8 internal constant MAX_SENDS = 5;
     uint256 internal constant RELAY_GAS = 400_000;
+    /// @dev Claims are filed at T0 - 1 hour (see TestPayloads), so they expire at T0 + 3 hours.
+    uint64 internal constant CLAIM_TIMEOUT = 4 hours;
     uint256 internal constant T0 = 1_800_000_000;
 
     CCIPLocalSimulator internal sim;
@@ -116,7 +118,8 @@ abstract contract CaseBase is Test {
             RecourseCase.Params({
                 caseDeadline: DEADLINE, maxOpenCases: MAX_OPEN, resendGap: RESEND_GAP, maxSends: MAX_SENDS
             }),
-            RELAY_GAS
+            RELAY_GAS,
+            CLAIM_TIMEOUT
         );
     }
 
@@ -222,10 +225,13 @@ contract CaseDeployer {
         uint64 hederaSelector_,
         address owner_,
         RecourseCase.Params memory init,
-        uint256 relayGasLimit
+        uint256 relayGasLimit,
+        uint64 claimTimeout_
     ) external returns (address) {
         return address(
-            new RecourseCase(router, link_, arbitrator_, registry, hederaSelector_, owner_, init, relayGasLimit)
+            new RecourseCase(
+                router, link_, arbitrator_, registry, hederaSelector_, owner_, init, relayGasLimit, claimTimeout_
+            )
         );
     }
 }

@@ -82,6 +82,7 @@ contract DeployLocal is CaseScript {
         d.owner = sender;
         d.params = _sharedParams();
         d.relayGas = _relayGas();
+        d.claimTimeout = _claimTimeout();
         d.variant = variant;
         d.parts = _parts(variant);
         d.policyURI = _policyURI();

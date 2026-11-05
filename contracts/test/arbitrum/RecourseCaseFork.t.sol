@@ -66,7 +66,8 @@ contract RecourseCaseForkTest is Test {
             A.HEDERA_SELECTOR,
             address(this),
             RecourseCase.Params({caseDeadline: 2 hours, maxOpenCases: 10, resendGap: 30 minutes, maxSends: 5}),
-            vm.parseJsonUint(vm.readFile(PARAMS), ".preLock.gasRulingBack")
+            vm.parseJsonUint(vm.readFile(PARAMS), ".preLock.gasRulingBack"),
+            uint64(vm.parseJsonUint(vm.readFile(PARAMS), ".locked.claimTimeout"))
         );
         rc.setTemplateText(parts);
         rc.setPolicyURI(vm.parseJsonString(golden, ".policyURI"));

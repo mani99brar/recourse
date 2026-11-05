@@ -55,17 +55,20 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
     IDisputeTemplateRegistry internal immutable TEMPLATE_REGISTRY;
     IERC20 internal immutable LINK;
     uint64 internal immutable HEDERA_SELECTOR;
+    uint64 internal immutable CLAIM_TIMEOUT;
 
     // ---------------------------------------------------------------- storage
 
+    /// @dev Times are unix seconds in uint40 (good past the year 30000) so all of them share the first slot.
     struct Case {
         CaseState state;
         uint8 attempts;
         uint8 ruling;
         uint8 sendCount;
-        uint64 receivedAt;
-        uint64 ruledAt;
-        uint64 lastSendAt;
+        uint40 receivedAt;
+        uint40 ruledAt;
+        uint40 lastSendAt;
+        uint40 expiresAt;
         bytes32 payloadHash;
         bytes32 lastMessageId;
         uint256[2] disputeIds;
@@ -113,6 +116,8 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
     /// @param owner_ Owner of the configuration and the fee pool.
     /// @param init Start parameters (see `setParams`).
     /// @param relayGasLimit Receive gas for `RulingBack` on Hedera; becomes `GenericExtraArgsV2` extra args.
+    /// @param claimTimeout_ Hedera's claim timeout after lock: a claim filed at `filedAt` can no longer use a ruling
+    /// from `filedAt + claimTimeout_` on (see `expiresAt`).
     constructor(
         address router,
         address link_,
@@ -121,17 +126,19 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         uint64 hederaSelector_,
         address owner_,
         Params memory init,
-        uint256 relayGasLimit
+        uint256 relayGasLimit,
+        uint64 claimTimeout_
     ) CCIPReceiver(router) Ownable(owner_) {
         if (link_ == address(0) || arbitrator_ == address(0) || registry == address(0) || owner_ == address(0)) {
             revert ZeroAddress();
         }
-        if (hederaSelector_ == 0) revert BadParams();
+        if (hederaSelector_ == 0 || claimTimeout_ == 0) revert BadParams();
         if (relayGasLimit == 0) revert ZeroGasLimit();
         LINK = IERC20(link_);
         ARBITRATOR = IArbitratorV2(arbitrator_);
         TEMPLATE_REGISTRY = IDisputeTemplateRegistry(registry);
         HEDERA_SELECTOR = hederaSelector_;
+        CLAIM_TIMEOUT = claimTimeout_;
         _setParams(init.caseDeadline, init.maxOpenCases, init.resendGap, init.maxSends);
         extraArgs_ = BridgeCodec.extraArgsFor(relayGasLimit);
         emit ExtraArgsSet(extraArgs_);
@@ -182,7 +189,9 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
             return;
         }
         k.state = CaseState.Received;
-        k.receivedAt = uint64(block.timestamp);
+        k.receivedAt = uint40(block.timestamp);
+        uint256 expiry = uint256(c.filedAt) + CLAIM_TIMEOUT;
+        k.expiresAt = expiry > type(uint40).max ? type(uint40).max : uint40(expiry);
         k.payloadHash = keccak256(payload);
         emit ClaimReceived(c.claimId, messageId, payload);
     }
@@ -205,7 +214,7 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         (bytes32 claimId, Case storage k) = _caseOfPayload(payload);
         if (k.state != CaseState.Received) revert WrongState(claimId, k.state);
         if (keccak256(payload) != k.payloadHash) revert HashMismatch();
-        if (block.timestamp >= uint256(k.receivedAt) + p.caseDeadline) {
+        if (block.timestamp >= uint256(k.receivedAt) + p.caseDeadline || block.timestamp >= k.expiresAt) {
             k.state = CaseState.Stale;
             emit ClaimStale(claimId);
             return 0;
@@ -220,13 +229,26 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         (bytes32 claimId, Case storage k) = _caseOfPayload(payload);
         if (k.state != CaseState.RefilePending || k.attempts != 1) revert WrongState(claimId, k.state);
         if (keccak256(payload) != k.payloadHash) revert HashMismatch();
-        if (block.timestamp >= uint256(k.ruledAt) + p.caseDeadline) {
+        if (block.timestamp >= uint256(k.ruledAt) + p.caseDeadline || block.timestamp >= k.expiresAt) {
             k.state = CaseState.Stale;
             _releaseCap();
             emit ClaimStale(claimId);
             return 0;
         }
         disputeId = _open(claimId, k, payload, 2);
+    }
+
+    /// @inheritdoc IRecourseCase
+    function markStale(bytes32 claimId) external {
+        Case storage k = cases[claimId];
+        CaseState s = k.state;
+        if (s != CaseState.Received && s != CaseState.Opened && s != CaseState.RefilePending) {
+            revert WrongState(claimId, s);
+        }
+        if (block.timestamp < k.expiresAt) revert NotExpired(uint64(k.expiresAt));
+        k.state = CaseState.Stale;
+        if (s != CaseState.Received) _releaseCap();
+        emit ClaimStale(claimId);
     }
 
     /// @dev Pays exactly the live cost, registers the template and creates the dispute, then records it. The case
@@ -265,7 +287,7 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
             return;
         }
         k.ruling = uint8(ruling);
-        k.ruledAt = uint64(block.timestamp);
+        k.ruledAt = uint40(block.timestamp);
         emit Ruling(ARBITRATOR, disputeID, ruling);
         if (ruling == 0 && d.attempt == 1) {
             k.state = CaseState.RefilePending;
@@ -292,7 +314,7 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         if (peer == address(0)) revert PeerNotSet();
         if (k.sendCount >= p.maxSends) revert MaxSendsReached();
         if (k.sendCount > 0) {
-            uint64 nextAt = k.lastSendAt + p.resendGap;
+            uint64 nextAt = uint64(k.lastSendAt) + p.resendGap;
             if (block.timestamp < nextAt) revert SendTooSoon(nextAt);
         }
 
@@ -303,7 +325,7 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
 
         k.state = CaseState.Relayed;
         k.sendCount += 1;
-        k.lastSendAt = uint64(block.timestamp);
+        k.lastSendAt = uint40(block.timestamp);
 
         if (native) {
             if (msg.value < fee) revert InsufficientValue(msg.value, fee);
@@ -467,6 +489,16 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         v.sendCount = k.sendCount;
         v.lastSendAt = k.lastSendAt;
         v.lastMessageId = k.lastMessageId;
+    }
+
+    /// @inheritdoc IRecourseCase
+    function expiresAt(bytes32 claimId) external view returns (uint64) {
+        return cases[claimId].expiresAt;
+    }
+
+    /// @inheritdoc IRecourseCase
+    function claimTimeout() external view returns (uint64) {
+        return CLAIM_TIMEOUT;
     }
 
     /// @inheritdoc IRecourseCase

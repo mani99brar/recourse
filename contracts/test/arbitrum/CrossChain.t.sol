@@ -49,7 +49,8 @@ contract CrossChainTest is ClaimsBase {
             simSelector,
             owner,
             RecourseCase.Params({caseDeadline: 2 hours, maxOpenCases: 10, resendGap: 30 minutes, maxSends: 5}),
-            RECEIVE_GAS
+            RECEIVE_GAS,
+            uint64(_params().claimTimeout)
         );
         string memory golden = vm.readFile(GOLDEN);
         string[4] memory parts;

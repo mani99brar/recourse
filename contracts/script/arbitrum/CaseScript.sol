@@ -22,6 +22,7 @@ abstract contract CaseScript is Script {
         address owner;
         RecourseCase.Params params;
         uint256 relayGas;
+        uint64 claimTimeout;
         uint256 variant;
         string[4] parts;
         string policyURI;
@@ -42,6 +43,13 @@ abstract contract CaseScript is Script {
     /// @dev Receive gas for `RulingBack` on Hedera, from the shared set.
     function _relayGas() internal view returns (uint256) {
         return _param(vm.readFile(PARAMS), "gasRulingBack");
+    }
+
+    /// @dev Hedera's claim timeout after lock (the longer one), so a case is never marked expired while Hedera can
+    /// still take its ruling.
+    function _claimTimeout() internal view returns (uint64 t) {
+        t = uint64(vm.parseJsonUint(vm.readFile(PARAMS), ".locked.claimTimeout"));
+        require(t > 0, "CaseScript: zero claimTimeout");
     }
 
     function _param(string memory j, string memory name) internal pure returns (uint256 v) {
@@ -70,7 +78,7 @@ abstract contract CaseScript is Script {
     /// @dev Inside a broadcast: deploys the case (owner = the broadcaster) and sets template text and policy.
     function _deployCase(CaseDeploy memory d) internal returns (RecourseCase rc) {
         rc = new RecourseCase(
-            d.router, d.link, d.arbitrator, d.registry, d.hederaSelector, d.owner, d.params, d.relayGas
+            d.router, d.link, d.arbitrator, d.registry, d.hederaSelector, d.owner, d.params, d.relayGas, d.claimTimeout
         );
         rc.setTemplateText(d.parts);
         rc.setPolicyURI(d.policyURI);
@@ -142,6 +150,8 @@ abstract contract CaseScript is Script {
             _raw("params", string.concat("{", params, "}")),
             ",",
             _num("relayGasLimit", d.relayGas),
+            ",",
+            _num("claimTimeout", d.claimTimeout),
             "}"
         );
     }

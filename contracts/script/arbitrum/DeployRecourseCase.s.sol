@@ -35,6 +35,7 @@ contract DeployRecourseCase is CaseScript {
         d.owner = sender;
         d.params = _sharedParams();
         d.relayGas = _relayGas();
+        d.claimTimeout = _claimTimeout();
         d.variant = vm.envOr("CASE_TEMPLATE_VARIANT", uint256(1));
         d.parts = _parts(d.variant);
         d.policyURI = _policyURI();
