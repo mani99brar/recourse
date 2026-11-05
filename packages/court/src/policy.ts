@@ -19,8 +19,8 @@ export interface PolicyRecord {
 
 export const POLICY: PolicyRecord = {
   path: 'policy/policy-v1.md',
-  sha256: '0x59c50b00799644b71422702233e13b2157b2f362fdbe3717b394940834939d43',
-  cid: 'bafkreiczyufqa6mwis3riitqeiz6cozbk6zpgyx5xy3rpm4usqedje45im',
-  uri: '/ipfs/bafkreiczyufqa6mwis3riitqeiz6cozbk6zpgyx5xy3rpm4usqedje45im',
-  size: 5769,
+  sha256: '0x5efd65be933b514c8a432d240e5e5bbb7a35bc0e1200849d7bab0290d29286ee',
+  cid: 'bafkreic67vs35ez3kfgiuqzneqhf4w53pi23ydqsaccj265lakinfeug5y',
+  uri: '/ipfs/bafkreic67vs35ez3kfgiuqzneqhf4w53pi23ydqsaccj265lakinfeug5y',
+  size: 5767,
 };

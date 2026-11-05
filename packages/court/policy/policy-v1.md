@@ -5,7 +5,7 @@ This policy applies to every Recourse case. A Recourse case asks one question: w
 ## 1. The parties
 
 - **The agent company** runs the AI agent that shops for a buyer. It keeps a deposit with Recourse, and that deposit pays shops when its agent is found at fault.
-- **The shop** sold the goods to the agent, packed them and shipped them. To bring a claim it puts up a court fee of 3 USDC.
+- **The shop** sold the goods to the agent, packed them and shipped them. To bring a claim it puts up a court fee of 1 USDC.
 
 The buyer is not a party. The buyer's own details are not in the records; where a record needs one, it holds a salted hash instead of the value.
 
@@ -49,7 +49,7 @@ The first break decides the case. A later break does not change it. Do not weigh
 
 | Answer | Effect |
 |---|---|
-| 1, the agent company | The agent company's deposit pays the shop its net loss, a handling amount (15 USDC plus 5% of the basket, at most 40 USDC) and an amount equal to the shop's 3 USDC court fee. |
+| 1, the agent company | The agent company's deposit pays the shop its net loss, a handling amount (1 USDC plus 5% of the basket, at most 4 USDC) and an amount equal to the shop's 1 USDC court fee. |
 | 2, the shop | The shop's claim fails. It receives nothing and its court fee is not returned. |
 | 3, neither | The shop receives nothing for its loss. If the pre-check found a difference between asked and shown, or between shown and ordered (gap code 1 or 2), the deposit returns an amount equal to the shop's court fee; otherwise the fee is not returned. |
 

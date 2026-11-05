@@ -1,7 +1,7 @@
 {
   "gas": {
-    "measuredAt": "2026-11-05T19:43:06Z",
-    "forkBlock": 326395558,
+    "measuredAt": "2026-11-05T20:52:44Z",
+    "forkBlock": 326411140,
     "marginPct": 25,
     "ccipReceive": {
       "used": 95364,

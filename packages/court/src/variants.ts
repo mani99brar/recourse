@@ -1,6 +1,10 @@
 // Wording of the dispute template variants. A variant is plain text only; `template.ts` turns it into
 // the four fixed JSON parts that surround the three generated slots (case facts, policy URI, aliases).
 // Every string here must be ASCII so the on-chain copy is byte-identical without any re-encoding.
+// The amounts in the answer text come from the shared protocol parameters, so the template tells
+// jurors what settlement will actually move; the policy document states the same sentences.
+
+import { PARAMS } from '@recourse/shared';
 
 export interface VariantAnswer {
   title: string;
@@ -21,11 +25,51 @@ export interface VariantText {
   category: string;
 }
 
-const MONEY_AGENT =
-  "The agent company's deposit pays the shop its net loss, a handling amount (15 USDC plus 5% of the basket, at most 40 USDC) and an amount equal to the shop's 3 USDC court fee.";
-const MONEY_SHOP = "The shop's claim fails. It receives nothing, and its 3 USDC court fee is not returned.";
-const MONEY_NEITHER =
-  "The shop receives nothing for its loss. If the pre-check gap code is 1 or 2, the agent company's deposit returns an amount equal to the shop's court fee; otherwise the fee is not returned.";
+/** Decimal text of `n / 10^decimals` with no trailing zeros, e.g. 1500000 at 6 decimals is "1.5". */
+function decimalText(n: number, decimals: number): string {
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`amount ${n} is not a non-negative integer`);
+  const s = n.toString().padStart(decimals + 1, '0');
+  const whole = s.slice(0, s.length - decimals);
+  const frac = s.slice(s.length - decimals).replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : whole;
+}
+
+/** "1 USDC" for 1000000 micro-USDC. */
+export function usdcText(microUsdc: number): string {
+  return `${decimalText(microUsdc, 6)} USDC`;
+}
+
+/** "5%" for 500 basis points. */
+export function percentText(bps: number): string {
+  return `${decimalText(bps, 2)}%`;
+}
+
+const MONEY_FIELDS = ['courtFeeUsdc', 'handlingBase', 'handlingBps', 'handlingCap'] as const;
+
+/** The settlement amounts the juror text states. They must be the same before and after the parameter lock. */
+export const MONEY_PARAMS = (() => {
+  for (const k of MONEY_FIELDS) {
+    if (PARAMS.preLock[k] !== PARAMS.locked[k]) throw new Error(`court text: ${k} differs between pre-lock and locked`);
+  }
+  const { courtFeeUsdc, handlingBase, handlingBps, handlingCap } = PARAMS.locked;
+  return { courtFeeUsdc, handlingBase, handlingBps, handlingCap };
+})();
+
+const FEE = usdcText(MONEY_PARAMS.courtFeeUsdc);
+
+/** The settlement sentence for each answer, shared by every variant and stated in the policy. */
+export const MONEY_TEXT = {
+  agent: `The agent company's deposit pays the shop its net loss, a handling amount (${usdcText(MONEY_PARAMS.handlingBase)} plus ${percentText(MONEY_PARAMS.handlingBps)} of the basket, at most ${usdcText(MONEY_PARAMS.handlingCap)}) and an amount equal to the shop's ${FEE} court fee.`,
+  shop: `The shop's claim fails. It receives nothing, and its ${FEE} court fee is not returned.`,
+  neither:
+    "The shop receives nothing for its loss. If the pre-check gap code is 1 or 2, the agent company's deposit returns an amount equal to the shop's court fee; otherwise the fee is not returned.",
+  /** The policy's sentence on what the shop puts up to bring a claim. */
+  courtFee: `To bring a claim it puts up a court fee of ${FEE}.`,
+} as const;
+
+const MONEY_AGENT = MONEY_TEXT.agent;
+const MONEY_SHOP = MONEY_TEXT.shop;
+const MONEY_NEITHER = MONEY_TEXT.neither;
 
 const CODES =
   'Amounts are integer micro-USDC (1 USDC = 1000000). Gap codes: 0 no gap; 1 the agent showed the buyer something other than what was asked; 2 the agent ordered something other than what it showed; 3 what was packed or what arrived differs from the order; 255 no gap code (with answer 0 there is not enough record to decide; with answer 1 or 2 a record that side had to write is missing). Answer codes: 0 none, 1 the agent company, 2 the shop, 3 neither.';
