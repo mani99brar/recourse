@@ -4,11 +4,13 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Journal, createLogger, readJournal } from '@recourse/records';
 import { createPublicClient, http, formatEther, type Address } from 'viem';
-import { loadSigner } from '@recourse/shared/node';
+import { loadSigner, readParties } from '@recourse/shared/node';
 import { createDocketApp } from './app.js';
 import { loadConfig, type DocketConfig } from './config.js';
-import { Docket, cutReviews, type JournalRow } from './docket.js';
+import { Docket, cutReviews, type JournalRow, type ReviewPort } from './docket.js';
 import { acquireLock } from './lock.js';
+import { ReviewWriter, type ReviewRow } from './reviews.js';
+import { viemReviewChain } from './reviewsChain.js';
 import { ArbitrumCaseSource, MirrorLogSource } from './sources.js';
 import { ArkivStore } from './store/arkiv.js';
 import { SdkArkivIo, arkivChain } from './store/arkivSdk.js';
@@ -65,7 +67,7 @@ export async function startDocket(env: Record<string, string | undefined> = proc
     now: () => Math.floor(Date.now() / 1000),
     log,
     alert,
-    reviews: cutReviews,
+    reviews: buildReviews(cfg, env, log),
     retrySeconds: cfg.retrySeconds,
     retryMax: cfg.retryMax,
   });
@@ -158,4 +160,26 @@ async function watchBalances(cfg: DocketConfig, env: Record<string, string | und
   };
   await check();
   setInterval(() => void check(), 30 * 60 * 1000);
+}
+
+function buildReviews(cfg: DocketConfig, env: Record<string, string | undefined>, log: ReturnType<typeof createLogger>): ReviewPort {
+  if (!cfg.reviewsEnabled) return cutReviews;
+  try {
+    const parties = readParties(env);
+    const idOf = (...roles: ('platform' | 'agent' | 'shop')[]): bigint | undefined => {
+      for (const role of roles) {
+        const p = parties.find((x) => x.role === role && x.agentId !== undefined);
+        if (p?.agentId !== undefined) return BigInt(p.agentId);
+      }
+      return undefined;
+    };
+    const targets = { ...(idOf('platform', 'agent') !== undefined ? { platform: idOf('platform', 'agent')! } : {}), ...(idOf('shop') !== undefined ? { shop: idOf('shop')! } : {}) };
+    const chain = viemReviewChain({ account: loadSigner('SCHEME_KEY_FILE'), rpcUrl: env.HEDERA_RPC_URL_1 ?? '', mirrorUrl: cfg.mirrorUrl });
+    const path = join(cfg.stateDir, 'reviews.jsonl');
+    const history = readJournal<ReviewRow>(path).rows;
+    return new ReviewWriter(chain, Journal.open<ReviewRow>(path), history, targets, { valueFault: cfg.reviewValueFault, valueClear: cfg.reviewValueClear, tag1: cfg.reviewTag1, retrySeconds: cfg.retrySeconds, retryMax: cfg.retryMax }, () => Math.floor(Date.now() / 1000), log);
+  } catch (error) {
+    log.warn('reviews_off', { error: error instanceof Error ? error.message : String(error) });
+    return cutReviews;
+  }
 }

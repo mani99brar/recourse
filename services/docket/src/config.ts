@@ -70,7 +70,8 @@ export function loadConfig(env: Env = process.env): DocketConfig {
     arkivRpcUrl: env.ARKIV_RPC_URL || undefined,
     arkivAccessKey: accessKey,
     alertUrl: env.ALERT_URL || undefined,
-    reviewsEnabled: flag(env, 'REVIEWS_ENABLED', true),
+    // Off until the reviewer wallet is funded and the operator switches it on.
+    reviewsEnabled: flag(env, 'REVIEWS_ENABLED', false),
     reviewValueFault: num(env, 'REVIEW_VALUE_FAULT', -100, -1e9),
     reviewValueClear: num(env, 'REVIEW_VALUE_CLEAR', 0, -1e9),
     reviewTag1: env.REVIEW_TAG1 || 'recourse',

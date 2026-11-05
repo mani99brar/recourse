@@ -10,7 +10,7 @@ function ruledLog(n: number, ruling: number, attempts: number) {
     [{ type: 'uint256' }, { type: 'uint8' }, { type: 'uint8' }, { type: 'bytes32' }],
     [77n, ruling, attempts, cid(0)],
   );
-  return { topics, data };
+  return { topics: topics as string[], data };
 }
 
 describe('event decoding', () => {
@@ -25,17 +25,17 @@ describe('event decoding', () => {
         { type: 'tuple', components: [{ name: 'topicNum', type: 'uint64' }, { name: 'seq', type: 'uint64[6]' }, { name: 'hashes', type: 'bytes32[6]' }] },
         { type: 'uint256' }, { type: 'uint256' }, { type: 'uint64' },
       ],
-      [cid(9), { topicNum: 5n, seq: [1n, 2n, 3n, 4n, 5n, 6n], hashes: Array(6).fill(cid(1)) as Hex[] }, 12_000_000n, 11_000_000n, 1_800_000_000n],
+      [cid(9), { topicNum: 5n, seq: [1n, 2n, 3n, 4n, 5n, 6n], hashes: Array(6).fill(cid(1)) as unknown as readonly [Hex, Hex, Hex, Hex, Hex, Hex] }, 12_000_000n, 11_000_000n, 1_800_000_000n],
     );
-    expect(decodeDocketLog('hedera', meta, { topics: filedTopics, data: filedData })).toMatchObject({ name: 'ClaimFiled', claimId: cid(2), shop: SHOP, platform: PLATFORM, filedAt: 1_800_000_000 });
+    expect(decodeDocketLog('hedera', meta, { topics: filedTopics as string[], data: filedData })).toMatchObject({ name: 'ClaimFiled', claimId: cid(2), shop: SHOP, platform: PLATFORM, filedAt: 1_800_000_000 });
 
     const appliedTopics = encodeEventTopics({ abi: vaultEventsAbi, eventName: 'OutcomeApplied', args: { claimId: cid(2), platform: PLATFORM, shop: SHOP } });
     const appliedData = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }], [2_000_000n, 1_000_000n, 0n]);
-    expect(decodeDocketLog('hedera', meta, { topics: appliedTopics, data: appliedData })).toMatchObject({ name: 'OutcomeApplied', paid: '2000000', refund: '1000000' });
+    expect(decodeDocketLog('hedera', meta, { topics: appliedTopics as string[], data: appliedData })).toMatchObject({ name: 'OutcomeApplied', paid: '2000000', refund: '1000000' });
 
     const openedTopics = encodeEventTopics({ abi: caseEventsAbi, eventName: 'CaseOpened', args: { claimId: cid(2) } });
     const openedData = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint8' }], [41n, 1]);
-    expect(decodeDocketLog('arbitrum', meta, { topics: openedTopics, data: openedData })).toMatchObject({ name: 'CaseOpened', disputeId: '41', attempt: 1 });
+    expect(decodeDocketLog('arbitrum', meta, { topics: openedTopics as string[], data: openedData })).toMatchObject({ name: 'CaseOpened', disputeId: '41', attempt: 1 });
   });
 
   it('ignores events it does not follow', () => {
@@ -91,7 +91,7 @@ describe('arbitrum source', () => {
       getBlockNumber: async () => 2_500n,
       getLogs: async ({ fromBlock, toBlock }: { address: `0x${string}`; fromBlock: bigint; toBlock: bigint }) => {
         calls.push([fromBlock, toBlock]);
-        return fromBlock === 1_001n ? [{ topics, data, transactionHash: '0xdd', logIndex: 0, blockNumber: 1_500n }] : [];
+        return fromBlock === 1_001n ? [{ topics: topics as string[], data, transactionHash: '0xdd', logIndex: 0, blockNumber: 1_500n }] : [];
       },
     };
     const src = new ArbitrumCaseSource(reader, '0x00000000000000000000000000000000000000cc', 1n);

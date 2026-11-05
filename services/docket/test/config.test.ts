@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.js';
 describe('config', () => {
   it('defaults to the local store with the documented values', () => {
     const c = loadConfig({});
-    expect(c).toMatchObject({ store: 'local', port: 8707, publishThreshold: 20, sampleMode: true, z: 1.96, lifetimeDays: 182, retrySeconds: 600, retryMax: 5, pageSize: 100 });
+    expect(c).toMatchObject({ store: 'local', port: 8707, publishThreshold: 20, sampleMode: true, z: 1.96, lifetimeDays: 182, retrySeconds: 600, retryMax: 5, pageSize: 100, reviewsEnabled: false });
   });
   it('the arkiv path switches on with config only, and refuses to start without a key', () => {
     expect(() => loadConfig({ DOCKET_STORE: 'arkiv' })).toThrow(/ARKIV_ACCESS_KEY/);
