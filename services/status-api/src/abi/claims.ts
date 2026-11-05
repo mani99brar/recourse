@@ -30,5 +30,7 @@ export const claimsAbi = parseAbi([
   'function peer() view returns (address)',
   'function rulingRelayer() view returns (address)',
   'function extraArgs() view returns (bytes)',
+  'event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)',
+  'event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)',
   'function owner() view returns (address)',
 ]);

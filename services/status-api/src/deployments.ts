@@ -57,14 +57,14 @@ export function loadDeployments(dir: string): Deployments {
   const h = dir ? read(dir, 'hedera') : null;
   const a = dir ? read(dir, 'arbitrum') : null;
   const files = [h?.file, a?.file].filter((f): f is string => f !== undefined);
-  const out = (dig(h?.json, 'outside') ?? dig(a?.json, 'outside')) as Json | undefined;
+  const out = dig(a?.json, 'outside') as Json | undefined;
   const pick = (k: string, fallback: Address) => addr(out?.[k]) ?? fallback;
-  const startTs = dig(h?.json, 'startTimestamp', 'startConsensusTimestamp');
-  const startBlock = dig(a?.json, 'startBlock', 'deployBlock');
+  const startTs = dig(h?.json, 'startTimestamp');
+  const startBlock = dig(a?.json, 'startBlock');
   return {
-    claims: addr(dig(h?.json, 'contracts.claims', 'claims')),
-    vault: addr(dig(h?.json, 'contracts.vault', 'vault')),
-    caseAddress: addr(dig(a?.json, 'contracts.recourseCase', 'contracts.case', 'recourseCase', 'case', 'address')),
+    claims: addr(dig(h?.json, 'contracts.claims.address')),
+    vault: addr(dig(h?.json, 'contracts.vault.address')),
+    caseAddress: addr(dig(a?.json, 'contracts.case.address')),
     hederaChainId: Number(dig(h?.json, 'chainId') ?? HEDERA_TESTNET_CHAIN_ID),
     arbitrumChainId: Number(dig(a?.json, 'chainId') ?? ARBITRUM_SEPOLIA_CHAIN_ID),
     ...(typeof startTs === 'string' || typeof startTs === 'number' ? { hederaStart: String(startTs) } : {}),

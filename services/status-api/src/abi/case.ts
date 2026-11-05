@@ -34,5 +34,7 @@ export const caseAbi = parseAbi([
   'function locked() view returns (bool)',
   'function peer() view returns (address)',
   'function trustedRelay() view returns (address)',
+  'event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)',
+  'event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)',
   'function owner() view returns (address)',
 ]);

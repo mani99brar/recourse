@@ -29,5 +29,7 @@ export const vaultAbi = parseAbi([
   'function exitRequestedAt(address platform) view returns (uint64)',
   'function inGoodStanding(address platform) view returns (bool)',
   'function configLocked() view returns (bool)',
+  'event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)',
+  'event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)',
   'function owner() view returns (address)',
 ]);
