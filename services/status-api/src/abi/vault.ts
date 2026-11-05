@@ -1,0 +1,33 @@
+// DepositVault (Hedera): events and views.
+import { parseAbi } from 'viem';
+
+export const vaultAbi = parseAbi([
+  'struct Escrow { address shop; uint8 state; address platform; uint256 amount; uint256 refunded; }',
+  'event ClaimsBound(address indexed claims)',
+  'event UsdcAssociated(int256 responseCode)',
+  'event DepositPosted(address indexed platform, address indexed from, uint256 amount, uint256 balance)',
+  'event RequiredSet(address indexed platform, uint256 amount)',
+  'event FeeEscrowed(bytes32 indexed claimId, address indexed shop, uint256 amount)',
+  'event OutcomeApplied(bytes32 indexed claimId, address indexed platform, address indexed shop, uint256 paid, uint256 refund, uint256 toPool)',
+  'event Shortfall(bytes32 indexed claimId, address indexed platform, uint256 amount)',
+  'event CreditWithdrawn(address indexed account, uint256 amount)',
+  'event TopUpClockStarted(address indexed platform, uint256 deadline)',
+  'event TopUpCleared(address indexed platform)',
+  'event ExitRequested(address indexed platform, uint256 availableAt)',
+  'event Exited(address indexed platform, uint256 amount)',
+  'event ParamsSet(uint64 topUpWindow, uint64 exitDelay, uint256 minDeposit)',
+  'event ConfigLocked()',
+  'function params() view returns (uint64 topUpWindow, uint64 exitDelay, uint256 minDeposit)',
+  'function depositOf(address platform) view returns (uint256)',
+  'function requiredOf(address platform) view returns (uint256)',
+  'function creditOf(address account) view returns (uint256)',
+  'function escrowOf(bytes32 claimId) view returns (Escrow)',
+  'function shopEscrowOf(address shop) view returns (uint256)',
+  'function totals() view returns (uint256 deposits, uint256 escrow, uint256 credits)',
+  'function topUpDeadline(address platform) view returns (uint256)',
+  'function openClaimsOf(address platform) view returns (uint256)',
+  'function exitRequestedAt(address platform) view returns (uint64)',
+  'function inGoodStanding(address platform) view returns (bool)',
+  'function configLocked() view returns (bool)',
+  'function owner() view returns (address)',
+]);
