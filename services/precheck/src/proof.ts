@@ -143,6 +143,9 @@ export async function proveSlot(kind: RecordKind, claim: ProofClaim, ports: Proo
       if (refsVerdict.ok) return { final: true, slot: { kind, outcome: 'held', ...refsVerdict.held } };
     }
 
+    // Read the index's progress and its candidates together (no await between): the list is
+    // complete exactly when `complete` is true, even if the index grows while documents are fetched.
+    const complete = ports.index.readThrough(claim.filedAt, ports.quietS);
     // Index candidates after the filing can never pass; leaving them out keeps the document stable.
     const list = ports.index.candidates(claim.orderId, kind).filter((m) => tsSeconds(m.consensusAt) <= claim.filedAt);
     let firstReject: Extract<Verdict, { ok: false }> | undefined;
@@ -159,7 +162,7 @@ export async function proveSlot(kind: RecordKind, claim: ProofClaim, ports: Proo
     }
 
     // Nothing passed. That is only final once the index has read every message up to the filing.
-    if (!ports.index.readThrough(claim.filedAt, ports.quietS)) {
+    if (!complete) {
       return { final: false, why: `slot ${kind}: the topic index has not read through the filing yet` };
     }
     if (refsVerdict !== undefined && !refsVerdict.ok) return { final: true, slot: rejected(kind, refsVerdict) };

@@ -201,3 +201,30 @@ describe('slot proof: choosing the record', () => {
     }
   });
 });
+
+describe('slot proof while the index is still growing', () => {
+  it('does not settle on a candidate list the index outgrew during a document fetch', async () => {
+    const rig = makeRig();
+    // The only record so far is a document that fails its check, so the slot would be rejected.
+    rig.world.addRecord({ kind: 0, orderId, doc: new TextEncoder().encode('{}') });
+    const { index, ports } = await proofKit(rig);
+    await index.advance();
+    const slow = ports.docs;
+    ports.docs = {
+      pin: slow.pin,
+      async fetch(cid, options) {
+        const bytes = await slow.fetch(cid, options);
+        // While this document is being read, a valid record and a later message reach the index.
+        rig.world.addRecord({ kind: 0, orderId });
+        addLaterMessage(rig.world);
+        await index.advance();
+        return bytes;
+      },
+    };
+    const claim = proofClaim(orderId, refsOf(500n, {}));
+    expect(await proveSlot(0, claim, ports)).toMatchObject({ final: false });
+    // The next look sees the valid record the first one missed.
+    expect(await proveSlot(0, claim, ports)).toMatchObject({ final: true, slot: { outcome: 'held', seq: 2n } });
+  });
+});
+

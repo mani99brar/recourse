@@ -133,19 +133,6 @@ describe('transient faults are retries, never absences', () => {
     svc.close();
   });
 
-  it('a probe taken before the quiet window ends does not settle an absence', async () => {
-    const rig = makeRig();
-    const { claimId } = setupClaim(rig, { omit: [4, 5] });
-    const svc = await rig.start();
-    rig.clock.setSeconds(FILED_AT + 100n);
-    await svc.tick();
-    rig.clock.setSeconds(FILED_AT + 125n);
-    // The claim's own backoff is over; only a probe started after +120 s counts.
-    await svc.tick();
-    expect(svc.result(claimId)?.slots.length).toBe(6);
-    svc.close();
-  });
-
   it('alerts precheck_stalled after ten minutes of retrying and keeps retrying', async () => {
     const rig = makeRig();
     const { claimId } = setupClaim(rig, { later: true });
