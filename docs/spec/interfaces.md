@@ -17,7 +17,7 @@ is a bug.
 |---|---|---|
 | 1 | 2026-11-05 | First version. |
 | 1.1 | 2026-11-05 | `minDeposit` start value 10 USDC; `RecourseCase` additions (payable `relayRuling`, relay quotes, extra views and errors, `openCase`/`refile` return the disputeId, indexed topics). |
-| 1.2 | 2026-11-05 | Court evidence format and policy record; env names `PRECHECK_QUIET_S` and `SEND_PAUSE_WINDOWS` with `parseSendPauseWindows` and `isSendPaused`. |
+| 1.2 | 2026-11-05 | Court evidence format and policy record; env names `PRECHECK_QUIET_S` and `SEND_PAUSE_WINDOWS` with `parseSendPauseWindows` and `isSendPaused`; Kleros and OffRamp ABI fragments. |
 
 ---
 
@@ -47,6 +47,8 @@ is a bug.
 | `parties.ts` | `Party`, `Parties`, `PartyRole`, `PARTY_ROLES`, `HEDERA_ROLES`, `parseParties`, `partyByRole`, `partiesByRole`, `partyByAddress`, `hcsWritersFor`, `parseHederaAccountIds` |
 | `env.ts` | `ENV_NAMES`, `EnvName`, `VITE_ENV_NAMES`, `ENV_DEFAULTS`, `readEnv`, `parseSendPauseWindows`, `isSendPaused`, `SendPauseWindow`, `PauseChain` |
 | `abi/erc8004.ts` | `erc8004IdentityAbi`, `erc8004ReputationAbi` |
+| `abi/kleros.ts` | `klerosCoreAbi` (`arbitrationCost` both forms, `currentRuling`, `disputes`, `getNumberOfRounds`, `getRoundInfo`, `appealPeriod`, `appealCost`, `getTimesPerPeriod`, `passPeriod`, `draw`, `executeRuling`; events `DisputeCreation`, `NewPeriod`, `Draw`, `AppealPossible`, `AppealDecision`, `Ruling`), `sortitionModuleAbi` (`phase`, `passPhase`, `lastPhaseChange`, `minStakingTime`, `maxDrawingTime`, `disputesWithoutJurors`; `NewPhase`), `evidenceModuleAbi` (`submitEvidence`; `Evidence`), `disputeKitClassicAbi` (events `Contribution`, `ChoiceFunded`, `VoteCast`); items equal the `@kleros/kleros-v2-contracts` 0.12.0 Arbitrum Sepolia deployment ABIs |
+| `abi/ccip.ts` | `ccipOffRampAbi` (`getExecutionState(bytes32 messageId)`, `typeAndVersion`; `ExecutionStateChanged`); items equal `@chainlink/contracts-ccip` 2.0.0 `abi/v2_0_0/offramp.json` |
 
 | Solidity (`contracts/src/shared/`) | Holds |
 |---|---|
