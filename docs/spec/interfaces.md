@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.5 |
+| Version | 1.6 |
 | Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -21,6 +21,7 @@ is a bug.
 | 1.3 | 2026-11-05 | Env name `COURT_URL_TEMPLATE`; the `GET /claims` response shape `{rows, standing?, groups?}`. |
 | 1.4 | 2026-11-05 | Docket and intake endpoints and bodies as built; deployment file shapes. |
 | 1.5 | 2026-11-05 | `RecourseCase` error `TemplateNotSet()` (openCase and refile revert until template text and policy URI are set); refused relay refunds go to the fee pool. |
+| 1.6 | 2026-11-05 | CCIP receive gas limits 150,000 both ways, from measurements. |
 
 ---
 
@@ -451,7 +452,7 @@ contracts' `params()` views, never from this table.
 | `stuckAfter` | 3,600 | same | s |
 | `publishThreshold` | 20 | same | ruled cases |
 | `batchSize` / `pBps` | 8 / 2,500 | same | count / bps |
-| `gasClaimToCourt` / `gasRulingBack` / `gasCap` | 300,000 / 400,000 / 3,000,000 | same until measured | gas |
+| `gasClaimToCourt` / `gasRulingBack` / `gasCap` | 150,000 / 150,000 / 3,000,000 | same (measured: receive 95k and 37k worst case) | gas |
 | `feePoolAlertMultiple` | 3 | same | × `arbitrationCost` |
 
 Arbitrum court constants: court 8, 3 jurors, dispute kit 1, `extraData` = `abi.encode(uint256 8,

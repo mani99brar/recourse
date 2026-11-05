@@ -57,8 +57,8 @@ const shared = {
   publishThreshold: 20,
   batchSize: 8,
   pBps: 2_500,
-  gasClaimToCourt: 300_000,
-  gasRulingBack: 400_000,
+  gasClaimToCourt: 150_000,
+  gasRulingBack: 150_000,
   gasCap: 3_000_000,
   feePoolAlertMultiple: 3,
 } as const;
