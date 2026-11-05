@@ -1,0 +1,155 @@
+// ABI fragments for every contract the keeper and the pre-check touch, in one place so a swap to
+// generated ABI files is one edit. Recourse contracts follow `IRecourseClaims.sol`,
+// `IDepositVault.sol` and `IRecourseCase.sol`; the Kleros fragments follow
+// @kleros/kleros-v2-contracts 0.12.0 (KlerosCoreBase, SortitionModuleBase, DisputeKitClassicBase,
+// EvidenceModule, IArbitrableV2) and the OffRamp fragment @chainlink/contracts-ccip 2.0.0.
+
+import { parseAbi } from 'viem';
+
+export const claimsAbi = parseAbi([
+  'struct RecordRefs { uint64 topicNum; uint64[6] seq; bytes32[6] hashes; }',
+  'struct Claim { bytes32 orderId; address shop; address platform; RecordRefs refs; uint256 basketUsdc; uint256 netLossUsdc; uint64 filedAt; uint64 preCheckedAt; uint8 gap; uint8 answer; bytes32 packHash; address contestedBy; uint8 sendCount; uint64 lastSendAt; bytes32 lastMessageId; uint256 disputeId; uint8 ruling; uint8 attempts; uint8 status; }',
+  'struct Params { uint64 contestWindow; uint64 claimTimeout; uint256 courtFeeUsdc; uint256 handlingBase; uint16 handlingBps; uint256 handlingCap; uint64 resendGap; uint8 maxSends; }',
+  // events
+  'event ClaimFiled(bytes32 indexed claimId, bytes32 orderId, address indexed shop, address indexed platform, RecordRefs refs, uint256 basketUsdc, uint256 netLossUsdc, uint64 filedAt)',
+  'event PreCheckRecorded(bytes32 indexed claimId, uint8 gap, uint8 answer, bytes32 packHash)',
+  'event Contested(bytes32 indexed claimId, address indexed by)',
+  'event ClosedUncontested(bytes32 indexed claimId, uint8 answer, uint256 toShop)',
+  'event SentToCourt(bytes32 indexed claimId, bytes32 indexed messageId)',
+  'event RulingReceived(bytes32 indexed claimId, uint256 disputeId, uint8 ruling, uint8 attempts, bytes32 messageId)',
+  'event RulingIgnored(bytes32 indexed claimIdOrZero, uint8 reason, bytes32 messageId)',
+  'event Settled(bytes32 indexed claimId, uint8 outcome, uint256 toShop, uint256 toPool)',
+  'event ClaimExpired(bytes32 indexed claimId)',
+  'event BridgeModeSet(uint8 mode, address relayer)',
+  'event ParamsSet(Params params)',
+  // errors
+  'error ZeroAddress()',
+  'error ClaimExists(bytes32 claimId)',
+  'error NotPreCheckSigner()',
+  'error WrongStatus(uint8 current)',
+  'error BadCode()',
+  'error ZeroPackHash()',
+  'error NotContester()',
+  'error WindowClosed(uint256 closedAt)',
+  'error WindowOpen(uint256 closesAt)',
+  'error NotExpired(uint256 expiresAfter)',
+  'error PeerNotSet()',
+  'error LinkShort(uint256 have, uint256 need)',
+  'error NativeShort(uint256 have, uint256 need)',
+  'error ResendTooSoon(uint256 availableAt)',
+  'error MaxSendsReached()',
+  'error WrongMode(uint8 mode)',
+  'error NotRelayer()',
+  'error TransferFailed()',
+  // calls
+  'function recordPreCheck(bytes32 claimId, uint8 gap, uint8 answer, bytes32 packHash)',
+  'function closeUncontested(bytes32 claimId)',
+  'function sendToCourt(bytes32 claimId) returns (bytes32 messageId)',
+  'function resend(bytes32 claimId) returns (bytes32 messageId)',
+  'function expireClaim(bytes32 claimId)',
+  'function recordRuling(bytes32 claimId, uint256 disputeId, uint8 ruling, uint8 attempts)',
+  'function settle(bytes32 claimId)',
+  // views
+  'function getClaim(bytes32 claimId) view returns (Claim)',
+  'function params() view returns (Params)',
+  'function quoteSend(bytes32 claimId) view returns (uint256 fee)',
+  'function bridgeMode() view returns (uint8)',
+  'function rulingRelayer() view returns (address)',
+  'function preCheckSigner() view returns (address)',
+  'function feeToken() view returns (address)',
+  'function link() view returns (address)',
+  'function vault() view returns (address)',
+]);
+
+export const vaultAbi = parseAbi([
+  'function creditOf(address account) view returns (uint256)',
+  'event OutcomeApplied(bytes32 indexed claimId, address indexed platform, address indexed shop, uint256 paid, uint256 refund, uint256 toPool)',
+]);
+
+export const caseAbi = parseAbi([
+  'struct CaseView { uint8 state; bytes32 payloadHash; uint64 receivedAt; uint8 attempts; uint256[2] disputeIds; uint256[2] templateIds; uint8 ruling; uint64 ruledAt; uint8 sendCount; uint64 lastSendAt; bytes32 lastMessageId; }',
+  // events
+  'event ClaimReceived(bytes32 indexed claimId, bytes32 indexed messageId, bytes payload)',
+  'event ClaimDuplicate(bytes32 indexed claimId, bytes32 indexed messageId)',
+  'event ClaimRejected(bytes32 indexed messageId, uint8 reason)',
+  'event ClaimStale(bytes32 indexed claimId)',
+  'event CaseOpened(bytes32 indexed claimId, uint256 indexed disputeId, uint8 attempt)',
+  'event RefileNeeded(bytes32 indexed claimId)',
+  'event RulingFinal(bytes32 indexed claimId, uint256 indexed disputeId, uint8 ruling, uint8 attempts)',
+  'event RuleIgnored(uint256 indexed disputeId, uint256 ruling)',
+  'event RulingRelayed(bytes32 indexed claimId, uint256 indexed disputeId, uint8 ruling, bytes32 messageId)',
+  'event FeePoolFunded(address indexed from, uint256 amount)',
+  'event DisputeRequest(address indexed _arbitrator, uint256 indexed _arbitratorDisputeID, uint256 _externalDisputeID, uint256 _templateId, string _templateUri)',
+  'event Ruling(address indexed _arbitrator, uint256 indexed _disputeID, uint256 _ruling)',
+  // errors
+  'error WrongState(bytes32 claimId, uint8 state)',
+  'error HashMismatch()',
+  'error CapReached()',
+  'error FeePoolLow(uint256 have, uint256 need)',
+  'error SendTooSoon(uint64 nextAt)',
+  'error MaxSendsReached()',
+  'error PeerNotSet()',
+  'error InsufficientLink(uint256 have, uint256 need)',
+  'error InsufficientValue(uint256 have, uint256 need)',
+  'error NotTrustedRelay()',
+  'error RelayDisabled()',
+  'error BadPayload()',
+  // calls
+  'function openCase(bytes payload) returns (uint256 disputeId)',
+  'function refile(bytes payload) returns (uint256 disputeId)',
+  'function relayRuling(bytes32 claimId) payable returns (bytes32 messageId)',
+  'function relayClaim(bytes payload)',
+  // views
+  'function caseOf(bytes32 claimId) view returns (CaseView)',
+  'function claimOfDispute(uint256 disputeId) view returns (bytes32 claimId, uint8 attempt)',
+  'function openCases() view returns (uint16)',
+  'function feePool() view returns (uint256)',
+  'function costNow() view returns (uint256)',
+  'function params() view returns (uint64 caseDeadline, uint16 maxOpenCases, uint64 resendGap, uint8 maxSends)',
+  'function externalIdOf(bytes32 claimId, uint8 attempt) view returns (uint256)',
+  'function quoteRelay(bytes32 claimId) view returns (uint256)',
+  'function quoteRelayNative(bytes32 claimId) view returns (uint256)',
+  'function link() view returns (address)',
+  'function arbitrator() view returns (address)',
+]);
+
+export const klerosCoreAbi = parseAbi([
+  'event Draw(address indexed _address, uint256 indexed _disputeID, uint256 _roundID, uint256 _voteID)',
+  'event NewPeriod(uint256 indexed _disputeID, uint8 _period)',
+  'function disputes(uint256) view returns (uint96 courtID, address arbitrated, uint8 period, bool ruled, uint256 lastPeriodChange)',
+  'function getTimesPerPeriod(uint96 _courtID) view returns (uint256[4] timesPerPeriod)',
+  'function currentRuling(uint256 _disputeID) view returns (uint256 ruling, bool tied, bool overridden)',
+  'function arbitrationCost(bytes _extraData) view returns (uint256 cost)',
+  'function passPeriod(uint256 _disputeID)',
+  'function draw(uint256 _disputeID, uint256 _iterations) returns (uint256 nbDrawnJurors)',
+  'function executeRuling(uint256 _disputeID)',
+]);
+
+export const sortitionModuleAbi = parseAbi([
+  'function phase() view returns (uint8)',
+  'function passPhase()',
+  'function lastPhaseChange() view returns (uint256)',
+  'function minStakingTime() view returns (uint256)',
+  'function maxDrawingTime() view returns (uint256)',
+  'function disputesWithoutJurors() view returns (uint256)',
+]);
+
+export const disputeKitAbi = parseAbi([
+  'event Contribution(uint256 indexed _coreDisputeID, uint256 indexed _coreRoundID, uint256 _choice, address indexed _contributor, uint256 _amount)',
+  'event ChoiceFunded(uint256 indexed _coreDisputeID, uint256 indexed _coreRoundID, uint256 indexed _choice)',
+]);
+
+export const evidenceModuleAbi = parseAbi([
+  'event Evidence(uint256 indexed _externalDisputeID, address indexed _party, string _evidence)',
+  'function submitEvidence(uint256 _externalDisputeID, string _evidence)',
+]);
+
+export const offRampAbi = parseAbi(['function getExecutionState(bytes32 messageId) view returns (uint8)']);
+
+export const erc20Abi = parseAbi(['function balanceOf(address) view returns (uint256)']);
+
+/** Every custom error the keeper may need to decode from a revert. */
+export const knownErrorsAbi = [
+  ...claimsAbi.filter((x) => x.type === 'error'),
+  ...caseAbi.filter((x) => x.type === 'error'),
+] as const;
