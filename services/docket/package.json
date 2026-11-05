@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "tsx src/main.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "check:testnet": "tsx scripts/check-testnet.ts",
+    "reconcile": "tsx scripts/reconcile.ts"
   },
   "dependencies": {
     "@arkiv-network/sdk": "1.0.1",
