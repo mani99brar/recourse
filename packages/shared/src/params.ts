@@ -26,7 +26,7 @@ export interface ParamSet {
   /** s; Arbitrum case deadline, exclusive. */
   caseDeadline: number;
   maxOpenCases: number;
-  /** s, from filedAt. */
+  /** s; a Filed claim expires after filedAt + this, a Contested or AtCourt one after preCheckedAt + this. */
   claimTimeout: number;
   /** s an Untouched CCIP message may wait before it counts as stuck. */
   stuckAfter: number;
@@ -53,6 +53,7 @@ const shared = {
   maxSends: 5,
   caseDeadline: 7_200,
   maxOpenCases: 10,
+  claimTimeout: 64_800,
   stuckAfter: 3_600,
   publishThreshold: 20,
   batchSize: 8,
@@ -64,8 +65,8 @@ const shared = {
 } as const;
 
 export const PARAMS: { preLock: ParamSet; locked: ParamSet } = {
-  preLock: { ...shared, contestWindow: 600, exitDelay: 600, claimTimeout: 14_400 },
-  locked: { ...shared, contestWindow: 1_800, exitDelay: 10_368_000, claimTimeout: 64_800 },
+  preLock: { ...shared, contestWindow: 600, exitDelay: 600 },
+  locked: { ...shared, contestWindow: 1_800, exitDelay: 10_368_000 },
 };
 
 /** Handling fee: min(handlingBase + floor(basket * handlingBps / 10000), handlingCap), in µUSDC. */

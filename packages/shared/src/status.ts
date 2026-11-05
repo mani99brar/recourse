@@ -61,6 +61,12 @@ export interface CaseView {
   sendCount: number;
   lastSendAt: bigint;
   lastMessageId: Hex;
+  /**
+   * `RecourseCase.expiresAt(claimId)`: filedAt + Arbitrum's claimTimeout (0 when unknown). From this
+   * second on the case cannot open or refile and anyone may `markStale` it. Optional: when absent,
+   * only the caseDeadline rules apply.
+   */
+  expiresAt?: bigint;
   /** KlerosCore dispute period (0 evidence, 1 commit, 2 vote, 3 appeal, 4 execution). */
   period?: number;
   currentRuling?: bigint;
@@ -111,12 +117,47 @@ function legStuck(v: BridgeView | undefined, p: LiveParams, now: bigint): 'faile
   return undefined;
 }
 
+/**
+ * Second after which Hedera's `expireClaim` succeeds (it needs now > this), or null when the claim
+ * cannot expire: a Filed claim counts from `filedAt`, a Contested or AtCourt claim from
+ * `preCheckedAt`. PreChecked claims never expire; they close uncontested after the window.
+ */
+export function claimExpiresAfter(
+  claim: Pick<Claim, 'status' | 'filedAt' | 'preCheckedAt'>,
+  claimTimeout: bigint,
+): bigint | null {
+  if (claim.status === ClaimStatus.Filed) return claim.filedAt + claimTimeout;
+  if (claim.status === ClaimStatus.Contested || claim.status === ClaimStatus.AtCourt) return claim.preCheckedAt + claimTimeout;
+  return null;
+}
+
+/** True when Hedera's `expireClaim` would succeed at `now` (strictly after `claimExpiresAfter`). */
+export function canExpireClaim(
+  claim: Pick<Claim, 'status' | 'filedAt' | 'preCheckedAt'>,
+  claimTimeout: bigint,
+  now: bigint,
+): boolean {
+  const after = claimExpiresAfter(claim, claimTimeout);
+  return after !== null && now > after;
+}
+
+/** Arbitrum's `expiresAt` when known (non-zero). */
+function arbExpiry(c: CaseView): bigint | null {
+  return c.expiresAt !== undefined && c.expiresAt > 0n ? c.expiresAt : null;
+}
+
+/** Earlier of an exclusive caseDeadline and Arbitrum's (also exclusive) expiresAt. */
+function openBy(deadline: bigint, c: CaseView): bigint {
+  const e = arbExpiry(c);
+  return e !== null && e < deadline ? e : deadline;
+}
+
 /** True when the Arbitrum case can no longer move: Stale, or its open/refile window has closed. */
 function caseDead(c: CaseView | null, p: LiveParams, now: bigint): boolean {
   if (c === null) return false;
   if (c.state === CaseState.Stale) return true;
-  if (c.state === CaseState.Received && now >= c.receivedAt + p.caseDeadline) return true;
-  if (c.state === CaseState.RefilePending && now >= c.ruledAt + p.caseDeadline) return true;
+  if (c.state === CaseState.Received && now >= openBy(c.receivedAt + p.caseDeadline, c)) return true;
+  if (c.state === CaseState.RefilePending && now >= openBy(c.ruledAt + p.caseDeadline, c)) return true;
   return false;
 }
 
@@ -147,13 +188,14 @@ export function deriveStatus(
   if (s === ClaimStatus.Closed) return view('closed_uncontested', 'shop', 'withdrawCredit');
 
   if (s === ClaimStatus.AtCourt) {
-    const expiry = claim.filedAt + p.claimTimeout;
+    const expiry = claim.preCheckedAt + p.claimTimeout;
+    const expired = now > expiry;
     const back = legStuck(latest(bridgeViews, 'toHedera'), p, now);
     const out = legStuck(latest(bridgeViews, 'toArbitrum'), p, now);
     const dead = caseDead(caseView, p, now);
-    if (back || out || dead) {
+    if (back || out || dead || expired) {
       let call: NextCall;
-      if (now > expiry || dead) call = 'expireClaim';
+      if (expired || dead) call = 'expireClaim';
       else if (back) call = back === 'failed' ? 'manualExecute' : 'relayRuling';
       else call = out === 'failed' ? 'manualExecute' : 'resend';
       return view('stuck', 'anyone', call, expiry);
@@ -164,9 +206,9 @@ export function deriveStatus(
       caseView.state === CaseState.RefilePending || caseView.attempts === 2 ? 'refused_once' : 'at_court';
     switch (caseView.state) {
       case CaseState.Received:
-        return view(key, 'keeper', 'openCase', caseView.receivedAt + p.caseDeadline);
+        return view(key, 'keeper', 'openCase', openBy(caseView.receivedAt + p.caseDeadline, caseView));
       case CaseState.RefilePending:
-        return view(key, 'anyone', 'refile', caseView.ruledAt + p.caseDeadline);
+        return view(key, 'anyone', 'refile', openBy(caseView.ruledAt + p.caseDeadline, caseView));
       case CaseState.Ruled:
         return view(key, 'keeper', 'relayRuling');
       case CaseState.Relayed:
@@ -176,13 +218,21 @@ export function deriveStatus(
     }
   }
 
-  if (s === ClaimStatus.Contested) return view('contested', 'anyone', 'sendToCourt');
+  if (s === ClaimStatus.Contested) {
+    const expiry = claim.preCheckedAt + p.claimTimeout;
+    if (now > expiry) return view('contested', 'anyone', 'expireClaim');
+    return view('contested', 'anyone', 'sendToCourt', expiry);
+  }
   if (s === ClaimStatus.PreChecked) {
     const end = claim.preCheckedAt + p.contestWindow;
     if (now > end) return view('window_lapsed', 'anyone', 'closeUncontested');
     if (claim.answer === 0) return view('no_finding', 'shop', 'contest', end);
     return view('finding_made', claim.answer === 1 ? 'platform' : 'shop', 'contest', end);
   }
-  if (s === ClaimStatus.Filed) return view('filed', 'preCheckSigner', 'recordPreCheck');
+  if (s === ClaimStatus.Filed) {
+    const expiry = claim.filedAt + p.claimTimeout;
+    if (now > expiry) return view('filed', 'anyone', 'expireClaim');
+    return view('filed', 'preCheckSigner', 'recordPreCheck', expiry);
+  }
   throw new RangeError('deriveStatus: no claim stored');
 }

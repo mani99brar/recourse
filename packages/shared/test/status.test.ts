@@ -4,6 +4,8 @@ import {
   ClaimStatus,
   ExecutionState,
   PARAMS,
+  canExpireClaim,
+  claimExpiresAfter,
   deriveStatus,
   type BridgeView,
   type CaseView,
@@ -30,7 +32,7 @@ const claim = (o: Partial<ClaimForStatus>): ClaimForStatus => ({
   answer: 0,
   ruling: 0,
   filedAt: T0,
-  preCheckedAt: 0n,
+  preCheckedAt: T0 + 100n,
   undrawn: false,
   ...o,
 });
@@ -111,6 +113,7 @@ describe('pre-check window', () => {
 
 describe('at court', () => {
   const atCourt = claim({ status: ClaimStatus.AtCourt, answer: 1 });
+  const expiry = atCourt.preCheckedAt + LOCKED.claimTimeout;
 
   it('in flight before the case exists', () => {
     expect(deriveStatus(atCourt, null, [msg({ executionState: ExecutionState.InProgress })], LOCKED, T0 + 900n)).toMatchObject({
@@ -160,7 +163,7 @@ describe('at court', () => {
       statusKey: 'stuck',
       nextActor: 'anyone',
       nextCall: 'manualExecute',
-      deadline: T0 + LOCKED.claimTimeout,
+      deadline: expiry,
     });
     const waiting = [msg({ executionState: ExecutionState.Untouched, sentAt: T0 })];
     expect(deriveStatus(atCourt, null, waiting, LOCKED, T0 + LOCKED.stuckAfter).statusKey).toBe('at_court');
@@ -186,6 +189,99 @@ describe('at court', () => {
     const stale = kase({ state: CaseState.Stale });
     expect(deriveStatus(atCourt, stale, [msg({})], LOCKED, T0 + 900n)).toMatchObject({ statusKey: 'stuck', nextCall: 'expireClaim' });
     const failed = [msg({ executionState: ExecutionState.Failure })];
-    expect(deriveStatus(atCourt, null, failed, LOCKED, T0 + LOCKED.claimTimeout + 1n).nextCall).toBe('expireClaim');
+    expect(deriveStatus(atCourt, null, failed, LOCKED, expiry).nextCall).toBe('manualExecute');
+    expect(deriveStatus(atCourt, null, failed, LOCKED, expiry + 1n).nextCall).toBe('expireClaim');
+  });
+
+  it('the court-stage timeout counts from preCheckedAt, strictly after', () => {
+    const opened = kase({ state: CaseState.Opened, attempts: 1 });
+    const filedBased = atCourt.filedAt + LOCKED.claimTimeout + 1n;
+    expect(filedBased).toBeLessThanOrEqual(expiry);
+    expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, filedBased)).toMatchObject({ statusKey: 'at_court', nextActor: 'court' });
+    expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, expiry)).toMatchObject({ statusKey: 'at_court', nextActor: 'court' });
+    expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, expiry + 1n)).toEqual({
+      statusKey: 'stuck',
+      nextActor: 'anyone',
+      nextCall: 'expireClaim',
+      deadline: expiry,
+    });
+    expect(deriveStatus(atCourt, null, [], LOCKED, expiry + 1n).nextCall).toBe('expireClaim');
+  });
+
+  it("Arbitrum's expiresAt ends open and refile at that second; without it only caseDeadline counts", () => {
+    const arbExpires = atCourt.filedAt + LOCKED.claimTimeout;
+    const received = kase({ state: CaseState.Received, receivedAt: arbExpires - 600n, expiresAt: arbExpires });
+    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, arbExpires - 1n)).toEqual({
+      statusKey: 'at_court',
+      nextActor: 'keeper',
+      nextCall: 'openCase',
+      deadline: arbExpires,
+    });
+    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, arbExpires)).toEqual({
+      statusKey: 'stuck',
+      nextActor: 'anyone',
+      nextCall: 'expireClaim',
+      deadline: expiry,
+    });
+    const noExpiry = { ...received, expiresAt: 0n };
+    expect(deriveStatus(atCourt, noExpiry, [msg({})], LOCKED, arbExpires)).toMatchObject({
+      nextCall: 'openCase',
+      deadline: received.receivedAt + LOCKED.caseDeadline,
+    });
+    const pending = kase({ state: CaseState.RefilePending, attempts: 1, ruledAt: arbExpires - 60n, expiresAt: arbExpires });
+    expect(deriveStatus(atCourt, pending, [msg({})], LOCKED, arbExpires - 1n)).toMatchObject({ nextCall: 'refile', deadline: arbExpires });
+    expect(deriveStatus(atCourt, pending, [msg({})], LOCKED, arbExpires).statusKey).toBe('stuck');
+    const opened = kase({ state: CaseState.Opened, attempts: 1, expiresAt: arbExpires });
+    expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, arbExpires + 1n)).toMatchObject({ statusKey: 'at_court', nextActor: 'court' });
+  });
+});
+
+describe('claim expiry on Hedera', () => {
+  const T = LOCKED.claimTimeout;
+
+  it('Filed counts from filedAt, Contested and AtCourt from preCheckedAt, PreChecked never', () => {
+    const filed = claim({ status: ClaimStatus.Filed, preCheckedAt: 0n });
+    expect(claimExpiresAfter(filed, T)).toBe(T0 + T);
+    expect(claimExpiresAfter(claim({ status: ClaimStatus.Contested }), T)).toBe(T0 + 100n + T);
+    expect(claimExpiresAfter(claim({ status: ClaimStatus.AtCourt }), T)).toBe(T0 + 100n + T);
+    for (const status of [ClaimStatus.PreChecked, ClaimStatus.Ruled, ClaimStatus.Settled, ClaimStatus.Closed, ClaimStatus.Expired]) {
+      expect(claimExpiresAfter(claim({ status }), T)).toBeNull();
+      expect(canExpireClaim(claim({ status }), T, T0 + 10n * T)).toBe(false);
+    }
+    expect(canExpireClaim(filed, T, T0 + T)).toBe(false);
+    expect(canExpireClaim(filed, T, T0 + T + 1n)).toBe(true);
+  });
+
+  it('a Filed claim waits for the pre-check until filedAt + claimTimeout, then anyone may expire it', () => {
+    const filed = claim({ status: ClaimStatus.Filed, preCheckedAt: 0n });
+    expect(deriveStatus(filed, null, [], LOCKED, T0 + T)).toEqual({
+      statusKey: 'filed',
+      nextActor: 'preCheckSigner',
+      nextCall: 'recordPreCheck',
+      deadline: T0 + T,
+    });
+    expect(deriveStatus(filed, null, [], LOCKED, T0 + T + 1n)).toEqual({
+      statusKey: 'filed',
+      nextActor: 'anyone',
+      nextCall: 'expireClaim',
+      deadline: null,
+    });
+  });
+
+  it('a Contested claim can go to court until preCheckedAt + claimTimeout, then expires', () => {
+    const contested = claim({ status: ClaimStatus.Contested });
+    const end = contested.preCheckedAt + T;
+    expect(deriveStatus(contested, null, [], LOCKED, end)).toEqual({
+      statusKey: 'contested',
+      nextActor: 'anyone',
+      nextCall: 'sendToCourt',
+      deadline: end,
+    });
+    expect(deriveStatus(contested, null, [], LOCKED, end + 1n)).toMatchObject({ nextActor: 'anyone', nextCall: 'expireClaim' });
+  });
+
+  it('a PreChecked claim never expires: it closes uncontested', () => {
+    const pc = claim({ status: ClaimStatus.PreChecked, answer: 1 });
+    expect(deriveStatus(pc, null, [], LOCKED, T0 + 10n * T)).toMatchObject({ statusKey: 'window_lapsed', nextCall: 'closeUncontested' });
   });
 });

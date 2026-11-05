@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.6 |
+| Version | 1.7 |
 | Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -22,6 +22,7 @@ is a bug.
 | 1.4 | 2026-11-05 | Docket and intake endpoints and bodies as built; deployment file shapes. |
 | 1.5 | 2026-11-05 | `RecourseCase` error `TemplateNotSet()` (openCase and refile revert until template text and policy URI are set); refused relay refunds go to the fee pool. |
 | 1.6 | 2026-11-05 | CCIP receive gas limits 150,000 both ways, from measurements. |
+| 1.7 | 2026-11-05 | Claim expiry: Filed from `filedAt`, Contested and AtCourt from `preCheckedAt`, PreChecked never; pre-lock `claimTimeout` 64,800; `claimExpiresAfter`, `canExpireClaim`, optional `CaseView.expiresAt`; vault `ExitDue()`; `RecourseCase.markStale`, `expiresAt`, `claimTimeout`, `NotExpired`, constructor `claimTimeout_`; the expiry gap between the chains. |
 
 ---
 
@@ -45,7 +46,7 @@ is a bug.
 | `codec.ts` | `ClaimToCourt`, `RulingBack`, `encodeClaimToCourt`, `encodeRulingBack`, `tryDecodeClaimToCourt`, `tryDecodeRulingBack`, `payloadHash`, `extraArgsFor`, `CODEC_VERSION`, `CLAIM_TO_COURT_LEN`, `RULING_BACK_LEN`, `CLAIM_TO_COURT_WORDS`, `RULING_BACK_WORDS` |
 | `faultRule.ts` | `runFaultRule`, `RuleInput`, `PrecheckResult`, `ReasonKey`, `REASON_KEYS`, `RuleStep`, `RULE_VERSION`, `ruleSlotFromDoc`, `withSlot`, `parsePrice`, `compareDecimal`, `normalise` |
 | `settle.ts` | `settleOutcome`, `drawFromDeposit`, `SettleInput`, `SettleResult`, `SettleRow` |
-| `status.ts` | `deriveStatus`, `StatusKey`, `STATUS_KEYS`, `StatusView`, `NextActor`, `NextCall`, `CaseView`, `BridgeView`, `LiveParams` |
+| `status.ts` | `deriveStatus`, `claimExpiresAfter`, `canExpireClaim`, `StatusKey`, `STATUS_KEYS`, `StatusView`, `NextActor`, `NextCall`, `CaseView`, `BridgeView`, `LiveParams` |
 | `params.ts` | `PARAMS` (`preLock`, `locked`), `ParamSet`, `handlingOf` |
 | `addresses.ts` | `addressBook`, `chainSelectorOf`, `HEDERA_TESTNET_CHAIN_ID`, `ARBITRUM_SEPOLIA_CHAIN_ID` |
 | `parties.ts` | `Party`, `Parties`, `PartyRole`, `PARTY_ROLES`, `HEDERA_ROLES`, `parseParties`, `partyByRole`, `partiesByRole`, `partyByAddress`, `hcsWritersFor`, `parseHederaAccountIds` |
@@ -183,8 +184,9 @@ missing and counts against that side. (255, 3) never occurs.
 
 **`CaseView`** (`RecourseCase.caseOf(claimId)`): `CaseState state; bytes32 payloadHash; uint64
 receivedAt; uint8 attempts; uint256[2] disputeIds; uint256[2] templateIds; uint8 ruling; uint64
-ruledAt; uint8 sendCount; uint64 lastSendAt; bytes32 lastMessageId`. The TS `CaseView` adds the
-KlerosCore reads for the current dispute: `period?`, `currentRuling?`, `tied?`, `overridden?`.
+ruledAt; uint8 sendCount; uint64 lastSendAt; bytes32 lastMessageId`. The TS `CaseView` adds
+`expiresAt?` (from `RecourseCase.expiresAt(claimId)`; 0 or absent when unknown) and the KlerosCore
+reads for the current dispute: `period?`, `currentRuling?`, `tied?`, `overridden?`.
 
 **`BridgeView`** (TS) — one per known CCIP message of a claim: `{messageId, direction: 'toArbitrum'
 | 'toHedera', sendNo (1 = first send), executionState: ExecutionState, sentAt}`. The latest message
@@ -402,9 +404,15 @@ amount paid.
 false when unbatched). `caseView` is null until the case exists on Arbitrum. `StatusView =
 {statusKey, nextActor, nextCall, deadline}`.
 
+**Expiry on Hedera** (`claimExpiresAfter(claim, claimTimeout)`, `canExpireClaim(claim,
+claimTimeout, now)`): `expireClaim` succeeds once now > the base + `claimTimeout`, strictly after.
+The base is `filedAt` for a Filed claim and `preCheckedAt` for a Contested or AtCourt claim. A
+PreChecked claim never expires; it closes uncontested after its window.
+
 **Stuck**: the latest message on either leg is `Failure`, or is `Untouched` and now > `sentAt` +
 `stuckAfter`; or the case is `Stale`; or the case is `Received` at or after `receivedAt` +
-`caseDeadline`, or `RefilePending` at or after `ruledAt` + `caseDeadline` (it can no longer open).
+`caseDeadline`, or `RefilePending` at or after `ruledAt` + `caseDeadline`, or either of them at or
+after `CaseView.expiresAt` when known (it can no longer open); or the claim can expire on Hedera.
 
 | Order | Condition | statusKey | nextActor → nextCall | deadline |
 |---|---|---|---|---|
@@ -415,14 +423,14 @@ false when unbatched). `caseView` is null until the case exists on Arbitrum. `St
 | 5 | Settled | `settled` | shop → `withdrawCredit` | – |
 | 5a | Closed and undrawn | `closed_undrawn` | shop → `withdrawCredit` (refund) | – |
 | 6 | Closed | `closed_uncontested` | shop → `withdrawCredit` | – |
-| 7 | AtCourt and stuck | `stuck` | anyone → `expireClaim` (past the timeout or case dead), else `relayRuling` / `manualExecute` (return leg), else `resend` / `manualExecute` (outbound leg) | `filedAt` + `claimTimeout` |
+| 7 | AtCourt and stuck | `stuck` | anyone → `expireClaim` (past the timeout or case dead; it succeeds only after the deadline), else `relayRuling` / `manualExecute` (return leg), else `resend` / `manualExecute` (outbound leg) | `preCheckedAt` + `claimTimeout` |
 | 8 | AtCourt and (case RefilePending or case attempts = 2) | `refused_once` | anyone → `refile` (RefilePending; deadline `ruledAt` + `caseDeadline`), else court | – |
-| 9 | AtCourt | `at_court` | none (case not yet received); keeper → `openCase` (Received); court (Opened); keeper → `relayRuling` (case Ruled); none (Relayed) | `receivedAt` + `caseDeadline` when Received |
-| 10 | Contested | `contested` | anyone → `sendToCourt` | – |
+| 9 | AtCourt | `at_court` | none (case not yet received); keeper → `openCase` (Received); court (Opened); keeper → `relayRuling` (case Ruled); none (Relayed) | when Received, `receivedAt` + `caseDeadline` or `expiresAt` if earlier (row 8's refile deadline likewise) |
+| 10 | Contested | `contested` | anyone → `sendToCourt`; once it can expire, anyone → `expireClaim` | `preCheckedAt` + `claimTimeout` (before expiry) |
 | 11 | PreChecked and now > `preCheckedAt` + `contestWindow` | `window_lapsed` | anyone → `closeUncontested` | – |
 | 12 | PreChecked, answer 0 | `no_finding` | shop → `contest` | `preCheckedAt` + `contestWindow` |
 | 13 | PreChecked | `finding_made` | platform (answer 1), else shop → `contest` | `preCheckedAt` + `contestWindow` |
-| 14 | Filed | `filed` | `preCheckSigner` → `recordPreCheck` | – |
+| 14 | Filed | `filed` | `preCheckSigner` → `recordPreCheck`; once it can expire, anyone → `expireClaim` | `filedAt` + `claimTimeout` (before expiry) |
 
 Deadlines are inclusive (the action is still open at that second), except `caseDeadline` ones,
 which are exclusive. A Settled claim after ruling 0 twice with an answer shows `settled`.
@@ -448,7 +456,7 @@ contracts' `params()` views, never from this table.
 | `topUpWindow` / `exitDelay` | 604,800 / 600 | 604,800 / 10,368,000 | s |
 | `resendGap` / `maxSends` | 1,800 / 5 | same | s / count |
 | `caseDeadline` / `maxOpenCases` | 7,200 / 10 | same | s / count |
-| `claimTimeout` (from `filedAt`) | 14,400 | 64,800 | s |
+| `claimTimeout` (Filed from `filedAt`; Contested, AtCourt from `preCheckedAt`) | 64,800 | 64,800 | s |
 | `stuckAfter` | 3,600 | same | s |
 | `publishThreshold` | 20 | same | ruled cases |
 | `batchSize` / `pBps` | 8 / 2,500 | same | count / bps |
@@ -602,9 +610,11 @@ list.
 
 - Claim state machine: none → Filed (`fileClaim`) → PreChecked (`recordPreCheck`) → Contested
   (`contest`, inside the window) or Closed (`closeUncontested`, after it) → AtCourt (`sendToCourt`)
-  → Ruled (`_ccipReceive` or `recordRuling`) → Settled (`settle`). Filed, Contested and AtCourt go
-  to Expired by `expireClaim` once now > `filedAt` + `claimTimeout`. Settled, Closed and Expired
-  are terminal.
+  → Ruled (`_ccipReceive` or `recordRuling`) → Settled (`settle`). `expireClaim` moves a claim to
+  Expired and refunds the fee in full: a Filed claim once now > `filedAt` + `claimTimeout`, a
+  Contested or AtCourt claim once now > `preCheckedAt` + `claimTimeout` (otherwise
+  `NotExpired(expiresAfter)`). PreChecked claims never expire. Settled, Closed and Expired are
+  terminal.
 - `fileClaim(orderNonce, platform, refs, basketUsdc, netLossUsdc) returns (claimId)`: shop =
   `msg.sender`; `orderId` is computed on chain; `netLoss ≤ basket`; ordered hash non-zero; reverts
   `BasketTooLarge` above 2^128 − 1 (fee and handling bounds in `setParams` likewise).
@@ -632,7 +642,9 @@ list.
   `setFeeToken`.
 - Vault: constructor `(usdc, pool, owner)` plus one-time `bindClaims`; `escrowFee(shop, platform,
   amount, claimId)`; `associateUsdc`; `setParams`; `lockConfig`; `requestExit` / `exit` (`exit`
-  reads `exitDelay` at exit time). Views `depositOf`, `requiredOf`, `creditOf`, `escrowOf(claimId)`,
+  reads `exitDelay` at exit time). Once a platform's exit is due (`exitRequestedAt` ≠ 0 and now ≥
+  `exitRequestedAt` + `exitDelay`), `escrowFee`, and so `fileClaim`, revert `ExitDue()`. Claims
+  already open run out, and claims are accepted again after `exit`. Views `depositOf`, `requiredOf`, `creditOf`, `escrowOf(claimId)`,
   `shopEscrowOf(shop)`, `totals()` (deposits, escrow, credits), `topUpDeadline(platform)` (0 when
   clear), `openClaimsOf(platform)`, `exitRequestedAt`, `usdcAssociated`, `inGoodStanding`. The
   top-up clock starts only when a payout takes the deposit from at least `required` to below it.
@@ -648,11 +660,24 @@ list.
 
 - `CaseState` and `CaseView` as in sections 3 and 4; `caseOf(bytes32 claimId) returns (CaseView)`.
 - Transitions: None → Received (`_ccipReceive` or `relayClaim`, valid); Received → Opened
-  (`openCase` before `receivedAt` + `caseDeadline`, attempt 1) or Stale (`openCase` at or after);
-  Opened → RefilePending (`rule`, attempt 1, ruling 0) or Ruled (`rule`, attempt 1 ruling 1-3 or
-  attempt 2 ruling 0-3); RefilePending → Opened (`refile` before `ruledAt` + `caseDeadline`,
-  attempt 2) or Stale (at or after); Ruled → Relayed (first `relayRuling`).
-- Views: `claimOfDispute(uint256 disputeId) returns (bytes32 claimId, uint8 attempt)`,
+  (`openCase` before `receivedAt` + `caseDeadline` and before `expiresAt`, attempt 1) or Stale
+  (`openCase` at or after either, or `markStale`); Opened → RefilePending (`rule`, attempt 1,
+  ruling 0) or Ruled (`rule`, attempt 1 ruling 1-3 or attempt 2 ruling 0-3) or Stale (`markStale`);
+  RefilePending → Opened (`refile` before `ruledAt` + `caseDeadline` and before `expiresAt`,
+  attempt 2) or Stale (`refile` at or after either, or `markStale`); Ruled → Relayed (first
+  `relayRuling`). A Stale `openCase` or `refile` spends nothing and returns 0.
+- Expiry: `expiresAt = filedAt + claimTimeout`, set when the claim is received. `claimTimeout` is
+  Hedera's locked value, fixed at deploy (constructor's 9th argument `claimTimeout_`, non-zero).
+  `markStale(bytes32 claimId)` is permissionless once `block.timestamp ≥ expiresAt(claimId)`. It
+  moves Received, Opened or RefilePending to Stale, frees the open-case slot (Opened,
+  RefilePending), spends nothing and emits `ClaimStale`. It reverts `NotExpired(uint64 expiresAt)`
+  before then and `WrongState` from any other state. A ruling for a Stale case is ignored.
+- Known gap: Arbitrum's expiry counts from `filedAt`, while Hedera's court-stage expiry counts from
+  `preCheckedAt`, which is later by the pre-check's delay (minutes). A ruling that arrives in that
+  gap, about 18 h after filing, is ignored on Arbitrum once the case is Stale. The claim then
+  expires on Hedera and the fee is refunded.
+- Views: `expiresAt(bytes32 claimId) returns (uint64)` (0 when unknown), `claimTimeout() returns
+  (uint64)`, `claimOfDispute(uint256 disputeId) returns (bytes32 claimId, uint8 attempt)`,
   `openCases()`, `feePool()`, `costNow()`, `EXTRA_DATA`, `NUMBER_OF_CHOICES`, `trustedRelay()`,
   `locked()`, `peer()`, `params() returns (uint64 caseDeadline, uint16 maxOpenCases, uint64
   resendGap, uint8 maxSends)`, `extraArgs()`, `policyURI()`, `externalIdOf(bytes32 claimId, uint8
@@ -662,7 +687,7 @@ list.
   `ClaimReceived`) return the disputeId (0 when the claim went Stale); `relayRuling(bytes32
   claimId)` is payable: with no value it pays the CCIP fee in LINK held by the contract, with value
   it pays from `msg.value` and refunds the surplus to the caller (the fee pool is never touched);
-  `relayClaim(bytes payload)`, `setTrustedRelay(address)`, `setPeer(address)`, `setParams(uint64
+  `markStale(bytes32 claimId)`, `relayClaim(bytes payload)`, `setTrustedRelay(address)`, `setPeer(address)`, `setParams(uint64
   caseDeadline, uint16 maxOpenCases, uint64 resendGap, uint8 maxSends)` before lock (event
   `ParamsSet(caseDeadline, maxOpenCases, resendGap, maxSends)`), `setTemplateText(string[4] parts)`.
 - Indexed topics: `claimId` on `ClaimReceived`, `ClaimDuplicate`, `ClaimStale`, `CaseOpened`,
@@ -675,7 +700,7 @@ list.
   nextAt)`, `MaxSendsReached`, `PeerNotSet`, `InsufficientLink(uint256 have, uint256 need)`,
   `ConfigIsLocked`, `NotTrustedRelay`, `RelayDisabled`, `ZeroAddress`, `WithdrawTooLarge`,
   `EthSendFailed`, `ZeroGasLimit`, `InsufficientValue(uint256 have, uint256 need)`, `BadParams`,
-  `BadPayload`.
+  `BadPayload`, `TemplateNotSet`, `NotExpired(uint64 expiresAt)`.
 - `deployments/arbitrum.json` keys written separately: `testCases`, `gas`, then the deploy keys.
   ABI in `deployments/abi/RecourseCase.json`.
 
@@ -727,7 +752,8 @@ list.
   - `router`, `link`, `arbitrator`, `templateRegistry`, `owner`;
   - `hederaSelector`;
   - `params {caseDeadline, maxOpenCases, resendGap, maxSends}`;
-  - `relayGasLimit`.
+  - `relayGasLimit`;
+  - `claimTimeout` (Hedera's locked value, from `params.json` `locked.claimTimeout`).
 - `config`: `templateTag`, `templateVariant`, `templateTextHash`, `policyURI`, `extraArgs`, `extraData`, `numberOfChoices`.
 - `abi`.
 - `gas.<op> {used, limit}`.

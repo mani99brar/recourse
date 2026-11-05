@@ -18,11 +18,13 @@ describe('params', () => {
     expect(j.preLock).toEqual(PARAMS.preLock);
     expect(j.locked).toEqual(PARAMS.locked);
   });
-  it('lock changes only the window, the exit delay and the timeout', () => {
+  it('lock changes only the contest window and the exit delay', () => {
     const changed = Object.keys(PARAMS.preLock).filter(
       (k) => PARAMS.preLock[k as keyof typeof PARAMS.preLock] !== PARAMS.locked[k as keyof typeof PARAMS.locked],
     );
-    expect(changed.sort()).toEqual(['claimTimeout', 'contestWindow', 'exitDelay']);
+    expect(changed.sort()).toEqual(['contestWindow', 'exitDelay']);
+    expect(PARAMS.preLock.claimTimeout).toBe(64_800);
+    expect(PARAMS.locked.claimTimeout).toBe(PARAMS.preLock.claimTimeout);
     expect(PARAMS.locked.claimTimeout).toBeGreaterThan(PARAMS.locked.contestWindow);
   });
   it('handlingOf', () => {
