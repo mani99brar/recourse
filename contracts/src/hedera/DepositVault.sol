@@ -199,6 +199,9 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     {
         if (!usdcAssociated) revert NotAssociatedYet();
         if (amount == 0) revert AmountZero();
+        // Once a platform's exit is due, no new claim can keep it open; claims already open run out.
+        uint256 exitAt = _exitRequestedAt[platform];
+        if (exitAt != 0 && block.timestamp >= exitAt + _exitDelay) revert ExitDue();
         Escrow storage e = _escrows[claimId];
         if (e.state != EscrowState.None) revert EscrowExists(claimId);
 

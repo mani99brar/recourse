@@ -33,6 +33,7 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
 
     mapping(ClaimStatus => uint256) public reached; // claims that entered each status
 
+    uint256 public exits;
     bool public illegalTransition;
     bool public receiveReverted;
     uint256 public currentTime;
@@ -90,6 +91,7 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
     function file(uint256 shopSeed, uint256 platformSeed, uint256 basket, uint256 lossBps) external atTime {
         address s = shops[shopSeed % shops.length];
         address p = platforms[platformSeed % platforms.length];
+        if (_exitDue(p)) return; // refused by design once the platform's exit is due
         basket = bound(basket, 1, 2_000e6);
         uint256 netLoss = basket * bound(lossBps, 0, 10_000) / 10_000;
         RecordRefs memory refs;
@@ -178,7 +180,8 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
         if (!ok) return;
         ClaimStatus s = c.status;
         if (s != ClaimStatus.Filed && s != ClaimStatus.Contested && s != ClaimStatus.AtCourt) return;
-        if (block.timestamp <= uint256(c.filedAt) + claims.params().claimTimeout) return;
+        uint256 from = s == ClaimStatus.Filed ? c.filedAt : c.preCheckedAt;
+        if (block.timestamp <= from + claims.params().claimTimeout) return;
         claims.expireClaim(id);
         _moved(id, s);
     }
@@ -190,6 +193,21 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
         vault.postDeposit(p, amount);
     }
 
+    function requestExit(uint256 platformSeed) external atTime {
+        address p = platforms[platformSeed % platforms.length];
+        if (vault.depositOf(p) == 0 || vault.exitRequestedAt(p) != 0) return;
+        vm.prank(p);
+        vault.requestExit();
+    }
+
+    function exit(uint256 platformSeed) external atTime {
+        address p = platforms[platformSeed % platforms.length];
+        if (!_exitDue(p) || vault.openClaimsOf(p) != 0) return;
+        vm.prank(p);
+        vault.exit();
+        ++exits;
+    }
+
     function withdraw(uint256 accountSeed) external atTime {
         address a = accounts[accountSeed % accounts.length];
         if (vault.creditOf(a) == 0) return;
@@ -199,11 +217,17 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
 
     function warp(uint256 secs) external {
         // Mostly short steps, so contest windows can be met; now and then a long one, so claims expire.
-        currentTime += secs % 8 == 0 ? bound(secs, 1 hours, 5 hours) : bound(secs, 1, 20 minutes);
+        currentTime += secs % 8 == 0 ? bound(secs, 1 hours, 20 hours) : bound(secs, 1, 20 minutes);
         vm.warp(currentTime);
     }
 
     // ------------------------------------------------------------ bookkeeping
+
+    function _exitDue(address p) internal view returns (bool) {
+        uint256 at = vault.exitRequestedAt(p);
+        (, uint64 delay,) = vault.params();
+        return at != 0 && block.timestamp >= at + delay;
+    }
 
     uint256 internal constant ANY = type(uint256).max;
 

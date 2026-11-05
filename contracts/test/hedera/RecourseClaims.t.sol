@@ -40,7 +40,7 @@ contract RecourseClaimsTest is ClaimsBase {
         RecourseClaims c = deployer.deployClaims(address(router), address(linkToken), address(vault), ARB_SEL, owner);
         IRecourseClaims.Params memory p = c.params();
         assertEq(p.contestWindow, 600);
-        assertEq(p.claimTimeout, 4 hours);
+        assertEq(p.claimTimeout, 18 hours);
         assertEq(p.courtFeeUsdc, 3_000_000);
         assertEq(p.handlingBase, 15_000_000);
         assertEq(p.handlingBps, 500);
@@ -303,10 +303,10 @@ contract RecourseClaimsTest is ClaimsBase {
         _contest(contested);
         bytes32 atCourt = _atCourt(2, 2);
 
-        vm.warp(T0 + 4 hours);
-        vm.expectRevert(abi.encodeWithSelector(IRecourseClaims.NotExpired.selector, T0 + 4 hours));
+        vm.warp(T0 + 18 hours);
+        vm.expectRevert(abi.encodeWithSelector(IRecourseClaims.NotExpired.selector, T0 + 18 hours));
         claims.expireClaim(filed);
-        vm.warp(T0 + 4 hours + 1);
+        vm.warp(T0 + 18 hours + 1);
 
         bytes32[3] memory ids = [filed, contested, atCourt];
         for (uint256 i; i < 3; ++i) {
@@ -448,12 +448,12 @@ contract RecourseClaimsTest is ClaimsBase {
 
         IRecourseClaims.Params memory p = _params();
         p.contestWindow = 1800;
-        p.claimTimeout = 18 hours;
+        p.claimTimeout = 20 hours;
         vm.expectEmit(address(claims));
         emit IRecourseClaims.ParamsSet(p);
         claims.setParams(p);
         assertEq(_params().contestWindow, 1800);
-        assertEq(_params().claimTimeout, 18 hours);
+        assertEq(_params().claimTimeout, 20 hours);
 
         bytes memory args = BridgeCodec.extraArgsFor(250_000);
         vm.expectEmit(address(claims));
@@ -673,5 +673,120 @@ contract RecourseClaimsTest is ClaimsBase {
         vm.prank(owner);
         vm.expectRevert(IRecourseClaims.AmountZero.selector);
         claims.fundNative();
+    }
+
+    // ------------------------------------------------------------ expiry clock and exit
+
+    /// A shop that keeps filing cheap claims cannot hold a platform's exit open: once the exit is
+    /// due, new claims are refused, and the exit goes through when the open ones end.
+    function test_exit_rollingClaimsCannotBlockExit() public {
+        address griefer = shop2;
+        vm.prank(platform);
+        vault.requestExit();
+        (, uint64 exitDelay,) = vault.params();
+
+        bytes32 first = _file(griefer, platform, 1, 0); // during the notice period
+        vm.warp(block.timestamp + exitDelay);
+        vm.prank(platform);
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.OpenClaims.selector, 1));
+        vault.exit();
+
+        vm.prank(griefer);
+        vm.expectRevert(IDepositVault.ExitDue.selector);
+        claims.fileClaim(keccak256("next in the roll"), platform, _refs(), 1, 0);
+
+        vm.warp(uint256(claims.getClaim(first).filedAt) + _params().claimTimeout + 1);
+        claims.expireClaim(first);
+        uint256 held = vault.depositOf(platform);
+        vm.prank(platform);
+        assertEq(vault.exit(), held);
+        assertEq(vault.depositOf(platform), 0);
+        assertEq(vault.creditOf(platform), held);
+        _assertBooks();
+    }
+
+    /// A slow pre-check followed by a late contest no longer lets the platform expire the claim in
+    /// the same breath: past the pre-check the clock counts from `preCheckedAt`.
+    function test_expiry_latePrecheckAndContestKeepTheCourtsTime() public {
+        uint256 t0 = block.timestamp;
+        uint64 timeout = _params().claimTimeout;
+        bytes32 id = _file();
+        vm.warp(t0 + timeout - 1);
+        _precheck(id, 2, 1);
+        vm.warp(t0 + timeout + 1);
+        _contest(id); // the platform, inside its window, already past filedAt + claimTimeout
+        uint256 expiresAfter = t0 + timeout - 1 + timeout;
+
+        vm.prank(platform);
+        vm.expectRevert(abi.encodeWithSelector(IRecourseClaims.NotExpired.selector, expiresAfter));
+        claims.expireClaim(id);
+        claims.sendToCourt(id);
+        vm.warp(t0 + timeout + 2 hours);
+        vm.prank(platform);
+        vm.expectRevert(abi.encodeWithSelector(IRecourseClaims.NotExpired.selector, expiresAfter));
+        claims.expireClaim(id);
+
+        _deliver(id, 7, 1, 1); // the court finds against the platform
+        claims.settle(id);
+        assertEq(vault.creditOf(shop), NET_LOSS + 21 * USDC + FEE);
+        _assertBooks();
+    }
+
+    /// The refile path (a refusal, a second case, a second ruling: two full court rounds) ends
+    /// well inside the pre-lock timeout, so the losing side cannot expire it first.
+    function test_expiry_refilePathFitsThePreLockTimeout() public {
+        uint64 timeout = _params().claimTimeout;
+        assertEq(timeout, 64_800);
+        uint256 t0 = block.timestamp;
+        bytes32 id = _file();
+        vm.warp(t0 + 60);
+        _precheck(id, 2, 1);
+        vm.warp(t0 + 120);
+        _contest(id);
+        vm.warp(t0 + 180);
+        claims.sendToCourt(id);
+
+        vm.warp(t0 + 180 + 8_100);
+        _deliver(id, 98, 0, 1); // first attempt refused; ignored, the claim stays at court
+        assertEq(uint8(_status(id)), uint8(ClaimStatus.AtCourt));
+
+        vm.warp(t0 + 180 + 2 * 8_100 + 20 minutes);
+        vm.prank(platform);
+        vm.expectRevert(abi.encodeWithSelector(IRecourseClaims.NotExpired.selector, t0 + 60 + timeout));
+        claims.expireClaim(id);
+        _deliver(id, 99, 1, 2);
+        assertEq(uint8(_status(id)), uint8(ClaimStatus.Ruled));
+        claims.settle(id);
+        assertEq(vault.creditOf(shop), NET_LOSS + 21 * USDC + FEE);
+        _assertBooks();
+    }
+
+    /// With the locked parameters, a claim at court expires exactly `claimTimeout` after its
+    /// pre-check, however long it waited to be pre-checked; a Filed claim still counts from filing.
+    function test_expiry_courtClaimsCountFromPreCheck() public {
+        IRecourseClaims.Params memory p = _params();
+        p.contestWindow = 1_800;
+        p.claimTimeout = 64_800;
+        vm.prank(owner);
+        claims.setParams(p);
+
+        uint256 t0 = block.timestamp;
+        bytes32 waiting = _file();
+        bytes32 id = _file();
+        vm.warp(t0 + 5 hours);
+        _precheck(id, 2, 1);
+        _contest(id);
+        claims.sendToCourt(id);
+
+        vm.warp(t0 + p.claimTimeout + 1);
+        claims.expireClaim(waiting); // Filed: from filedAt
+        vm.expectRevert(abi.encodeWithSelector(IRecourseClaims.NotExpired.selector, t0 + 5 hours + p.claimTimeout));
+        claims.expireClaim(id);
+
+        vm.warp(t0 + 5 hours + p.claimTimeout + 1);
+        claims.expireClaim(id);
+        assertEq(uint8(_status(id)), uint8(ClaimStatus.Expired));
+        assertEq(uint8(_status(waiting)), uint8(ClaimStatus.Expired));
+        _assertBooks();
     }
 }

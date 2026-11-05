@@ -681,4 +681,32 @@ contract DepositVaultTest is HederaBase {
         assertEq(d + e + c, 0);
         assertEq(usdc.balanceOf(address(vault)), 7 * USDC);
     }
+
+    function test_escrowFee_refusedOnceExitDue() public {
+        _deposit(platform, 300 * USDC);
+        vm.prank(platform);
+        vault.requestExit();
+
+        // During the notice period claims are still accepted.
+        vm.warp(T0 + 10 minutes - 1);
+        vault.escrowFee(shop, platform, FEE, C1);
+
+        // From the moment the exit is due, no new claim can keep the platform open.
+        vm.warp(T0 + 10 minutes);
+        vm.expectRevert(IDepositVault.ExitDue.selector);
+        vault.escrowFee(shop, platform, FEE, C2);
+        vault.escrowFee(shop, platform2, FEE, C3); // other platforms are unaffected
+
+        vm.prank(platform);
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.OpenClaims.selector, 1));
+        vault.exit();
+        vault.applyOutcome(C1, platform, shop, 0, FEE);
+        vm.prank(platform);
+        assertEq(vault.exit(), 300 * USDC);
+
+        // After the exit the request is cleared, and claims are accepted again as for any platform.
+        vault.escrowFee(shop, platform, FEE, C2);
+        assertEq(vault.openClaimsOf(platform), 1);
+        _assertBooks();
+    }
 }

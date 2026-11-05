@@ -986,6 +986,11 @@
   },
   {
     "type": "error",
+    "name": "ExitDue",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ExitNotRequested",
     "inputs": []
   },

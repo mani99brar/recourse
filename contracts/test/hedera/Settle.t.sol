@@ -185,7 +185,7 @@ contract SettleTest is ClaimsBase {
 
     function test_E1_expired_refundsInFull() public {
         bytes32 id = _atCourt(1, 1);
-        vm.warp(T0 + 4 hours + 1);
+        vm.warp(T0 + 18 hours + 1);
         _expectApplied(id, 0, FEE, 0);
         claims.expireClaim(id);
         assertEq(vault.creditOf(shop), FEE);

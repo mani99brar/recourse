@@ -93,6 +93,9 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
     function escrow(uint256 sSeed, uint256 pSeed, uint256 amount) external creditsOnlyRise {
         address s = shops[sSeed % shops.length];
         address p = platforms[pSeed % platforms.length];
+        uint256 exitAt = vault.exitRequestedAt(p);
+        (, uint64 delay,) = vault.params();
+        if (exitAt != 0 && block.timestamp >= exitAt + delay) return; // refused once the exit is due
         amount = bound(amount, 1, 10e6);
         bytes32 id = keccak256(abi.encode("claim", claimIds.length));
         vault.escrowFee(s, p, amount, id);

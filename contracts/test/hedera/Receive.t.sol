@@ -182,7 +182,7 @@ contract ReceiveTest is ClaimsBase {
 
     function test_reason6_lateRulingAfterExpiry() public {
         bytes32 id = _atCourt(1, 1);
-        vm.warp(T0 + 4 hours + 1);
+        vm.warp(T0 + 18 hours + 1);
         claims.expireClaim(id);
         Client.Any2EVMMessage memory m = _rulingMsg(_rulingData(id, 1, 1, 1), casePeer, ARB_SEL);
         _expectIgnored(id, IgnoreReason.NOT_AT_COURT, m.messageId);
@@ -205,7 +205,7 @@ contract ReceiveTest is ClaimsBase {
     function test_reason8_thenExpires() public {
         bytes32 id = _atCourt(1, 1);
         _routeOk(_rulingMsg(_rulingData(id, 3, 0, 1), casePeer, ARB_SEL));
-        vm.warp(T0 + 4 hours + 1);
+        vm.warp(T0 + 18 hours + 1);
         claims.expireClaim(id);
         assertEq(uint8(_status(id)), uint8(ClaimStatus.Expired));
     }

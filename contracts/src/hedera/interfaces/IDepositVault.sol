@@ -67,6 +67,8 @@ interface IDepositVault {
     error ExitNotRequested();
     error ExitTooSoon(uint256 availableAt);
     error OpenClaims(uint256 count);
+    /// @dev No new claim may be escrowed against a platform whose exit is due.
+    error ExitDue();
 
     // ------------------------------------------------------------------ setup (owner)
 

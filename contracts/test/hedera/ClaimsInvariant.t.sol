@@ -35,7 +35,7 @@ contract ClaimsInvariantTest is ClaimsBase {
         platforms_[1] = platform2;
         handler = new ClaimsHandler(claims, vault, router, signer, casePeer, ARB_SEL, shops_, platforms_, pool);
 
-        bytes4[] memory sels = new bytes4[](13);
+        bytes4[] memory sels = new bytes4[](15);
         sels[0] = ClaimsHandler.file.selector;
         sels[1] = ClaimsHandler.precheck.selector;
         sels[2] = ClaimsHandler.contest.selector;
@@ -49,6 +49,8 @@ contract ClaimsInvariantTest is ClaimsBase {
         sels[10] = ClaimsHandler.withdraw.selector;
         sels[11] = ClaimsHandler.warp.selector;
         sels[12] = ClaimsHandler.file.selector; // filing twice as often keeps claims flowing
+        sels[13] = ClaimsHandler.requestExit.selector;
+        sels[14] = ClaimsHandler.exit.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
         targetContract(address(handler));
     }

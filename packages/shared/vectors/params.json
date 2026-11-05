@@ -7,7 +7,7 @@
   "preLock": {
     "batchSize": 8,
     "caseDeadline": 7200,
-    "claimTimeout": 14400,
+    "claimTimeout": 64800,
     "contestWindow": 600,
     "courtFeeUsdc": 3000000,
     "exitDelay": 600,

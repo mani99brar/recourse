@@ -80,7 +80,7 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         _extraArgs = BridgeCodec.extraArgsFor(DEFAULT_GAS_LIMIT);
         _params = Params({
             contestWindow: 10 minutes,
-            claimTimeout: 4 hours,
+            claimTimeout: 18 hours,
             courtFeeUsdc: 3_000_000,
             handlingBase: 15_000_000,
             handlingBps: 500,
@@ -208,13 +208,16 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         emit SentToCourt(claimId, messageId);
     }
 
-    /// @notice Frees a claim that never reached a ruling: after `claimTimeout` from filing, a
-    ///         claim that is Filed, Contested or AtCourt expires and the fee is refunded in full.
+    /// @notice Frees a claim that never reached a ruling, refunding the fee in full. A Filed claim
+    ///         expires once `claimTimeout` has passed since filing; a Contested or AtCourt claim once
+    ///         `claimTimeout` has passed since its pre-check, so a late pre-check or contest never
+    ///         shortens the court's time. PreChecked claims do not expire: they close uncontested.
     function expireClaim(bytes32 claimId) external nonReentrant {
         Claim storage c = _claims[claimId];
         ClaimStatus s = c.status;
         if (s != ClaimStatus.Filed && s != ClaimStatus.Contested && s != ClaimStatus.AtCourt) revert WrongStatus(s);
-        uint256 expiresAfter = uint256(c.filedAt) + _params.claimTimeout;
+        uint256 from = s == ClaimStatus.Filed ? c.filedAt : c.preCheckedAt;
+        uint256 expiresAfter = from + _params.claimTimeout;
         if (block.timestamp <= expiresAfter) revert NotExpired(expiresAfter);
 
         uint256 fee = _escrowed(claimId);

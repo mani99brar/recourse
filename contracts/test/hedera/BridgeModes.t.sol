@@ -380,7 +380,7 @@ contract BridgeModesTest is ClaimsBase {
             claims.settle(id);
             assertEq(uint8(_status(id)), uint8(ClaimStatus.Settled));
 
-            vm.warp(block.timestamp + 4 hours + 1);
+            vm.warp(block.timestamp + 18 hours + 1);
             claims.expireClaim(stuck);
             assertEq(uint8(_status(stuck)), uint8(ClaimStatus.Expired));
             _assertBooks();
