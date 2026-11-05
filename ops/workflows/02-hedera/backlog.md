@@ -12,9 +12,9 @@ Open items, each small and self-contained.
 - **Forge simulation and HTS.** A forge script cannot run HTS calls in its fork, so association
   and every USDC move go through `cast send`, and `Check.s.sol` reads token balances with a raw
   node `eth_call`. Keep any new USDC step out of forge scripts.
-- **Gas limits.** The send default is 150,000. `packages/shared/vectors/params.json` still says
-  300,000 (`gasClaimToCourt`) and 400,000 (`gasRulingBack`) until it is updated; the scripts read
-  it.
+- **Gas limits.** Both message gas limits are 150,000 (`gasClaimToCourt`, `gasRulingBack` in
+  `packages/shared/vectors/params.json`, which the scripts read). They come from local
+  measurements; confirm them on the first live messages.
 - **Native CCIP fees.** The HBAR fee path (`feeToken` 0, `fundNative`) is tested with the local
   router only, including the 8-decimal arithmetic. It has not been run against the live router.
 - **Exit.** `requestExit` and `exit` are covered by the suite only; no testnet run.

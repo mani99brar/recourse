@@ -239,7 +239,7 @@ case "$cmd" in
          | .note = "anvil rehearsal of the testnet steps with test mocks; never a testnet deployment"' "$tmp" > "$tmp.2"
       mv "$tmp.2" "$tmp"
     fi
-    mv "$tmp" "$OUT"
+    chmod 644 "$tmp"; mv "$tmp" "$OUT"
     log "wrote $OUT"
     [ "$REHEARSAL" = 1 ] || log "commit it together with contracts/broadcast/*/$CHAIN_ID/ (deploy evidence)" ;;
 
@@ -258,7 +258,7 @@ case "$cmd" in
     send platform "$vault" "postDeposit(address,uint256)" "$platform" "$amount"
     if [ "$BROADCAST" = 1 ]; then
       tmp=$(mktemp "$DEPLOY_DIR/.hedera.XXXXXX")
-      jq --arg tx "$LAST_TX" '.dpTx.dp2 = $tx' "$OUT" > "$tmp" && mv "$tmp" "$OUT"
+      jq --arg tx "$LAST_TX" '.dpTx.dp2 = $tx' "$OUT" > "$tmp" && chmod 644 "$tmp" && mv "$tmp" "$OUT"
       log "deposit of platform $platform: $(cast call "$vault" 'depositOf(address)(uint256)' "$platform" --rpc-url "$RPC")"
     fi ;;
 
