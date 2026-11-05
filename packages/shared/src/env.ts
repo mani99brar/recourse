@@ -105,6 +105,7 @@ export const ENV_NAMES = [
   'AGENT_URL',
   'PRECHECK_URL',
   'WEB_ORIGIN',
+  'COURT_URL_TEMPLATE',
 ] as const;
 export type EnvName = (typeof ENV_NAMES)[number];
 
@@ -117,6 +118,7 @@ export const ENV_DEFAULTS: Partial<Record<EnvName, string>> = {
   SUITE_LOCK_FILE: '/home/agentops/.local/state/recourse/suite.lock',
   PRECHECK_QUIET_S: '120',
   SEND_PAUSE_WINDOWS: '',
+  COURT_URL_TEMPLATE: 'https://v2-testnet.kleros.builders/#/cases/{id}/overview',
 };
 
 type Env = Record<string, string | undefined>;

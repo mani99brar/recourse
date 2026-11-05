@@ -53,10 +53,11 @@ describe('readEnv', () => {
     expect(lines.every((l) => /^[A-Z0-9_]+=$/.test(l))).toBe(true);
     expect(lines.map((l) => l.slice(0, -1)).sort()).toEqual([...ENV_NAMES, ...VITE_ENV_NAMES].sort());
   });
-  it('the precheck quiet time and the pause windows are optional', () => {
-    expect(readEnv(['PRECHECK_QUIET_S', 'SEND_PAUSE_WINDOWS'], { env: {} })).toEqual({
+  it('the precheck quiet time, the pause windows and the court link are optional', () => {
+    expect(readEnv(['PRECHECK_QUIET_S', 'SEND_PAUSE_WINDOWS', 'COURT_URL_TEMPLATE'], { env: {} })).toEqual({
       PRECHECK_QUIET_S: '120',
       SEND_PAUSE_WINDOWS: '',
+      COURT_URL_TEMPLATE: 'https://v2-testnet.kleros.builders/#/cases/{id}/overview',
     });
   });
 });

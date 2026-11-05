@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.2 |
+| Version | 1.3 |
 | Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -18,6 +18,7 @@ is a bug.
 | 1 | 2026-11-05 | First version. |
 | 1.1 | 2026-11-05 | `minDeposit` start value 10 USDC; `RecourseCase` additions (payable `relayRuling`, relay quotes, extra views and errors, `openCase`/`refile` return the disputeId, indexed topics). |
 | 1.2 | 2026-11-05 | Court evidence format and policy record; env names `PRECHECK_QUIET_S` and `SEND_PAUSE_WINDOWS` with `parseSendPauseWindows` and `isSendPaused`; Kleros and OffRamp ABI fragments. |
+| 1.3 | 2026-11-05 | Env name `COURT_URL_TEMPLATE`; the `GET /claims` response shape `{rows, standing?, groups?}`. |
 
 ---
 
@@ -523,12 +524,13 @@ by the core owner.
 | Agent and shop | `AGENT_SPEND_LIMIT_USDC` (µUSDC), `AGENT_MAX_ORDER_USDC`, `AGENT_DAILY_CAP_USDC`, `AGENT_APPROVAL_TTL_SEC`, `PRICE_ASSET`, `SHOP_PUBLIC_URL`, `SHOP_BASE_URL`, `SHOP_PORT`, `AGENT_PORT`, `SHOP_STANDING_CHECK` |
 | Precheck and keeper | `PRECHECK_STATE_DIR`, `PRECHECK_PORT`, `KEEPER_STATE_DIR`, `KEEPER_PORT`, `KEEPER_REFILE_HOLD_MIN`, `KEEPER_ARB_CONFIRMATIONS`, `KEEPER_POLL_MS`, `KEEPER_AUTO_MANUAL_EXEC`, `PRECHECK_QUIET_S`, `SEND_PAUSE_WINDOWS` |
 | Docket and intake | `DOCKET_PORT`, `DOCKET_STATE_DIR`, `DOCKET_STORE`, `DOCKET_PUBLISH_THRESHOLD`, `DOCKET_SAMPLE_MODE`, `DOCKET_Z`, `DOCKET_POLL_SECONDS`, `DOCKET_RETRY_SECONDS`, `DOCKET_RETRY_MAX`, `ARKIV_LIFETIME_DAYS`, `ARKIV_PAGE_SIZE`, `ARKIV_MIN_TGLM`, `SCHEME_MIN_HBAR`, `REVIEWS_ENABLED`, `REVIEW_VALUE_FAULT`, `REVIEW_VALUE_CLEAR`, `REVIEW_TAG1`, `INTAKE_PORT`, `INTAKE_CORS_ORIGIN`, `INTAKE_MAX_BYTES`, `INTAKE_RATE_PER_MIN`, `INTAKE_LLM_TIMEOUT_MS`, `INTAKE_LLM_PAUSE_MIN` |
-| Status API | `STATUS_API_PORT`, `STATUS_API_STATE_DIR`, `POLL_MS`, `ARB_CONFIRMATIONS`, `ARB_LOG_CHUNK`, `SOURCE_TIMEOUT_MS`, `VIEW_CACHE_MS`, `LAG_WARN_S_HEDERA`, `LAG_WARN_S_ARB`, `LAG_WARN_S_HCS`, `IPFS_RATE_PER_MIN`, `DOCKET_URL`, `INTAKE_URL`, `AGENT_URL`, `PRECHECK_URL`, `WEB_ORIGIN` |
+| Status API | `STATUS_API_PORT`, `STATUS_API_STATE_DIR`, `POLL_MS`, `ARB_CONFIRMATIONS`, `ARB_LOG_CHUNK`, `SOURCE_TIMEOUT_MS`, `VIEW_CACHE_MS`, `LAG_WARN_S_HEDERA`, `LAG_WARN_S_ARB`, `LAG_WARN_S_HCS`, `IPFS_RATE_PER_MIN`, `DOCKET_URL`, `INTAKE_URL`, `AGENT_URL`, `PRECHECK_URL`, `WEB_ORIGIN`, `COURT_URL_TEMPLATE` |
 | Web (public, build time) | `VITE_STATUS_API_URL`, `VITE_ARKIV_PUBLIC_RPC_URL`, `VITE_POLL_MS` |
 
 Defaults in `ENV_DEFAULTS`: `HEDERA_MIRROR_URL` `https://testnet.mirrornode.hedera.com`,
 `SUITE_LOCK_FILE` `/home/agentops/.local/state/recourse/suite.lock`, `PRECHECK_QUIET_S` `120`,
-`SEND_PAUSE_WINDOWS` empty.
+`SEND_PAUSE_WINDOWS` empty, `COURT_URL_TEMPLATE`
+`https://v2-testnet.kleros.builders/#/cases/{id}/overview`.
 
 - `PRECHECK_QUIET_S`: seconds a record topic must stay quiet before a missing record counts as
   final.
@@ -538,6 +540,8 @@ Defaults in `ENV_DEFAULTS`: `HEDERA_MIRROR_URL` `https://testnet.mirrornode.hede
   returns `{chain, from, to}` in unix seconds (empty text gives no windows) and throws
   `SEND_PAUSE_WINDOWS: ...` on any bad item; `isSendPaused(windows, chain, nowSec)` checks one
   instant. Precheck and keeper read both names.
+- `COURT_URL_TEMPLATE`: link to a dispute's court page, with `{id}` replaced by the dispute id. The
+  status API reads it.
 
 Local anvil port ranges, per area: shared core 8540-8549, Hedera contracts 8550-8559, Arbitrum
 case 8560-8569, agent and shop 8570-8579, precheck and keeper 8580-8589, docket and intake
@@ -574,7 +578,7 @@ Batch names (`openBatch`, `drawBatch`, `BatchOpened`, `BatchDrawn`, `ClosedUndra
 |---|---|---|
 | status-api | `GET /health` | per-chain cursor, lag, last error |
 | status-api | `GET /params` | live params, addresses, `preCheckSigner`, owner, lock state, disclosed owner powers |
-| status-api | `GET /claims?party=&status=` | rows: `claimId`, `orderId`, `shop`, `platform`, `filedAt`, `gap` and `answer` (null before the pre-check), `statusKey`, `nextActor`, `nextCall`, `deadline`, `findingSide`, `owed`, `paid`, `credited`, `notCovered`, `escrow {amount, fate}`, `updatedAt` |
+| status-api | `GET /claims?party=&status=` | `{rows, standing?, groups?}`; `standing` and `groups` only when `party` is given: `standing` is the `GET /parties/:address` body, `groups {waitingOnYou, waitingOnOther, openToAnyone, owedToYou, finished}` are claimId lists. `rows`: `claimId`, `orderId`, `shop`, `platform`, `filedAt`, `gap` and `answer` (null before the pre-check), `statusKey`, `nextActor`, `nextCall`, `deadline`, `findingSide`, `owed`, `paid`, `credited`, `notCovered`, `escrow {amount, fate}`, `updatedAt` |
 | status-api | `GET /claims/:claimId` | claim fields, `statusKey`, records (kind, seq, hash, cid, held), pre-check result, contest, court (attempts, disputeIds, period, currentRuling), bridge (messageId, direction, sendNo, executionState), money (as the rows, incl. `escrow {amount, fate}`), docket (writeStatus, entityKey), events (name, chain, tx, time) |
 | status-api | `GET /parties/:address` | role, balance, required, inGoodStanding, topUpDeadline, credit, escrowOpen, openClaims, exitRequestedAt |
 | status-api | `GET /search?q=` | matches on claim, order, dispute, message, tx, hash, HCS seq |
