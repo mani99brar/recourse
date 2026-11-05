@@ -19,7 +19,7 @@ import { vector } from './vectors.js';
 const v = vector('hashing.json');
 
 describe('canonical form', () => {
-  it.each(v.canonical.map((c: any) => [c.name, c] as const))('%s', (_n, c: any) => {
+  it.each((v.canonical as any[]).map((c: any): [string, any] => [c.name, c]))('%s', (_n, c: any) => {
     expect(canonicalJson(c.value)).toBe(c.text);
     const bytes = canonicalBytes(c.value);
     expect(isCanonical(bytes)).toBe(true);
@@ -27,7 +27,7 @@ describe('canonical form', () => {
     expect(packHash(bytes)).toBe(c.sha256);
   });
 
-  it.each(v.nonCanonical.map((c: any) => [c.name, c.hex] as const))('rejects %s', (_n, hex) => {
+  it.each((v.nonCanonical as any[]).map((c: any): [string, string] => [c.name, c.hex]))('rejects %s', (_n, hex) => {
     expect(isCanonical(hexToBytes(`0x${hex}` as Hex))).toBe(false);
   });
 

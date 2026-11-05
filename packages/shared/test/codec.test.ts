@@ -35,7 +35,7 @@ function setWordByte(hex: Hex, word: number, byte: number, value: number): Hex {
 }
 
 describe('ClaimToCourt', () => {
-  it.each(v.claimToCourt.map((c: any) => [c.name, c] as const))('%s: encodes, decodes, hashes', (_n, c: any) => {
+  it.each((v.claimToCourt as any[]).map((c: any): [string, any] => [c.name, c]))('%s: encodes, decodes, hashes', (_n, c: any) => {
     const m = claimFrom(c.value);
     const enc = encodeClaimToCourt(m);
     expect(enc).toBe(c.encoded);
@@ -70,7 +70,7 @@ describe('ClaimToCourt', () => {
 });
 
 describe('RulingBack', () => {
-  it.each(v.rulingBack.map((c: any) => [c.name, c] as const))('%s: encodes and decodes', (_n, c: any) => {
+  it.each((v.rulingBack as any[]).map((c: any): [string, any] => [c.name, c]))('%s: encodes and decodes', (_n, c: any) => {
     const m = rulingFrom(c.value);
     const enc = encodeRulingBack(m);
     expect(enc).toBe(c.encoded);
@@ -112,7 +112,7 @@ describe('decoders never throw', () => {
 });
 
 describe('extraArgsFor', () => {
-  it.each(v.extraArgs.map((e: any) => [e.gasLimit, e.encoded] as const))('gas %s', (gas, encoded) => {
+  it.each((v.extraArgs as any[]).map((e: any): [string, string] => [e.gasLimit, e.encoded]))('gas %s', (gas, encoded) => {
     expect(extraArgsFor(BigInt(gas))).toBe(encoded);
   });
 });

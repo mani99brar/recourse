@@ -12,7 +12,7 @@ const big = (o: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(o).map(([k, x]) => [k, ['toShop', 'refundToShop', 'toPool', 'handling'].includes(k) ? BigInt(x as string) : x]));
 
 describe('settle mirror', () => {
-  it.each(v.cases.map((c: any) => [c.name, c] as const))('%s', (_n, c: any) => {
+  it.each((v.cases as any[]).map((c: any): [string, any] => [c.name, c]))('%s', (_n, c: any) => {
     const r = settleOutcome({
       ...c.input,
       basketUsdc: BigInt(c.input.basketUsdc),
@@ -24,7 +24,7 @@ describe('settle mirror', () => {
     if (r.row !== 'not_settleable') expect(r.toPool + r.refundToShop).toBe(BigInt(c.input.feeUsdc));
   });
 
-  it.each(v.drawFromDeposit.map((d: any) => [d.owed, d.held, d] as const))('drawFromDeposit(%s, %s)', (_o, _h, d: any) => {
+  it.each((v.drawFromDeposit as any[]).map((d: any): [string, string, any] => [d.owed, d.held, d]))('drawFromDeposit(%s, %s)', (_o, _h, d: any) => {
     expect(drawFromDeposit(BigInt(d.owed), BigInt(d.held))).toEqual({ paid: BigInt(d.paid), notCovered: BigInt(d.notCovered) });
   });
 });
