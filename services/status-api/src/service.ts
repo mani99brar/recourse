@@ -20,7 +20,7 @@ import {
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
 import type { Config } from './config.js';
 import type { Deployments } from './deployments.js';
-import { getJson, type FetchLike } from './http.js';
+import { getJson, HttpError, type FetchLike } from './http.js';
 import type { DocFetcher } from './ipfs.js';
 import {
   bridgeViewsOf,
@@ -381,7 +381,9 @@ export class StatusService {
   private async external<T>(key: string, url: string): Promise<T | null> {
     try {
       return (await this.ext.get(key, () => getJson(this.d.fetch, url, this.d.cfg.sourceTimeoutMs))) as T;
-    } catch {
+    } catch (e) {
+      // The docket answers 404 for a claim it has not seen: that is "none", not "unreachable".
+      if (key.startsWith('dk:') && e instanceof HttpError && e.status === 404) return { writeStatus: 'none', store: null, entityKey: null } as T;
       return null;
     }
   }
@@ -425,7 +427,7 @@ export class StatusService {
       packHashOk = info ? info.hash === c.packHash : null;
     }
     const dock = await this.external<Record<string, unknown>>(`dk:${id}`, `${this.d.cfg.docketUrl}/write-status/${id}`);
-    const docketStatus = dock ? String(dock.writeStatus ?? dock.status ?? 'none') : 'unreachable';
+    const docketStatus = dock ? String(dock.writeStatus ?? 'none') : 'unreachable';
     return {
       ...this.row(c, lp),
       refs: { topicNum: c.refs.topicNum, seq: c.refs.seq, hashes: c.refs.hashes },
@@ -451,7 +453,7 @@ export class StatusService {
       },
       bridge: bridge.map((b) => ({ ...b, ccipExplorer: `https://ccip.chain.link/msg/${b.messageId}` })),
       money,
-      docket: { writeStatus: docketStatus, entityKey: dock && typeof dock.entityKey === 'string' ? dock.entityKey : null, store: dock && typeof dock.store === 'string' ? dock.store : null },
+      docket: { writeStatus: docketStatus, entityKey: dock && typeof dock.entityKey === 'string' ? dock.entityKey : null, store: dock && typeof dock.store === 'string' ? dock.store : null, reviews: dock?.reviews ?? null, lastError: dock && typeof dock.errorKind === 'string' ? dock.errorKind : null },
       events: events.map((e) => this.eventOut(e)),
     };
   }
