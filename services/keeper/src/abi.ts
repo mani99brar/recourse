@@ -1,8 +1,6 @@
-// ABI fragments for every contract the keeper and the pre-check touch, in one place so a swap to
-// generated ABI files is one edit. Recourse contracts follow `IRecourseClaims.sol`,
-// `IDepositVault.sol` and `IRecourseCase.sol`; the Kleros fragments follow
-// @kleros/kleros-v2-contracts 0.12.0 (KlerosCoreBase, SortitionModuleBase, DisputeKitClassicBase,
-// EvidenceModule, IArbitrableV2) and the OffRamp fragment @chainlink/contracts-ccip 2.0.0.
+// ABI fragments for every contract the keeper and the pre-check touch, in one place. The Recourse
+// fragments follow `IRecourseClaims.sol`, `IDepositVault.sol` and `IRecourseCase.sol`; a test
+// checks each one against the generated ABI files in deployments/abi as they appear.
 
 import { parseAbi } from 'viem';
 
@@ -113,38 +111,15 @@ export const caseAbi = parseAbi([
   'function arbitrator() view returns (address)',
 ]);
 
-export const klerosCoreAbi = parseAbi([
-  'event Draw(address indexed _address, uint256 indexed _disputeID, uint256 _roundID, uint256 _voteID)',
-  'event NewPeriod(uint256 indexed _disputeID, uint8 _period)',
-  'function disputes(uint256) view returns (uint96 courtID, address arbitrated, uint8 period, bool ruled, uint256 lastPeriodChange)',
-  'function getTimesPerPeriod(uint96 _courtID) view returns (uint256[4] timesPerPeriod)',
-  'function currentRuling(uint256 _disputeID) view returns (uint256 ruling, bool tied, bool overridden)',
-  'function arbitrationCost(bytes _extraData) view returns (uint256 cost)',
-  'function passPeriod(uint256 _disputeID)',
-  'function draw(uint256 _disputeID, uint256 _iterations) returns (uint256 nbDrawnJurors)',
-  'function executeRuling(uint256 _disputeID)',
-]);
-
-export const sortitionModuleAbi = parseAbi([
-  'function phase() view returns (uint8)',
-  'function passPhase()',
-  'function lastPhaseChange() view returns (uint256)',
-  'function minStakingTime() view returns (uint256)',
-  'function maxDrawingTime() view returns (uint256)',
-  'function disputesWithoutJurors() view returns (uint256)',
-]);
-
-export const disputeKitAbi = parseAbi([
-  'event Contribution(uint256 indexed _coreDisputeID, uint256 indexed _coreRoundID, uint256 _choice, address indexed _contributor, uint256 _amount)',
-  'event ChoiceFunded(uint256 indexed _coreDisputeID, uint256 indexed _coreRoundID, uint256 indexed _choice)',
-]);
-
-export const evidenceModuleAbi = parseAbi([
-  'event Evidence(uint256 indexed _externalDisputeID, address indexed _party, string _evidence)',
-  'function submitEvidence(uint256 _externalDisputeID, string _evidence)',
-]);
-
-export const offRampAbi = parseAbi(['function getExecutionState(bytes32 messageId) view returns (uint8)']);
+// Kleros and CCIP OffRamp fragments come from the shared package, checked there against the pinned
+// sources.
+export {
+  klerosCoreAbi,
+  sortitionModuleAbi,
+  evidenceModuleAbi,
+  disputeKitClassicAbi,
+  ccipOffRampAbi,
+} from '@recourse/shared';
 
 export const erc20Abi = parseAbi(['function balanceOf(address) view returns (uint256)']);
 
