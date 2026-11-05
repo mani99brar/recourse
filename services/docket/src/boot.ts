@@ -1,6 +1,6 @@
 // Wires the docket together and runs it: config, lock, journal, store, sources, HTTP.
 
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Journal, createLogger, ipfsOptionsFromEnv, pinDocument, pinProviderFromEnv, readJournal } from '@recourse/records';
 import { nullPinner, type Pinner } from './reason.js';
@@ -12,31 +12,14 @@ import { Docket, cutReviews, type JournalRow, type ReviewPort } from './docket.j
 import { acquireLock } from './lock.js';
 import { ReviewWriter, type ReviewRow } from './reviews.js';
 import { viemReviewChain } from './reviewsChain.js';
-import { ArbitrumCaseSource, MirrorLogSource } from './sources.js';
+import { ArbitrumCaseSource, MirrorLogSource, RpcLogSource, type ArbReader } from './sources.js';
+import { readAbi, readArbitrumDeployment, readHederaDeployment } from './deployments.js';
 import { ArkivStore } from './store/arkiv.js';
 import { SdkArkivIo, arkivChain } from './store/arkivSdk.js';
 import { LocalStore } from './store/local.js';
 import type { DocketStore } from './store/types.js';
 
 type Poller = { name: string; poll(cursor: string | undefined): Promise<{ events: import('./events.js').DocketEvent[]; cursor: string | undefined }> };
-
-function readJson(path: string): Record<string, unknown> | null {
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function pick(obj: Record<string, unknown> | null, names: string[]): string | undefined {
-  if (obj === null) return undefined;
-  for (const n of names) {
-    const v = obj[n];
-    if (typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v)) return v;
-  }
-  return undefined;
-}
 
 export async function startDocket(env: Record<string, string | undefined> = process.env): Promise<void> {
   const cfg = loadConfig(env);
@@ -118,29 +101,42 @@ function buildPollers(cfg: DocketConfig, env: Record<string, string | undefined>
     log.warn('no_deployments', { note: 'DEPLOYMENTS_DIR not set; no chain sources' });
     return out;
   }
-  const hedera = readJson(join(cfg.deploymentsDir, 'hedera.json'));
-  const claims = pick(hedera, ['RecourseClaims', 'recourseClaims', 'claims']);
-  const vault = pick(hedera, ['DepositVault', 'depositVault', 'vault']);
-  if (claims) out.push(new MirrorLogSource({ baseUrl: cfg.mirrorUrl, contract: claims, name: 'hedera-claims' }));
-  if (vault) out.push(new MirrorLogSource({ baseUrl: cfg.mirrorUrl, contract: vault, name: 'hedera-vault' }));
-  const arb = readJson(join(cfg.deploymentsDir, 'arbitrum.json'));
-  const arbCase = pick(arb, ['RecourseCase', 'recourseCase', 'case']);
-  const startBlock = arb && (typeof arb.startBlock === 'number' || typeof arb.startBlock === 'string') ? BigInt(arb.startBlock as string | number) : undefined;
-  if (arbCase && startBlock !== undefined && env.ARB_RPC_URL) {
-    const client = createPublicClient({ transport: http(env.ARB_RPC_URL) });
-    out.push(
-      new ArbitrumCaseSource(
-        {
-          getBlockNumber: () => client.getBlockNumber(),
-          getLogs: async ({ address, fromBlock, toBlock }) => (await client.getLogs({ address, fromBlock, toBlock })) as never,
-        },
-        arbCase as `0x${string}`,
-        startBlock,
-      ),
-    );
+  const dir = cfg.deploymentsDir;
+  const claimsAbi = readAbi(dir, 'RecourseClaims');
+  const vaultAbi = readAbi(dir, 'DepositVault');
+  const hedera = readHederaDeployment(dir, env.HEDERA_LOCAL_FILE);
+  if (hedera) {
+    if (hedera.local) {
+      const rpc = env.HEDERA_RPC_URL_1;
+      if (!rpc) throw new Error('HEDERA_LOCAL_FILE needs HEDERA_RPC_URL_1 pointing at the local chain');
+      const client = createPublicClient({ transport: http(rpc) });
+      const reader = readerOf(client);
+      const start = hedera.startBlock ?? 0n;
+      out.push(new RpcLogSource(reader, { chain: 'hedera', name: 'hedera-claims', address: hedera.claims, startBlock: start, ...(claimsAbi ? { abi: claimsAbi } : {}) }));
+      out.push(new RpcLogSource(reader, { chain: 'hedera', name: 'hedera-vault', address: hedera.vault, startBlock: start, ...(vaultAbi ? { abi: vaultAbi } : {}) }));
+    } else {
+      // The first poll starts at the deploy, not at the beginning of the chain.
+      const mk = (name: string, contract: string, abi?: readonly unknown[]) =>
+        new MirrorLogSource({ baseUrl: cfg.mirrorUrl, contract, name, ...(abi ? { abi } : {}), ...(hedera.startTimestamp ? { initialCursor: hedera.startTimestamp } : {}) });
+      out.push(mk('hedera-claims', hedera.claims, claimsAbi), mk('hedera-vault', hedera.vault, vaultAbi));
+    }
   }
-  if (out.length === 0) log.warn('no_sources', { note: 'no contract addresses found in the deployments directory yet' });
+  const arb = readArbitrumDeployment(dir);
+  if (arb && env.ARB_RPC_URL) {
+    const reader = readerOf(createPublicClient({ transport: http(env.ARB_RPC_URL) }));
+    const caseAbi = readAbi(dir, 'RecourseCase');
+    out.push(new ArbitrumCaseSource(reader, arb.case, arb.startBlock, 1000n, 20, caseAbi));
+  }
+  if (out.length === 0) log.warn('no_sources', { note: 'no deployment files found in the deployments directory yet' });
   return out;
+}
+
+function readerOf(client: ReturnType<typeof createPublicClient>): ArbReader {
+  return {
+    getBlockNumber: () => client.getBlockNumber(),
+    getLogs: async ({ address, fromBlock, toBlock }) => (await client.getLogs({ address, fromBlock, toBlock })) as never,
+    getBlockTimestamp: async (n) => Number((await client.getBlock({ blockNumber: n })).timestamp),
+  };
 }
 
 async function watchBalances(cfg: DocketConfig, env: Record<string, string | undefined>, alert: (t: string) => Promise<void>): Promise<void> {

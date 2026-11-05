@@ -104,8 +104,8 @@ export interface RawLog {
 }
 
 /** Decodes a log from the claims, vault or case contract; null for an event the docket ignores. */
-export function decodeDocketLog(chain: Chain, meta: Omit<EventMeta, 'chain'>, log: RawLog): DocketEvent | null {
-  const abi = chain === 'arbitrum' ? caseEventsAbi : ([...claimsEventsAbi, ...vaultEventsAbi] as const);
+export function decodeDocketLog(chain: Chain, meta: Omit<EventMeta, 'chain'>, log: RawLog, abiOverride?: readonly unknown[]): DocketEvent | null {
+  const abi = abiOverride ?? (chain === 'arbitrum' ? caseEventsAbi : ([...claimsEventsAbi, ...vaultEventsAbi] as const));
   let decoded: { eventName?: string; args?: unknown };
   try {
     decoded = decodeEventLog({ abi: abi as never, topics: log.topics as [Hex, ...Hex[]], data: log.data as Hex }) as never;
