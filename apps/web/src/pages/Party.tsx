@@ -74,10 +74,14 @@ function Standing({ s, address }: { s: Standing; address: string }) {
     <Card title="Standing">
       <h1>{s.displayName ?? short(address)}</h1>
       <dl>
-        <Row label="Role">{s.role === 'unknown' ? 'Not a known party' : s.role === 'platform' ? 'Agent company' : s.role}</Row>
-        <Row label="Deposit">{usdc(s.balance)} of {usdc(s.required)} required</Row>
-        <Row label="Good standing">{s.inGoodStanding === null ? 'not read' : s.inGoodStanding ? 'yes' : 'no'}</Row>
-        <Row label="Top-up due">{s.topUpDeadline && s.topUpDeadline !== '0' ? when(s.topUpDeadline) : 'nothing due'}</Row>
+        <Row label="Role">{s.role === 'unknown' ? 'Not a known party' : s.role === 'platform' ? 'Agent company' : s.role === 'shop' ? 'Shop' : s.role}</Row>
+        {s.role !== 'shop' && (
+          <>
+            <Row label="Deposit">{usdc(s.balance)} of {usdc(s.required)} required</Row>
+            <Row label="Good standing">{s.inGoodStanding === null ? 'not read' : s.inGoodStanding ? 'yes' : 'no'}</Row>
+            <Row label="Top-up due">{s.topUpDeadline && s.topUpDeadline !== '0' ? when(s.topUpDeadline) : 'nothing due'}</Row>
+          </>
+        )}
         <Row label="Credit to withdraw">{usdc(s.credit)}</Row>
         <Row label="Court fees held in escrow">{usdc(s.escrowOpen)}</Row>
         <Row label="Open claims">{s.openClaims}</Row>

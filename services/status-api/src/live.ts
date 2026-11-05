@@ -297,10 +297,14 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
   for (const id of store.claimIds()) {
     const evs = store.eventsOf(id);
     const claim = foldClaim(evs);
-    if (!claim || isTerminal(claim.status) || claim.status === ClaimStatus.Ruled) continue;
+    if (!claim) continue;
     const touched = claim.toCourt.length > 0 || evs.some((e) => e.contract === 'case');
     if (!touched) continue;
     const live = store.live.get(id) ?? { caseView: null, exec: {}, kleros: {}, at: 0 };
+    // A finished claim is read once more until its case and every message state are known.
+    const finished = isTerminal(claim.status) || claim.status === ClaimStatus.Ruled;
+    const messages = [...bridgeless(claim.toCourt, 'arbitrum'), ...bridgeless(claim.relayed, 'hedera')];
+    if (finished && live.caseView && messages.every((m) => live.exec[m.messageId] === 2)) continue;
     try {
       live.caseView = await reader.caseOf(claim.claimId);
     } catch (e) {

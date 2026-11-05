@@ -2,7 +2,7 @@ import { recordHash, utf8ToBytes } from '@recourse/shared';
 import { useState } from 'react';
 import { Banner, Card, ExtLink, Loading, Pill, Row } from '../components.js';
 import { usePoll, type Fresh } from '../lib/api.js';
-import { short, usdc, when } from '../lib/format.js';
+import { short, usdc, when, whenS } from '../lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, SIDE_WORDS, STATUS_WORDS, deadlineLabel } from '../lib/words.js';
 import type { NextActor, NextCall, StatusKey } from '@recourse/shared';
 
@@ -49,7 +49,7 @@ export interface CaseDetail extends Fresh {
     evidence: { attempt: number; uri: string; tx: string; explorer: string | null; time: string }[];
     courtLinks: { disputeId: string; url: string }[];
   };
-  bridge: { messageId: string; direction: string; sendNo: number; executionState: number; ccipExplorer: string }[];
+  messages: { messageId: string; direction: string; sendNo: number; executionState: number | null; ccipExplorer: string }[];
   money: { owed: string | null; paid: string | null; credited: string | null; notCovered: string | null; escrow: { amount: string; fate: string }; projected: boolean };
   docket: { writeStatus: string; entityKey: string | null; store: string | null };
   events: { name: string; chain: string; tx: string; time: string; explorer: string | null }[];
@@ -65,8 +65,11 @@ const STEPS: { label: string; events: string[] }[] = [
   { label: 'Money applied', events: ['Settled', 'ClaimExpired', 'ClosedUncontested'] },
 ];
 
-export function Timeline({ events }: { events: CaseDetail['events'] }) {
-  let reachedCurrent = false;
+const FINAL_KEYS: StatusKey[] = ['settled', 'closed_uncontested', 'closed_undrawn', 'expired', 'unresolved'];
+
+export function Timeline({ events, statusKey }: { events: CaseDetail['events']; statusKey?: StatusKey }) {
+  const final = statusKey !== undefined && FINAL_KEYS.includes(statusKey);
+  let reachedCurrent = final;
   return (
     <ol className="timeline">
       {STEPS.map((s) => {
@@ -76,8 +79,10 @@ export function Timeline({ events }: { events: CaseDetail['events'] }) {
         return (
           <li key={s.label} className={cls}>
             <span className="dot" aria-hidden />
-            <span className="tl-label">{s.label}</span>
-            <span className="tl-when">{hit ? when(hit.time) : cls === 'current' ? 'next' : ''}</span>
+            <span className="tl-text">
+              <span className="tl-label">{s.label}</span>
+              <span className="tl-when">{hit ? when(hit.time) : cls === 'current' ? 'next' : final ? 'did not happen' : ''}</span>
+            </span>
           </li>
         );
       })}
@@ -109,7 +114,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
       </header>
       <div className="grid">
         <Card title="Timeline">
-          <Timeline events={d.events} />
+          <Timeline events={d.events} statusKey={d.statusKey} />
         </Card>
         <Card title="Money">
           <dl>
@@ -117,7 +122,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
             <Row label="Net loss claimed">{usdc(d.netLossUsdc)}</Row>
             <Row label={d.money.projected ? 'Owed (projected)' : 'Owed'}>{usdc(d.money.owed)}</Row>
             <Row label="Paid from deposit">{usdc(d.money.paid)}</Row>
-            <Row label="Not covered by the deposit">{usdc(d.money.notCovered)}</Row>
+            <Row label="Not covered">{usdc(d.money.notCovered)}</Row>
             <Row label="Credited to the shop">{usdc(d.money.credited)}</Row>
             <Row label="Court fee escrow">
               {usdc(d.money.escrow.amount)}: {FATE_WORDS[d.money.escrow.fate] ?? d.money.escrow.fate}
@@ -132,9 +137,9 @@ export function CaseView({ d }: { d: CaseDetail }) {
             {d.precheck ? (
               <>
                 <Row label="Pre-check says">At fault: {SIDE_WORDS[d.precheck.side] ?? d.precheck.side}</Row>
-                <Row label="Contest window ends">{when(d.contest.windowEndsAt)}</Row>
+                <Row label={d.statusKey === 'finding_made' || d.statusKey === 'no_finding' ? 'Contest window ends' : 'Contest window closed'}>{when(d.contest.windowEndsAt)}</Row>
                 <Row label="Result document">
-                  {d.precheck.packHashOk === true ? 'matches the hash on chain' : d.precheck.packHashOk === false ? 'does NOT match the hash on chain' : 'not checked yet'}
+                  {d.precheck.packHashOk === true ? 'matches the hash on chain' : d.precheck.packHashOk === false ? 'does NOT match the hash on chain' : 'not available'}
                 </Row>
               </>
             ) : (
@@ -159,8 +164,8 @@ export function CaseView({ d }: { d: CaseDetail }) {
                   );
                 })}
               </Row>
-              <Row label="Stage">{d.court.periodName ? (COURT_PERIODS[d.court.periodName] ?? d.court.periodName) : 'not read yet'}</Row>
-              <Row label="Current ruling">{d.court.currentRuling === null ? 'none yet' : rulingWord(d.court.currentRuling)}{d.court.tied ? ' (tied)' : ''}{d.court.overridden ? ' (overridden by appeal)' : ''}</Row>
+              <Row label="Stage">{d.court.periodName ? (COURT_PERIODS[d.court.periodName] ?? d.court.periodName) : d.court.ruling !== null ? 'Finished' : 'not read yet'}</Row>
+              <Row label={d.court.ruling !== null ? 'Ruling' : 'Current ruling'}>{d.court.ruling !== null ? rulingWord(String(d.court.ruling)) : d.court.currentRuling === null ? 'none yet' : rulingWord(d.court.currentRuling)}{d.court.tied ? ' (tied)' : ''}{d.court.overridden ? ' (overridden by appeal)' : ''}</Row>
               <Row label="Evidence">
                 {d.court.evidence.length === 0 ? 'none seen yet' : d.court.evidence.map((e) => <ExtLink key={e.tx} href={e.explorer}>attempt {e.attempt}, {when(e.time)}</ExtLink>)}
               </Row>
@@ -168,13 +173,14 @@ export function CaseView({ d }: { d: CaseDetail }) {
           )}
         </Card>
         <Card title="Messages between chains">
-          {d.bridge.length === 0 ? (
+          {d.messages.length === 0 ? (
             <p className="muted">None yet.</p>
           ) : (
             <ul className="plain">
-              {d.bridge.map((b) => (
+              {d.messages.map((b) => (
                 <li key={b.messageId}>
-                  {b.direction === 'toArbitrum' ? 'To the court chain' : 'Back to Hedera'}, send {b.sendNo}: {['not delivered yet', 'in progress', 'delivered', 'failed'][b.executionState]}{' '}
+                  {b.direction === 'toArbitrum' ? 'To the court chain' : 'Back to Hedera'}, send {b.sendNo}:{' '}
+                  {b.executionState === null ? 'delivery not read yet' : ['not delivered yet', 'in progress', 'delivered', 'failed'][b.executionState]}{' '}
                   <ExtLink href={b.ccipExplorer}>{short(b.messageId)}</ExtLink>
                 </li>
               ))}
@@ -206,7 +212,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
               {d.records.map((r) => (
                 <tr key={r.kind}>
                   <td>{KIND_WORDS[r.kind]}</td>
-                  <td>{r.seq > 0 ? `#${r.seq}` : r.cid ? 'found by order' : 'missing'}</td>
+                  <td>{r.cid ? (r.seq > 0 ? `#${r.seq}` : 'found by order') : r.seq > 0 ? `listed (#${r.seq}), not on the topic` : 'missing'}</td>
                   <td>
                     {r.held === true ? <Pill tone="ok">verified</Pill> : r.held === null ? <Pill tone="wait">unchecked</Pill> : <Pill tone="bad">not held</Pill>}{' '}
                     <span className="muted small">{r.hashOk === false ? 'content differs from its hash; ' : ''}{!r.payerOk && r.cid ? 'wrong payer; ' : ''}{r.cid && !r.refsMatch ? 'not the one the shop referenced' : ''}</span>
@@ -223,7 +229,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
         <ul className="plain events">
           {d.events.map((e) => (
             <li key={`${e.tx}-${e.name}-${e.time}`}>
-              <span className="mono">{when(e.time)}</span> {e.name} <span className="muted small">on {e.chain}</span> <ExtLink href={e.explorer}>{short(e.tx, 4)}</ExtLink>
+              <span className="mono">{whenS(e.time)}</span> {e.name} <span className="muted small">on {e.chain}</span> <ExtLink href={e.explorer}>{short(e.tx, 4)}</ExtLink>
             </li>
           ))}
         </ul>

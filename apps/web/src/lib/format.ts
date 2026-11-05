@@ -23,3 +23,9 @@ export function parseUsdc(text: string): bigint | null {
   if (!m) return null;
   return BigInt(m[1]!) * 1_000_000n + BigInt((m[2] ?? '').padEnd(6, '0'));
 }
+
+/** Like `when`, with seconds (for event lists where many events share a minute). */
+export function whenS(sec: string | number | bigint | null | undefined): string {
+  if (sec === null || sec === undefined) return 'not set';
+  return new Date(Number(sec) * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+}

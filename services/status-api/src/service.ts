@@ -452,6 +452,18 @@ export class StatusService {
         courtLinks: tpl ? disputeIds.map((d) => ({ disputeId: d, url: tpl.replace('{id}', d.toString()) })) : [],
       },
       bridge: bridge.map((b) => ({ ...b, ccipExplorer: `https://ccip.chain.link/msg/${b.messageId}` })),
+      // Every known message, with its delivery state when it has been read (null otherwise).
+      messages: [
+        ...c.toCourt.filter((m) => m.messageId !== ZERO32).map((m) => ({ direction: 'toArbitrum' as const, ...m })),
+        ...c.relayed.filter((m) => m.messageId !== ZERO32).map((m) => ({ direction: 'toHedera' as const, ...m })),
+      ].map((m) => ({
+        messageId: m.messageId,
+        direction: m.direction,
+        sendNo: m.sendNo,
+        sentAt: m.time,
+        executionState: live?.exec[m.messageId] ?? null,
+        ccipExplorer: `https://ccip.chain.link/msg/${m.messageId}`,
+      })),
       money,
       docket: { writeStatus: docketStatus, entityKey: dock && typeof dock.entityKey === 'string' ? dock.entityKey : null, store: dock && typeof dock.store === 'string' ? dock.store : null, reviews: dock?.reviews ?? null, lastError: dock && typeof dock.errorKind === 'string' ? dock.errorKind : null },
       events: events.map((e) => this.eventOut(e)),

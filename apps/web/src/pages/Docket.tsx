@@ -66,13 +66,13 @@ export function DocketPage() {
   const params = usePoll<ParamsBody>('/params', 60000);
   const writer = params.data?.schemeWallet ?? null;
   const threshold = params.data?.docket?.rateConfig?.publishThreshold ?? 20;
-  const [state, setState] = useState<{ rates: RateResult[] | null; error: string | null }>({ rates: null, error: null });
+  const [state, setState] = useState<{ rates: RateResult[] | null; rows: number; error: string | null }>({ rates: null, rows: 0, error: null });
   useEffect(() => {
     if (!writer) return;
     let live = true;
     readDocket(writer as Address, import.meta.env?.VITE_ARKIV_PUBLIC_RPC_URL as string | undefined, threshold)
-      .then((d) => live && setState({ rates: d.rates, error: null }))
-      .catch(() => live && setState({ rates: null, error: 'The public docket could not be read from Arkiv right now. The public endpoint is rate limited; try again in a minute.' }));
+      .then((d) => live && setState({ rates: d.rates, rows: d.rows.length, error: null }))
+      .catch(() => live && setState({ rates: null, rows: 0, error: 'The public docket could not be read from Arkiv right now. The public endpoint is rate limited; try again in a minute.' }));
     return () => {
       live = false;
     };
@@ -95,6 +95,7 @@ export function DocketPage() {
         {state.error && <p className="error">{state.error}</p>}
         {writer && !state.rates && !state.error && <Loading what="docket from Arkiv" />}
         {state.rates && <RateTable rates={state.rates} />}
+        {state.rates && <p className="muted small">Read {state.rows} ruled case{state.rows === 1 ? '' : 's'} from Arkiv just now.</p>}
       </Card>
     </>
   );

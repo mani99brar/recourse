@@ -21,7 +21,7 @@ function detail(statusKey: CaseDetail['statusKey'], over: Partial<CaseDetail> = 
     precheck: { gap: 1, answer: 1, side: 'platform', packHash: '0x' + '55'.repeat(32), packHashOk: true },
     contest: { by: null, at: null, windowEndsAt: '1700000600' },
     court: { state: 'none', attempts: 0, disputeIds: [], period: null, periodName: null, currentRuling: null, tied: null, overridden: null, ruling: null, evidence: [], courtLinks: [] },
-    bridge: [], money: { owed: null, paid: null, credited: null, notCovered: null, escrow: { amount: '3000000', fate: 'held' }, projected: false },
+    messages: [], money: { owed: null, paid: null, credited: null, notCovered: null, escrow: { amount: '3000000', fate: 'held' }, projected: false },
     docket: { writeStatus: 'none', entityKey: null, store: null }, events: [{ name: 'ClaimFiled', chain: 'hedera', tx: '0x' + '66'.repeat(32), time: '1700000000', explorer: null }],
     ...over,
   };
