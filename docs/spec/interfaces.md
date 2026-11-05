@@ -742,10 +742,10 @@ list.
   string), reason?}`; `gap`, `answer`, `reasonKey` (strings; `result.gap`, `result.answer`,
   `result.reasonKey` are read when the top-level field is absent); `result.step` and
   `result.flaggedCells[] {record, attribute}`.
-- Policy: `packages/court/policy/policy-v1.md`, 5,769 bytes, SHA-256
-  `0x59c50b00799644b71422702233e13b2157b2f362fdbe3717b394940834939d43`, stored as one raw IPFS
+- Policy: `packages/court/policy/policy-v1.md`, 5,767 bytes, SHA-256
+  `0x5efd65be933b514c8a432d240e5e5bbb7a35bc0e1200849d7bab0290d29286ee`, stored as one raw IPFS
   block, so its CIDv1 is the same wherever it is pinned:
-  `bafkreiczyufqa6mwis3riitqeiz6cozbk6zpgyx5xy3rpm4usqedje45im`. `POLICY.uri`, the template's
+  `bafkreic67vs35ez3kfgiuqzneqhf4w53pi23ydqsaccj265lakinfeug5y`. `POLICY.uri`, the template's
   `policyURI`, is `/ipfs/` + that CID.
 
 ---

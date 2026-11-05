@@ -7,8 +7,8 @@ import { MemoryIpfs } from '../src/testing.js';
 import { ORDER, doc } from './helpers.js';
 
 // The court policy is stored as one raw block; its published CID and SHA-256 pin the CID derivation.
-const POLICY_SHA256 = '0x59c50b00799644b71422702233e13b2157b2f362fdbe3717b394940834939d43';
-const POLICY_CID = 'bafkreiczyufqa6mwis3riitqeiz6cozbk6zpgyx5xy3rpm4usqedje45im';
+const POLICY_SHA256 = '0x5efd65be933b514c8a432d240e5e5bbb7a35bc0e1200849d7bab0290d29286ee';
+const POLICY_CID = 'bafkreic67vs35ez3kfgiuqzneqhf4w53pi23ydqsaccj265lakinfeug5y';
 
 describe('content addressing', () => {
   it('derives the published CID of a raw block from its SHA-256', () => {

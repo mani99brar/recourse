@@ -28,7 +28,7 @@ function gateway(over: Partial<ConstructorParameters<typeof GatewayDocStore>[0]>
 describe('docs', () => {
   it('the raw-block cid has the documented form (the court policy block)', () => {
     const policy = readFileSync(join(import.meta.dirname, '../../../packages/court/policy/policy-v1.md'));
-    expect(rawBlockCid(new Uint8Array(policy))).toBe('bafkreiczyufqa6mwis3riitqeiz6cozbk6zpgyx5xy3rpm4usqedje45im');
+    expect(rawBlockCid(new Uint8Array(policy))).toBe('bafkreic67vs35ez3kfgiuqzneqhf4w53pi23ydqsaccj265lakinfeug5y');
   });
 
   it('reads <gateway>/ipfs/<cid>, caches by cid, and re-reads on request', async () => {
