@@ -32,7 +32,7 @@ describe('stuck detection', () => {
     const b = buildClaim(sim, 'stuck_untouched', 1);
     const store = new Store();
     ingest(store, sim);
-    const h = harness({ store, now: Number(b.now) + 100_000 });
+    const h = harness({ store, now: Number(b.now) + 4_000 });
     expect((await h.svc.claimRows())[0]!.statusKey).toBe('at_court');
   });
 });

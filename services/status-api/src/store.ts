@@ -33,6 +33,8 @@ export interface RawCaseView {
   sendCount: number;
   lastSendAt: bigint;
   lastMessageId: Hex;
+  /** `RecourseCase.expiresAt`: 0 or absent when unknown. */
+  expiresAt?: bigint;
 }
 
 export interface KlerosRead {

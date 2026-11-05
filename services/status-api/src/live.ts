@@ -196,14 +196,13 @@ export class ViemReader implements Reader {
   }
 
   async caseOf(claimId: Hex): Promise<RawCaseView> {
-    const v = await this.arb.readContract({
-      address: this.cfg.caseAddress,
-      abi: caseAbi,
-      functionName: 'caseOf',
-      args: [claimId],
-      blockNumber: await this.arbBlock(),
-    });
+    const blockNumber = await this.arbBlock();
+    const v = await this.arb.readContract({ address: this.cfg.caseAddress, abi: caseAbi, functionName: 'caseOf', args: [claimId], blockNumber });
+    const expiresAt = await this.arb
+      .readContract({ address: this.cfg.caseAddress, abi: caseAbi, functionName: 'expiresAt', args: [claimId], blockNumber })
+      .catch(() => 0n);
     return {
+      expiresAt,
       state: Number(v.state),
       payloadHash: v.payloadHash,
       receivedAt: v.receivedAt,

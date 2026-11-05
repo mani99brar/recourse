@@ -25,6 +25,7 @@ export const caseAbi = parseAbi([
   'event PolicyURISet(string uri)',
   'event ExtraArgsSet(bytes extraArgs)',
   'function caseOf(bytes32 claimId) view returns (CaseViewTuple)',
+  'function expiresAt(bytes32 claimId) view returns (uint64)',
   'function claimOfDispute(uint256 disputeId) view returns (bytes32 claimId, uint8 attempt)',
   'function openCases() view returns (uint16)',
   'function feePool() view returns (uint256)',

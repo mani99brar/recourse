@@ -196,6 +196,7 @@ export function caseViewOf(claim: FoldedClaim, events: readonly IndexedEvent[], 
       lastSendAt: c.lastSendAt,
       lastMessageId: c.lastMessageId,
     };
+    if (c.expiresAt !== undefined && c.expiresAt > 0n) v.expiresAt = c.expiresAt;
     if (kl) {
       if (kl.period !== null) v.period = kl.period;
       v.currentRuling = kl.currentRuling;

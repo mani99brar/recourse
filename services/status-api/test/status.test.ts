@@ -70,3 +70,40 @@ describe('status through the join', () => {
     await expect(h.svc.claimsResponse(undefined, 'bogus')).rejects.toMatchObject({ status: 400 });
   });
 });
+
+describe('expiry', () => {
+  it('a filed claim carries filedAt + claimTimeout as its deadline', async () => {
+    const { b, rows } = await rowFor('filed');
+    expect(rows[0]!.deadline).toBe(BigInt((await Promise.resolve(b.now)) - 5n) + 14_400n);
+  });
+
+  it('a contested claim carries preCheckedAt + claimTimeout', async () => {
+    const { rows } = await rowFor('contested');
+    expect(rows[0]!.deadline).not.toBeNull();
+    const fin = (await rowFor('finding_made')).rows[0]!;
+    expect(fin.deadline).not.toBeNull(); // the contest window, not an expiry
+  });
+
+  it('a stale case reads as stuck with an expire call', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'at_court', 1);
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, state: 6 } });
+    const h = harness({ store, now: Number(b.now) });
+    const r = (await h.svc.claimRows())[0]!;
+    expect(r.statusKey).toBe('stuck');
+    expect(r.nextCall).toBe('expireClaim');
+  });
+
+  it('passes Arbitrum expiresAt through: a received case past it is dead', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'at_court', 1);
+    const store = new Store();
+    ingest(store, sim);
+    const cv = { ...b.live!.caseView!, state: 1, attempts: 0, disputeIds: [0n, 0n] as const, expiresAt: b.now - 1n };
+    store.live.set(b.claimId, { ...b.live!, caseView: cv });
+    const h = harness({ store, now: Number(b.now) });
+    expect((await h.svc.claimRows())[0]!.statusKey).toBe('stuck');
+  });
+});

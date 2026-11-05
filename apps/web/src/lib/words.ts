@@ -90,3 +90,14 @@ export const COURT_PERIODS: Record<string, string> = {
   appeal: 'Appeal window',
   execution: 'Ruling being applied',
 };
+
+/** Plain label for a status deadline. Never assumes a deadline exists. */
+export function deadlineLabel(key: StatusKey, call: NextCall | null): string {
+  if (key === 'filed') return 'Expires if not pre-checked by';
+  if (key === 'contested') return 'Expires if no ruling by';
+  if (key === 'finding_made' || key === 'no_finding') return 'Contest window ends';
+  if (key === 'stuck') return 'Can be ended after';
+  if (call === 'openCase') return 'The court case must be opened by';
+  if (call === 'refile') return 'The case must be filed again by';
+  return 'Deadline';
+}

@@ -71,6 +71,20 @@ describe('pages render', () => {
   });
 });
 
+describe('deadlines', () => {
+  it('labels the filed and contested expiry in plain words', () => {
+    const f = renderToString(<CaseView d={detail('filed', { nextActor: 'preCheckSigner', nextCall: 'recordPreCheck', deadline: '1700014400' })} />);
+    expect(f).toContain('Expires if not pre-checked by');
+    expect(f).toContain('2023-11-14');
+    const c = renderToString(<CaseView d={detail('contested', { nextCall: 'sendToCourt', deadline: '1700014400' })} />);
+    expect(c).toContain('Expires if no ruling by');
+  });
+  it('renders with no deadline at all', () => {
+    const html = renderToString(<CaseView d={detail('settled', { nextCall: null, deadline: null })} />);
+    expect(html).not.toContain('Expires');
+  });
+});
+
 describe('helpers', () => {
   it('routes hashes', () => {
     expect(route('#/claim/0xab')).toEqual({ name: 'claim', arg: '0xab' });

@@ -109,6 +109,7 @@ describe.skipIf(!enabled)('two local chains, one claim end to end', () => {
     await send(H!, hp, roles.shop!, local.usdc, erc20 as Abi, 'approve', [vault, fee]);
     await send(H!, hp, roles.shop!, claims, claimsAbi, 'fileClaim', [nonce, roles.platform, refs, 60_000_000n, 50_000_000n]);
     await expectKey(claimId, 'filed');
+    expect((await row(claimId)).deadline).not.toBeNull(); // expires if not pre-checked
     expect((await row(claimId)).escrow).toEqual({ amount: fee, fate: 'held' });
 
     const packHash = ('0x' + 'ee'.repeat(32)) as Hex;
@@ -117,6 +118,7 @@ describe.skipIf(!enabled)('two local chains, one claim end to end', () => {
 
     await send(H!, hp, roles.platform!, claims, claimsAbi, 'contest', [claimId]);
     await expectKey(claimId, 'contested');
+    expect((await row(claimId)).deadline).not.toBeNull(); // expires if no ruling
 
     const sent = await send(H!, hp, roles.rulingRelayer!, claims, claimsAbi, 'sendToCourt', [claimId]);
     await expectKey(claimId, 'at_court');
@@ -152,6 +154,7 @@ describe.skipIf(!enabled)('two local chains, one claim end to end', () => {
     let d = await h.svc.claimDetail(claimId);
     expect(d.court.disputeIds).toHaveLength(1);
     expect(d.court.state).toBe('opened');
+    expect(store.live.get(claimId)!.caseView!.expiresAt ?? 0n).toBeGreaterThan(0n);
     expect(d.court.evidence).toHaveLength(1);
     expect(d.court.courtLinks[0]!.url).toContain(d.court.disputeIds[0]!.toString());
     expect(d.court.currentRuling).toBe(0n);

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Banner, Card, ExtLink, Loading, Pill, Row } from '../components.js';
 import { usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when } from '../lib/format.js';
-import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, SIDE_WORDS, STATUS_WORDS } from '../lib/words.js';
+import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, SIDE_WORDS, STATUS_WORDS, deadlineLabel } from '../lib/words.js';
 import type { NextActor, NextCall, StatusKey } from '@recourse/shared';
 
 export interface CaseDetail extends Fresh {
@@ -98,8 +98,12 @@ export function CaseView({ d }: { d: CaseDetail }) {
         <p className="lead">{word.plain}</p>
         {d.nextCall && (
           <p className="next">
-            <strong>Next:</strong> {ACTOR_WORDS[d.nextActor]} can {CALL_WORDS[d.nextCall]}
-            {d.deadline ? ` (by ${when(d.deadline)})` : ''}. This page does not send anything.
+            <strong>Next:</strong> {ACTOR_WORDS[d.nextActor]} can {CALL_WORDS[d.nextCall]}. This page does not send anything.
+          </p>
+        )}
+        {d.deadline && (
+          <p className="next">
+            <strong>{deadlineLabel(d.statusKey, d.nextCall)}:</strong> {when(d.deadline)}
           </p>
         )}
       </header>
