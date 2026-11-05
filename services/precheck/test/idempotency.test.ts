@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { claimsAbi, replayJournal } from '@recourse/keeper';
 import { recordHash, ZERO_HASH } from '@recourse/shared';
 import { decodeFunctionData, parseTransaction, type Hex } from 'viem';
@@ -305,6 +306,22 @@ describe('what is already on chain', () => {
     await svc.tick();
     expect(svc.result(claimId)?.state).toBe('pinned');
     expect(rig.node.broadcasts).toHaveLength(0);
+    svc.close();
+  });
+
+  it('a dry run prints the call it would make, pins nothing and sends nothing', async () => {
+    const rig = makeRig();
+    const { claimId } = setupClaim(rig, { later: true });
+    const lines: string[] = [];
+    const svc = await rig.start({ signer: undefined, dryRun: true, log: (l) => lines.push(l) });
+    await svc.tick();
+    const v = svc.result(claimId);
+    expect(v?.state).toBe('built');
+    expect(v?.cid).toBeUndefined();
+    expect(rig.node.broadcasts).toHaveLength(0);
+    expect(readdirSync(rig.docsDir)).toEqual([]);
+    const printed = lines.map((l) => { try { return JSON.parse(l) as Record<string, string>; } catch { return {}; } }).find((l) => l.event === 'dry_run');
+    expect(printed).toMatchObject({ would: 'recordPreCheck', claimId, gap: v?.gap, answer: v?.answer, packHash: v?.packHash });
     svc.close();
   });
 });
