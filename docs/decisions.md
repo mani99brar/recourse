@@ -13,6 +13,8 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 | Repo visibility | Private until the operator makes it public. |
 | Node | v24. |
 | x402 | `@x402/*` 2.28.0 with `@hiero-ledger/sdk` 2.85.0. |
+| Hedera upgrade window | Hedera testnet upgrades on Fri 6 Nov, 18:00-18:40 UTC. No Hedera sends, CCIP messages or demo claims in that window; re-read status.hedera.com before it. |
+| Keeper reads | Arbitrum reads at `latest`, not `finalized`: free endpoints lag about 17 min and fail deep historical reads. |
 | CCIP fees | LINK when the ops addresses hold it; otherwise native gas (HBAR fees use 8-decimal amounts on Hedera). |
 
 ## Product rules
