@@ -21,8 +21,8 @@ function check(name: string, mine: Abi) {
       for (const n of realSel.keys()) expect(mineSel.has(n), n).toBe(true);
     });
     it('every view I call exists', () => {
-      const names = new Set((real as { type: string; name?: string }[]).filter((x) => x.type === 'function').map((x) => x.name));
-      for (const f of (mine as { type: string; name?: string }[]).filter((x) => x.type === 'function')) expect(names.has(f.name), f.name).toBe(true);
+      const names = new Set(((real as unknown) as { type: string; name?: string }[]).filter((x) => x.type === 'function').map((x) => x.name));
+      for (const f of ((mine as unknown) as { type: string; name?: string }[]).filter((x) => x.type === 'function')) expect(names.has(f.name), f.name).toBe(true);
     });
   });
 }

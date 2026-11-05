@@ -23,8 +23,8 @@ export interface Deployments {
 
 type Json = Record<string, unknown>;
 
-function read(dir: string, name: string): { json: Json; file: string } | null {
-  for (const file of [`${name}.local.json`, `${name}.json`]) {
+function read(dir: string, name: string, override?: string): { json: Json; file: string } | null {
+  for (const file of [...(override ? [override] : []), `${name}.local.json`, `${name}.json`]) {
     const p = join(dir, file);
     if (existsSync(p)) {
       try {
@@ -54,8 +54,8 @@ function dig(o: Json | undefined, ...paths: string[]): unknown {
 }
 
 export function loadDeployments(dir: string): Deployments {
-  const h = dir ? read(dir, 'hedera') : null;
-  const a = dir ? read(dir, 'arbitrum') : null;
+  const h = dir ? read(dir, 'hedera', process.env.HEDERA_LOCAL_FILE) : null;
+  const a = dir ? read(dir, 'arbitrum', process.env.ARBITRUM_LOCAL_FILE) : null;
   const files = [h?.file, a?.file].filter((f): f is string => f !== undefined);
   const out = dig(a?.json, 'outside') as Json | undefined;
   const pick = (k: string, fallback: Address) => addr(out?.[k]) ?? fallback;
