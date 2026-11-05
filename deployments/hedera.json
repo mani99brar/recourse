@@ -1,0 +1,70 @@
+{
+  "chainId": 296,
+  "contracts": {
+    "claims": {
+      "address": "0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
+      "id": "0.0.11329717"
+    },
+    "vault": {
+      "address": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
+      "id": "0.0.11329716"
+    }
+  },
+  "deployOrder": [
+    "DepositVault",
+    "RecourseClaims"
+  ],
+  "startTimestamp": "1793910486.965508789",
+  "startBlock": 42710610,
+  "associationTx": "0x8114b74ea1e1d7a96f987806654cd3e8ca1350e2d58d7f7374439ef64f590fa6",
+  "mode": 0,
+  "batch": false,
+  "params": {
+    "preLock": {
+      "claimTimeout": 64800,
+      "contestWindow": 600,
+      "courtFeeUsdc": 3000000,
+      "exitDelay": 600,
+      "gasClaimToCourt": 150000,
+      "gasRulingBack": 150000,
+      "handlingBase": 15000000,
+      "handlingBps": 500,
+      "handlingCap": 40000000,
+      "maxSends": 5,
+      "minDeposit": 10000000,
+      "resendGap": 1800,
+      "topUpWindow": 604800
+    },
+    "locked": {
+      "claimTimeout": 64800,
+      "contestWindow": 1800,
+      "courtFeeUsdc": 3000000,
+      "exitDelay": 10368000,
+      "gasClaimToCourt": 150000,
+      "gasRulingBack": 150000,
+      "handlingBase": 15000000,
+      "handlingBps": 500,
+      "handlingCap": 40000000,
+      "maxSends": 5,
+      "minDeposit": 10000000,
+      "resendGap": 1800,
+      "topUpWindow": 604800
+    }
+  },
+  "extraArgs": "0x181dcf1000000000000000000000000000000000000000000000000000000000000249f00000000000000000000000000000000000000000000000000000000000000001",
+  "sizes": {
+    "RecourseClaims": 19356,
+    "DepositVault": 7946
+  },
+  "gas": {},
+  "dpTx": {
+    "dp1": "0x8114b74ea1e1d7a96f987806654cd3e8ca1350e2d58d7f7374439ef64f590fa6"
+  },
+  "sourcify": null,
+  "roles": {
+    "owner": "0x4A63342B48741dA2A84e7681eE8aCF4D56B4D964",
+    "rulingRelayer": "0xB5077EA5A97Ec3Ee8Ce9DeF73064aE82c4b7058d",
+    "preCheckSigner": "0x1036Ba3820ab816e142eB1D7D84fbaAF8351Cc8D",
+    "pool": "0x54E4545AFcf8960884A750320e70aFE16b2b3CaE"
+  }
+}
