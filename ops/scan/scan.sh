@@ -14,6 +14,7 @@ check '"ciphertext"[[:space:]]*:' 'keystore json'
 check '(private[_-]?key|secret|mnemonic|seed)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?(0x)?[0-9a-f]{64}' 'hex key next to a key word'
 check '(api[_-]?key|access[_-]?key|token)["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9_\-]{20,}' 'api key literal'
 check 'https?://[^ "]*(alchemy\.com/v2|infura\.io/v3|quiknode\.pro)/[A-Za-z0-9_-]{16,}' 'RPC url with key'
+check '(agent-workflow|recourse-prds|docs/prd|\bPRDs?\b|\b(SPEC|PLAN|CF|SM|TC|LS|RPT|I5|PR):[0-9]|round1[0-9]/|recourse-homepage)' 'reference to an outside planning folder'
 if printf '%s\n' "$files" | grep -qE '(^|/)(node_modules|\.env$|\.env\.[^e]|.*\.pass$)'; then echo "secret-scan: forbidden path tracked"; hits=1; fi
 [ $hits -eq 0 ] && echo "secret-scan: clean"
 exit $hits
