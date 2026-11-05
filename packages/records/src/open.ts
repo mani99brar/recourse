@@ -1,5 +1,5 @@
 // Builds a records client for a running service from its environment: the records topic, the
-// writer's Hedera account and key, the mirror node, the pin provider and the journal. Fails at
+// writer's Hedera account and key, the mirror node, the pin client and the journal. Fails at
 // start, naming what is missing, rather than on the first commit.
 
 import { ENV_DEFAULTS } from '@recourse/shared';
@@ -7,7 +7,7 @@ import { loadKeyBytes } from '@recourse/shared/node';
 import { assertRecordWriter, hederaAccountOf } from './accounts.js';
 import { readH0Ids } from './h0-ids.js';
 import { SdkHcsSubmitter } from './hcs.js';
-import { ipfsOptionsFromEnv, pinDocument, pinProviderFromEnv } from './ipfs.js';
+import { openPinClient, type PinClient } from './ipfs.js';
 import { Journal } from './journal.js';
 import type { Logger } from './log.js';
 import { MirrorClient } from './mirror.js';
@@ -33,6 +33,8 @@ export interface OpenedRecords {
   client: RecordsClient;
   reader: TopicReader;
   mirror: MirrorClient;
+  /** The pin client the records client pins with, for the service's other documents. */
+  pins: PinClient;
   payer: string;
   topicId: string;
   close(): void;
@@ -41,8 +43,7 @@ export interface OpenedRecords {
 export function openRecordsClient(options: { role: WriterRole; journalPath: string; env?: Env; log?: Logger }): OpenedRecords {
   const env = options.env ?? process.env;
   const topicId = recordsTopicId(env);
-  const provider = pinProviderFromEnv(env);
-  const ipfs = ipfsOptionsFromEnv(env);
+  const pins = openPinClient(env);
   const payer = hederaAccountOf(options.role, env).accountId;
   assertRecordWriter(options.role, payer, env);
   const submitter = SdkHcsSubmitter.fromKeyBytes(payer, loadKeyBytes(options.role === 'agent' ? 'AGENT_KEY_FILE' : 'SHOP_KEY_FILE', env));
@@ -53,7 +54,7 @@ export function openRecordsClient(options: { role: WriterRole; journalPath: stri
     role: options.role,
     topicId,
     submitter,
-    pin: (bytes) => pinDocument(bytes, provider, ipfs),
+    pin: (bytes) => pins.pin(bytes),
     reader,
     mirror,
     journal,
@@ -63,6 +64,7 @@ export function openRecordsClient(options: { role: WriterRole; journalPath: stri
     client,
     reader,
     mirror,
+    pins,
     payer,
     topicId,
     close: () => {
