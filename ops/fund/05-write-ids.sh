@@ -2,7 +2,8 @@
 # Read each existing Hedera role's account id (absent roles are skipped with a note) from the mirror node (looked up by EVM address, and the
 # mirror's evm_address must equal the address in addresses.txt), then write
 #   - HEDERA_ACCOUNT_IDS=role=0.0.N,... into the env file (default ~/.config/recourse/recourse.env)
-#   - deployments/parties.json in the shape @recourse/shared parseParties accepts
+#   - deployments/parties.json in the shape @recourse/shared parseParties accepts: every role in
+#     addresses.txt, with hederaAccountId only for the roles that have an account
 # Existing agentId values in parties.json are kept (they are added later by identity registration).
 # Read-only on chain. Usage: 05-write-ids.sh [--write]   (without --write it prints both)
 source "$(dirname "$0")/lib.sh"; need_tools
@@ -38,20 +39,19 @@ if [[ ${#ID[@]} == 0 ]]; then echo "no Hedera account exists yet; nothing to wri
 
 ids=""; for role in "${HEDERA_ROLES[@]}"; do [[ -n ${ID[$role]:-} ]] && ids+="${ids:+,}$role=${ID[$role]}"; done
 echo "HEDERA_ACCOUNT_IDS=$ids"
-PARTIAL=0; [[ ${#missing[@]} -gt 0 ]] && PARTIAL=1
-if [[ $PARTIAL == 1 ]]; then
-  echo "partial: ${missing[*]} absent. deployments/parties.json needs every Hedera role, so it is not written until they exist." >&2
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "partial: ${missing[*]} absent; their parties.json entries have no hederaAccountId until they exist" >&2
 fi
 
-if [[ $PARTIAL == 1 ]]; then
-  if [[ $WRITE == 1 ]]; then write_env; fi
-  exit 0
-fi
 existing='[]'; [[ -f $PARTIES_OUT ]] && existing=$(cat "$PARTIES_OUT")
 parties='[]'
 for role in "${ALL_ROLES[@]}"; do
+  if [[ -z $(addr "$role") ]]; then echo "note: $role is not in $ADDRS_FILE; left out of parties.json" >&2; continue; fi
   writers='[]'
-  case $role in platform) writers=$(jq -nc --arg a "${ID[agent]}" '[$a]');; shop) writers=$(jq -nc --arg a "${ID[shop]}" '[$a]');; esac
+  case $role in
+    platform) [[ -n ${ID[agent]:-} ]] && writers=$(jq -nc --arg a "${ID[agent]}" '[$a]');;
+    shop) [[ -n ${ID[shop]:-} ]] && writers=$(jq -nc --arg a "${ID[shop]}" '[$a]');;
+  esac
   parties=$(jq -c --arg role "$role" --arg evm "$(addr "$role")" --arg id "${ID[$role]:-}" --arg name "${NAME[$role]}" \
     --argjson writers "$writers" --argjson old "$existing" '
     . + [ ({role:$role, evmAddress:$evm, hcsWriters:$writers, displayName:$name}
@@ -62,7 +62,13 @@ jq . <<<"$parties" > "${TMPDIR:-/tmp}/parties.$$.json"
 if [[ $WRITE == 1 ]]; then
   mkdir -p "$(dirname "$PARTIES_OUT")"; mv "${TMPDIR:-/tmp}/parties.$$.json" "$PARTIES_OUT"; echo "wrote $PARTIES_OUT"
   write_env
-  if [[ -x $REPO_ROOT/node_modules/.bin/tsx && -f $REPO_ROOT/packages/shared/src/parties.ts ]]; then
-    echo "validate with parseParties: (cd $REPO_ROOT && node --import tsx -e \"…\") — run by hand once dependencies are installed"
+  if [[ -x $REPO_ROOT/node_modules/.bin/tsx ]]; then
+    # The services' own reader: fails, naming the field, if the file is not what they accept.
+    (cd "$REPO_ROOT" && PARTIES_FILE="$PARTIES_OUT" node --import tsx --input-type=module -e '
+      const { readParties } = await import("./packages/shared/src/node/index.ts");
+      const parties = readParties();
+      const ids = parties.filter((p) => p.hederaAccountId).map((p) => p.role);
+      console.log(`parties.json checked with readParties: ${parties.length} parties, Hedera ids for ${ids.join(", ") || "none"}`);
+    ') || { echo "parties.json failed readParties" >&2; exit 1; }
   fi
 else cat "${TMPDIR:-/tmp}/parties.$$.json"; rm -f "${TMPDIR:-/tmp}/parties.$$.json"; fi

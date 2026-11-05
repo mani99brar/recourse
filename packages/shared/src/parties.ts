@@ -36,7 +36,10 @@ export interface Party {
   role: PartyRole;
   /** EIP-55 checksummed. */
   evmAddress: Address;
-  /** `shard.realm.num`, e.g. `0.0.12345`. Required for every Hedera role. */
+  /**
+   * `shard.realm.num`, e.g. `0.0.12345`. Absent while the role has no Hedera account (ops-arb never
+   * has one). Read it with `hederaAccountIdOf`, which names the role when it is missing.
+   */
   hederaAccountId?: string;
   /** Hedera accounts whose HCS messages count as this party's records. May be empty. */
   hcsWriters: string[];
@@ -59,10 +62,6 @@ export function isHederaAccountId(value: unknown): value is string {
 
 function isRole(value: unknown): value is PartyRole {
   return typeof value === 'string' && (PARTY_ROLES as readonly string[]).includes(value);
-}
-
-function isHederaRole(role: PartyRole): role is HederaRole {
-  return (HEDERA_ROLES as readonly string[]).includes(role);
 }
 
 const PARTY_KEYS = new Set(['role', 'evmAddress', 'hederaAccountId', 'hcsWriters', 'agentId', 'displayName']);
@@ -99,8 +98,6 @@ export function parseParties(json: unknown): ParseResult<Parties> {
         return { ok: false, error: `${at}.hederaAccountId: expected shard.realm.num` };
       }
       hederaAccountId = e.hederaAccountId;
-    } else if (isHederaRole(e.role)) {
-      return { ok: false, error: `${at}.hederaAccountId: required for role ${e.role}` };
     }
 
     if (!Array.isArray(e.hcsWriters) || !e.hcsWriters.every(isHederaAccountId)) {
@@ -141,6 +138,12 @@ export function partyByRole(parties: Parties, role: PartyRole): Party {
   return found[0]!;
 }
 
+/** The party's Hedera account id; throws, naming the role, when the role has none yet. */
+export function hederaAccountIdOf(party: Party): string {
+  if (party.hederaAccountId === undefined) throw new Error(`parties: ${party.role} has no hederaAccountId`);
+  return party.hederaAccountId;
+}
+
 export function partyByAddress(parties: Parties, address: string): Party | undefined {
   if (!isAddress(address, { strict: false })) return undefined;
   const a = getAddress(address);
@@ -158,12 +161,15 @@ export function hcsWritersFor(parties: Parties, kind: number): Set<string> {
   return set;
 }
 
+/** Hedera account ids by role; a role without an account is absent. */
+export type HederaAccountIds = Partial<Record<HederaRole, string>>;
+
 /**
- * Parses HEDERA_ACCOUNT_IDS: comma-separated `<role>=0.0.N` pairs, one per Hedera role.
- * Every Hedera role must appear exactly once.
+ * Parses HEDERA_ACCOUNT_IDS: comma-separated `<role>=0.0.N` pairs. Each Hedera role appears at most
+ * once; a role that has no account yet is left out. Unknown roles and malformed ids are errors.
  */
-export function parseHederaAccountIds(text: string): ParseResult<Record<HederaRole, string>> {
-  const out: Partial<Record<HederaRole, string>> = {};
+export function parseHederaAccountIds(text: string): ParseResult<HederaAccountIds> {
+  const out: HederaAccountIds = {};
   for (const raw of text.split(',')) {
     const pair = raw.trim();
     if (pair === '') continue;
@@ -178,8 +184,12 @@ export function parseHederaAccountIds(text: string): ParseResult<Record<HederaRo
     if (out[role as HederaRole] !== undefined) return { ok: false, error: `HEDERA_ACCOUNT_IDS: ${role} twice` };
     out[role as HederaRole] = id;
   }
-  for (const role of HEDERA_ROLES) {
-    if (out[role] === undefined) return { ok: false, error: `HEDERA_ACCOUNT_IDS: missing ${role}` };
-  }
-  return { ok: true, value: out as Record<HederaRole, string> };
+  return { ok: true, value: out };
+}
+
+/** The account id of `role`; throws, naming the role, when HEDERA_ACCOUNT_IDS has none for it. */
+export function accountIdOf(ids: HederaAccountIds, role: HederaRole): string {
+  const id = ids[role];
+  if (id === undefined) throw new Error(`HEDERA_ACCOUNT_IDS: no account id for ${role}`);
+  return id;
 }

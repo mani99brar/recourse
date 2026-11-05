@@ -23,7 +23,7 @@ import { parseArgs } from 'node:util';
 import { Client, PrivateKey, TopicCreateTransaction } from '@hiero-ledger/sdk';
 import { createPublicClient, createWalletClient, http, parseEventLogs, type Address, type Hex, type PrivateKeyAccount } from 'viem';
 import { hederaTestnet } from 'viem/chains';
-import { addressBook, erc8004IdentityAbi } from '@recourse/shared';
+import { accountIdOf, addressBook, erc8004IdentityAbi } from '@recourse/shared';
 import { loadKeyBytes, loadSigner } from '@recourse/shared/node';
 import {
   MirrorClient,
@@ -86,7 +86,16 @@ async function main(): Promise<number> {
   const env = process.env;
   console.log(mode.broadcast ? 'h0-setup: BROADCAST (transactions will be sent)' : 'h0-setup: dry run (nothing is sent)');
 
-  const ids = accountIdsFromEnv(env);
+  const known = accountIdsFromEnv(env);
+  // Required here: the senders and the agent (the platform's record writer). The facilitator is
+  // optional: without an account it is reported and left out of the setup ids.
+  const ids = {
+    'ops-hedera': accountIdOf(known, 'ops-hedera'),
+    platform: accountIdOf(known, 'platform'),
+    shop: accountIdOf(known, 'shop'),
+    agent: accountIdOf(known, 'agent'),
+  };
+  const facilitatorId = known.facilitator;
   const rpcUrl = env.HEDERA_RPC_URL_1;
   if (!rpcUrl) throw new Error('HEDERA_RPC_URL_1: not set');
   const mirror = new MirrorClient(env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl);
@@ -94,7 +103,7 @@ async function main(): Promise<number> {
   const platform = loadSigner('PLATFORM_KEY_FILE', env);
   const shop = loadSigner('SHOP_KEY_FILE', env);
   const agentAddress = loadSigner('AGENT_KEY_FILE', env).address;
-  const facilitatorAddress = loadSigner('FACILITATOR_KEY_FILE', env).address;
+  const facilitatorAddress = facilitatorId === undefined ? undefined : loadSigner('FACILITATOR_KEY_FILE', env).address;
 
   // Accounts this script sends from must pass; the others are reported for the payment check.
   const fatal = await Promise.all([
@@ -106,10 +115,13 @@ async function main(): Promise<number> {
     checkAccount(mirror, { role: 'agent', accountId: ids.agent, minTinybar: 1n * HBAR, evmAddress: agentAddress, usdc: { minBalance: 1n } }),
     checkAccount(mirror, { role: 'shop (usdc)', accountId: ids.shop, usdc: {} }),
     checkAccount(mirror, { role: 'platform (usdc)', accountId: ids.platform, usdc: {} }),
-    checkAccount(mirror, { role: 'facilitator', accountId: ids.facilitator, minTinybar: 1n * HBAR, evmAddress: facilitatorAddress }),
+    ...(facilitatorId !== undefined && facilitatorAddress !== undefined
+      ? [checkAccount(mirror, { role: 'facilitator', accountId: facilitatorId, minTinybar: 1n * HBAR, evmAddress: facilitatorAddress })]
+      : []),
   ]);
   for (const c of fatal) console.log(`check ${describeCheck(c)}`);
   for (const c of report) console.log(`info  ${describeCheck(c)}`);
+  if (facilitatorId === undefined) console.log('info  facilitator: no account id in HEDERA_ACCOUNT_IDS; skipped');
   const failed: AccountCheck[] = fatal.filter((c) => !c.ok);
   if (failed.length > 0) {
     console.error(`h0-setup: stopped: ${failed.map((c) => `${c.role} ${c.failures.join('+')}`).join('; ')}`);
@@ -122,7 +134,9 @@ async function main(): Promise<number> {
     { role: 'platform', evmAddress: platform.address, hederaAccountId: ids.platform, hcsWriters: [ids.agent] },
     { role: 'agent', evmAddress: agentAddress, hederaAccountId: ids.agent, hcsWriters: [] },
     { role: 'shop', evmAddress: shop.address, hederaAccountId: ids.shop, hcsWriters: [ids.shop] },
-    { role: 'facilitator', evmAddress: facilitatorAddress, hederaAccountId: ids.facilitator, hcsWriters: [] },
+    ...(facilitatorId !== undefined && facilitatorAddress !== undefined
+      ? [{ role: 'facilitator' as const, evmAddress: facilitatorAddress, hederaAccountId: facilitatorId, hcsWriters: [] }]
+      : []),
   ];
   const save = () => {
     if (mode.broadcast) writeH0Ids(out);

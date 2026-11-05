@@ -18,7 +18,7 @@
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { erc20Abi, getAddress, type Hex } from 'viem';
-import { addressBook, claimIdOf, partyByRole, type Attrs } from '@recourse/shared';
+import { addressBook, claimIdOf, hederaAccountIdOf, partyByRole, type Attrs } from '@recourse/shared';
 import { loadSigner } from '@recourse/shared/node';
 import {
   Journal,
@@ -88,8 +88,8 @@ async function main(): Promise<number> {
     const mirror = new MirrorClient(env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl);
     const agentParty = partyByRole(parties, 'agent');
     const checks = await Promise.all([
-      checkAccount(mirror, { role: 'agent', accountId: agentParty.hederaAccountId!, minTinybar: 1n * HBAR, usdc: { minBalance: 2_000_000n } }),
-      checkAccount(mirror, { role: 'shop', accountId: shopParty.hederaAccountId!, minTinybar: 1n * HBAR, usdc: {} }),
+      checkAccount(mirror, { role: 'agent', accountId: hederaAccountIdOf(agentParty), minTinybar: 1n * HBAR, usdc: { minBalance: 2_000_000n } }),
+      checkAccount(mirror, { role: 'shop', accountId: hederaAccountIdOf(shopParty), minTinybar: 1n * HBAR, usdc: {} }),
     ]);
     for (const c of checks) console.log(describeCheck(c));
     const topicId = recordsTopicId(env);
@@ -131,7 +131,7 @@ async function main(): Promise<number> {
         ]);
         console.log(`claims ${deployment.claims}: court fee ${fee} µUSDC; the shop holds ${balance} µUSDC${balance < fee ? ' (NOT ENOUGH)' : ''}`);
       }
-      const agent = await openAgent(env, log, shop ? { shop: { x402Base: `${shop.url}/x402/`, apiBase: shop.url, payTo: shopParty.hederaAccountId!, shopAddress: getAddress(shopParty.evmAddress), source: 'in-process shop' } } : {});
+      const agent = await openAgent(env, log, shop ? { shop: { x402Base: `${shop.url}/x402/`, apiBase: shop.url, payTo: hederaAccountIdOf(shopParty), shopAddress: getAddress(shopParty.evmAddress), source: 'in-process shop' } } : {});
       try {
         const { buyer } = agent;
         const target = agent.shop;

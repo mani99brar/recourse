@@ -1,0 +1,71 @@
+[
+  {
+    "role": "deployer",
+    "evmAddress": "0x4A63342B48741dA2A84e7681eE8aCF4D56B4D964",
+    "hcsWriters": [],
+    "displayName": "Recourse Deployer",
+    "hederaAccountId": "0.0.11329546"
+  },
+  {
+    "role": "ops-hedera",
+    "evmAddress": "0xB5077EA5A97Ec3Ee8Ce9DeF73064aE82c4b7058d",
+    "hcsWriters": [],
+    "displayName": "Recourse Operations Hedera",
+    "hederaAccountId": "0.0.11329551"
+  },
+  {
+    "role": "ops-arb",
+    "evmAddress": "0xb9Ad51ffcA49AD8aC40DFaCd679Cf71965F4588B",
+    "hcsWriters": [],
+    "displayName": "Recourse Operations Arbitrum"
+  },
+  {
+    "role": "precheck-signer",
+    "evmAddress": "0x1036Ba3820ab816e142eB1D7D84fbaAF8351Cc8D",
+    "hcsWriters": [],
+    "displayName": "Recourse Pre-check"
+  },
+  {
+    "role": "platform",
+    "evmAddress": "0xff845c7d57eb58f30dEEE83a96010FeE055FdaF6",
+    "hcsWriters": [
+      "0.0.11329682"
+    ],
+    "displayName": "Parcel Minds",
+    "hederaAccountId": "0.0.11329672"
+  },
+  {
+    "role": "agent",
+    "evmAddress": "0xC9d6E94A0Ada9293ACbf871c4bC15c580355b623",
+    "hcsWriters": [],
+    "displayName": "Parcel Minds Shopping Agent",
+    "hederaAccountId": "0.0.11329682"
+  },
+  {
+    "role": "shop",
+    "evmAddress": "0x0d87ED2F5D792561B53043Ff028956125c820287",
+    "hcsWriters": [
+      "0.0.11329680"
+    ],
+    "displayName": "Halden Supply",
+    "hederaAccountId": "0.0.11329680"
+  },
+  {
+    "role": "scheme",
+    "evmAddress": "0x54E4545AFcf8960884A750320e70aFE16b2b3CaE",
+    "hcsWriters": [],
+    "displayName": "Recourse Docket"
+  },
+  {
+    "role": "buyer",
+    "evmAddress": "0x8A6f54dD8b639C2748cf3B3EFBb9fA7d54Fd4792",
+    "hcsWriters": [],
+    "displayName": "Demo Buyer"
+  },
+  {
+    "role": "facilitator",
+    "evmAddress": "0xa16eC81150F648aC59f39d11aaB2dAdB1db84e32",
+    "hcsWriters": [],
+    "displayName": "Recourse Payment Relay"
+  }
+]

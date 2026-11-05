@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.8 |
+| Version | 1.9 |
 | Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -24,6 +24,7 @@ is a bug.
 | 1.6 | 2026-11-05 | CCIP receive gas limits 150,000 both ways, from measurements. |
 | 1.7 | 2026-11-05 | Claim expiry: Filed from `filedAt`, Contested and AtCourt from `preCheckedAt`, PreChecked never; pre-lock `claimTimeout` 64,800; `claimExpiresAfter`, `canExpireClaim`, optional `CaseView.expiresAt`; vault `ExitDue()`; `RecourseCase.markStale`, `expiresAt`, `claimTimeout`, `NotExpired`, constructor `claimTimeout_`; the expiry gap between the chains. |
 | 1.8 | 2026-11-05 | Testnet demo USDC values: `courtFeeUsdc` 1,000,000, `handlingBase` 1,000,000, `handlingCap` 4,000,000, `minDeposit` 5,000,000 (pre-lock and locked). |
+| 1.9 | 2026-11-05 | Roles without a Hedera account: `hederaAccountId` optional for every role and `HEDERA_ACCOUNT_IDS` may leave roles out; `hederaAccountIdOf`, `accountIdOf` and `HederaAccountIds` name the missing role where it is read. |
 
 ---
 
@@ -50,7 +51,7 @@ is a bug.
 | `status.ts` | `deriveStatus`, `claimExpiresAfter`, `canExpireClaim`, `StatusKey`, `STATUS_KEYS`, `StatusView`, `NextActor`, `NextCall`, `CaseView`, `BridgeView`, `LiveParams` |
 | `params.ts` | `PARAMS` (`preLock`, `locked`), `ParamSet`, `handlingOf` |
 | `addresses.ts` | `addressBook`, `chainSelectorOf`, `HEDERA_TESTNET_CHAIN_ID`, `ARBITRUM_SEPOLIA_CHAIN_ID` |
-| `parties.ts` | `Party`, `Parties`, `PartyRole`, `PARTY_ROLES`, `HEDERA_ROLES`, `parseParties`, `partyByRole`, `partiesByRole`, `partyByAddress`, `hcsWritersFor`, `parseHederaAccountIds` |
+| `parties.ts` | `Party`, `Parties`, `PartyRole`, `PARTY_ROLES`, `HEDERA_ROLES`, `parseParties`, `partyByRole`, `partiesByRole`, `partyByAddress`, `hcsWritersFor`, `hederaAccountIdOf`, `HederaAccountIds`, `parseHederaAccountIds`, `accountIdOf` |
 | `env.ts` | `ENV_NAMES`, `EnvName`, `VITE_ENV_NAMES`, `ENV_DEFAULTS`, `readEnv`, `parseSendPauseWindows`, `isSendPaused`, `SendPauseWindow`, `PauseChain` |
 | `abi/erc8004.ts` | `erc8004IdentityAbi`, `erc8004ReputationAbi` |
 | `abi/kleros.ts` | `klerosCoreAbi` (`arbitrationCost` both forms, `currentRuling`, `disputes`, `getNumberOfRounds`, `getRoundInfo`, `appealPeriod`, `appealCost`, `getTimesPerPeriod`, `passPeriod`, `draw`, `executeRuling`; events `DisputeCreation`, `NewPeriod`, `Draw`, `AppealPossible`, `AppealDecision`, `Ruling`), `sortitionModuleAbi` (`phase`, `passPhase`, `lastPhaseChange`, `minStakingTime`, `maxDrawingTime`, `disputesWithoutJurors`; `NewPhase`), `evidenceModuleAbi` (`submitEvidence`; `Evidence`), `disputeKitClassicAbi` (events `Contribution`, `ChoiceFunded`, `VoteCast`); items equal the `@kleros/kleros-v2-contracts` 0.12.0 Arbitrum Sepolia deployment ABIs |
@@ -207,7 +208,7 @@ object per party:
 |---|---|---|
 | `role` | string | one of `deployer`, `ops-hedera`, `ops-arb`, `precheck-signer`, `platform`, `agent`, `shop`, `scheme`, `buyer`, `facilitator` |
 | `evmAddress` | string | EVM address; normalised to EIP-55; unique across the file |
-| `hederaAccountId` | string | `shard.realm.num`; required for every role except `ops-arb` |
+| `hederaAccountId` | string | `shard.realm.num`; omitted while the role has no Hedera account (`ops-arb` never has one). Read it with `hederaAccountIdOf(party)`, which throws `parties: <role> has no hederaAccountId` |
 | `hcsWriters` | string[] | `shard.realm.num` accounts whose HCS messages count as this party's records; may be empty. The `platform` party lists the `agent` role's account |
 | `agentId` | string or integer | ERC-8004 agent id (decimal); omitted when none; normalised to a decimal string |
 | `displayName` | string | fictional display name, non-empty |
@@ -215,9 +216,12 @@ object per party:
 No other fields. A role may appear more than once (several shops); `partyByRole` requires exactly
 one. Services read the file only through `readParties()` (Node) or `parseParties(json)`.
 
-`HEDERA_ACCOUNT_IDS` is comma-separated `<role>=0.0.N` pairs, one for each of `deployer`,
+`HEDERA_ACCOUNT_IDS` is comma-separated `<role>=0.0.N` pairs, at most one for each of `deployer`,
 `ops-hedera`, `precheck-signer`, `platform`, `agent`, `shop`, `scheme`, `buyer`, `facilitator`;
-parsed by `parseHederaAccountIds`.
+a role with no account yet is left out. Parsed by `parseHederaAccountIds` into
+`HederaAccountIds` (a partial map); an unknown role, a malformed id or a repeated role is an
+error. `accountIdOf(ids, role)` throws `HEDERA_ACCOUNT_IDS: no account id for <role>` for an
+absent role, so a service fails when it needs that account, not at parse time.
 
 **Key loading** (`@recourse/shared/node`). `loadSigner(envName)` returns a viem account;
 `loadKeyBytes(envName)` returns the 32 decrypted secp256k1 bytes (for Hedera-native signing via

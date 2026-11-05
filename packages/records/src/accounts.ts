@@ -2,7 +2,16 @@
 // it is built, HEDERA_ACCOUNT_IDS is the fallback, and callers log which one they used.
 
 import { existsSync } from 'node:fs';
-import { hcsWritersFor, parseHederaAccountIds, partyByRole, type HederaRole, type PartyRole } from '@recourse/shared';
+import {
+  accountIdOf,
+  hcsWritersFor,
+  hederaAccountIdOf,
+  parseHederaAccountIds,
+  partyByRole,
+  type HederaAccountIds,
+  type HederaRole,
+  type PartyRole,
+} from '@recourse/shared';
 import { readParties } from '@recourse/shared/node';
 
 type Env = Record<string, string | undefined>;
@@ -17,14 +26,13 @@ export function hederaAccountOf(role: HederaRole, env: Env = process.env): Resol
   // back to HEDERA_ACCOUNT_IDS when that is set.
   const partiesReady = !!env.PARTIES_FILE && (existsSync(env.PARTIES_FILE) || !env.HEDERA_ACCOUNT_IDS);
   if (partiesReady) {
-    const party = partyByRole(readParties(env), role);
-    if (!party.hederaAccountId) throw new Error(`parties: ${role} has no hederaAccountId`);
-    return { accountId: party.hederaAccountId, source: 'parties' };
+    return { accountId: hederaAccountIdOf(partyByRole(readParties(env), role)), source: 'parties' };
   }
-  return { accountId: accountIdsFromEnv(env)[role], source: 'HEDERA_ACCOUNT_IDS' };
+  return { accountId: accountIdOf(accountIdsFromEnv(env), role), source: 'HEDERA_ACCOUNT_IDS' };
 }
 
-export function accountIdsFromEnv(env: Env = process.env): Record<HederaRole, string> {
+/** HEDERA_ACCOUNT_IDS parsed; roles without an account are absent (read one with `accountIdOf`). */
+export function accountIdsFromEnv(env: Env = process.env): HederaAccountIds {
   const text = env.HEDERA_ACCOUNT_IDS;
   if (!text) throw new Error('HEDERA_ACCOUNT_IDS: not set');
   const parsed = parseHederaAccountIds(text);

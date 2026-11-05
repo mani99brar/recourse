@@ -61,7 +61,10 @@ export async function discoverShop(env: Env, log?: Logger): Promise<ShopTarget> 
     return { x402Base, apiBase: x402Base.replace(/\/x402\/?$/, ''), payTo: endpoint.payTo, shopAddress: getAddress(owner), source: `erc8004:${agentId}` };
   } catch (error) {
     const base = env.SHOP_BASE_URL;
-    if (!base || !shopParty?.hederaAccountId) throw error;
+    if (!base || !shopParty) throw error;
+    if (shopParty.hederaAccountId === undefined) {
+      throw new Error(`parties: shop has no hederaAccountId, so the SHOP_BASE_URL fallback cannot pay it (${error instanceof Error ? error.message.slice(0, 200) : String(error)})`);
+    }
     log?.warn('shop_fallback', { reason: error instanceof Error ? error.message.slice(0, 200) : String(error), base });
     const apiBase = base.replace(/\/+$/, '').replace(/\/x402$/, '');
     return { x402Base: `${apiBase}/x402/`, apiBase, payTo: shopParty.hederaAccountId, shopAddress: shopParty.evmAddress, source: 'SHOP_BASE_URL' };
