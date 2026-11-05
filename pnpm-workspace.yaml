@@ -18,8 +18,16 @@ overrides:
   "@chainlink/local>forge-std": "-"
 
 # No dependency install scripts run. The ones below are not needed at runtime:
-# esbuild finds its platform binary package without its postinstall check.
+# esbuild finds its platform binary package without its postinstall check. The native
+# add-ons under the CCIP CLI (hardware-wallet USB/HID, keccak, bigint and ws speedups)
+# stay unbuilt: their packages fall back to plain JS, and no hardware wallet is used here.
 allowBuilds:
   "@arbitrum/nitro-contracts": false
   esbuild: false
   protobufjs: false
+  bigint-buffer: false
+  bufferutil: false
+  keccak: false
+  node-hid: false
+  usb: false
+  utf-8-validate: false
