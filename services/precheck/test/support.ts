@@ -431,7 +431,7 @@ export interface Rig {
   signer: { address: Address; signTransaction(tx: Record<string, unknown>): Promise<Hex> };
   cleanup(): void;
   /** A service over this rig's state directory; call again after `close()` to model a restart. */
-  start(over?: Partial<ServiceDeps> & { config?: Partial<PrecheckConfig> }): Promise<PrecheckService>;
+  start(over?: Omit<Partial<ServiceDeps>, 'config'> & { config?: Partial<PrecheckConfig> }): Promise<PrecheckService>;
 }
 
 const rigs: Rig[] = [];
