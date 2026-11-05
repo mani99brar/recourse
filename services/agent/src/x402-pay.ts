@@ -26,6 +26,12 @@ export class PaymentRefused extends Error {
   }
 }
 
+/**
+ * A signed Hedera payment that has not reached consensus by its valid start + this many seconds is
+ * taken as dead: the default validity window is 120 s, and the rest is margin for mirror lag.
+ */
+export const PAYMENT_DEAD_AFTER_S = 240;
+
 export interface Terms {
   network: string;
   asset: string;

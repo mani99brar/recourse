@@ -25,13 +25,11 @@ import { parseArgs } from 'node:util';
 import { addressBook } from '@recourse/shared';
 import { Journal, MirrorClient, checkAccount, createLogger, describeCheck, hederaAccountOf, validStartSeconds } from '@recourse/records';
 import { loadAgentPayer, type AgentPayer } from '../src/hedera-signer.js';
-import { PaymentRefused, chooseRequirement, payExactly, probe402, termsOf } from '../src/x402-pay.js';
+import { PAYMENT_DEAD_AFTER_S, PaymentRefused, chooseRequirement, payExactly, probe402, termsOf } from '../src/x402-pay.js';
 
 const PING_PATH = '/x402/ping-order';
 const MAX_PING_USDC = 50_000n;
 const MAX_PING_TINYBAR = 10_000_000n;
-/** Hedera's default validity window is 120 s; past this a signed transaction can no longer land. */
-const DEAD_AFTER_S = 180;
 
 type Row =
   | { type: 'attempt'; at: string; url: string; rung: number | null; amount: string; asset: string; payTo: string }
@@ -95,7 +93,7 @@ async function attempt(ctx: Context, shopUrl: string, rung: number | null): Prom
   // Doubt: did the signed transaction land anyway? Wait until it no longer can.
   const signed = signedTxId as string | null;
   if (!signed) return { kind: 'failed', reason: 'nothing was signed' };
-  const deadline = validStartSeconds(signed) + DEAD_AFTER_S;
+  const deadline = validStartSeconds(signed) + PAYMENT_DEAD_AFTER_S;
   console.log(`checking whether ${signed} reached consensus (until ${new Date(deadline * 1000).toISOString()})`);
   while (Math.floor(Date.now() / 1000) <= deadline) {
     const tx = await ctx.mirror.transaction(signed).catch(() => null);

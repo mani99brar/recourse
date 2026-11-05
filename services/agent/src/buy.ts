@@ -24,13 +24,11 @@ import { validStartSeconds, type Journal, type Logger, type MirrorClient, type P
 import { signApproval, signReport } from './approval.js';
 import { approvalDoc, arrivedBody, arrivedDoc, askedDoc, mandateDoc, orderedDoc, saltedBuyer, shownDoc } from './docs.js';
 import { decideLimit, utcDay, type LimitDecision, type Limits } from './limits.js';
-import { NETWORK, PaymentRefused, chooseRequirement, payExactly, probe402, type FetchLike, type Terms } from './x402-pay.js';
+import { NETWORK, PAYMENT_DEAD_AFTER_S, PaymentRefused, chooseRequirement, payExactly, probe402, type FetchLike, type Terms } from './x402-pay.js';
 
 export const PLATFORM_HEADER = 'x-recourse-platform';
 export const NONCE_HEADER = 'x-recourse-order-nonce';
 
-/** A signed payment that has not reached consensus by validStart + this is taken as dead. */
-const PAYMENT_DEAD_AFTER_S = 240;
 
 export interface ShopTarget {
   /** Base of the paid routes, ending in `/x402/`. */
