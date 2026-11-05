@@ -8,7 +8,10 @@
   },
   "scripts": {
     "start": "tsx src/main.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests --exclude \"test/anvil/**\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "ctl": "tsx src/ctl.ts",
+    "test:anvil": "vitest run --config vitest.anvil.config.ts"
   },
   "dependencies": {
     "@recourse/court": "workspace:*",
