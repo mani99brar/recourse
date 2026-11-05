@@ -94,6 +94,8 @@ interface IRecourseCase is IArbitrableV2 {
     error ZeroGasLimit();
     error BadParams();
     error BadPayload();
+    /// @notice `openCase` or `refile` before both the template text and the policy URI are set.
+    error TemplateNotSet();
 
     // ---------------------------------------------------------------- court flow
 
