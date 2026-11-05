@@ -13,7 +13,7 @@ export interface ParamSet {
   handlingBps: number;
   /** µUSDC. */
   handlingCap: number;
-  /** µUSDC; start value, to be adjusted once the faucet amounts are known. */
+  /** µUSDC; smallest non-zero required deposit. Testnet demo value, sized to the faucet's 20 USDC. */
   minDeposit: number;
   /** s. */
   topUpWindow: number;
@@ -43,11 +43,11 @@ export interface ParamSet {
 }
 
 const shared = {
-  courtFeeUsdc: 3_000_000,
-  minDeposit: 10_000_000,
-  handlingBase: 15_000_000,
+  courtFeeUsdc: 1_000_000,
+  minDeposit: 5_000_000,
+  handlingBase: 1_000_000,
   handlingBps: 500,
-  handlingCap: 40_000_000,
+  handlingCap: 4_000_000,
   topUpWindow: 604_800,
   resendGap: 1_800,
   maxSends: 5,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drawFromDeposit, settleOutcome } from '../src/index.js';
+import { PARAMS, drawFromDeposit, settleOutcome } from '../src/index.js';
 import { vector } from './vectors.js';
 
 const v = vector('settle.json');
@@ -12,6 +12,13 @@ const big = (o: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(o).map(([k, x]) => [k, ['toShop', 'refundToShop', 'toPool', 'handling'].includes(k) ? BigInt(x as string) : x]));
 
 describe('settle mirror', () => {
+  it('the vectors use the live handling parameters and court fee', () => {
+    for (const set of [PARAMS.preLock, PARAMS.locked]) {
+      expect(params).toEqual({ handlingBase: BigInt(set.handlingBase), handlingBps: BigInt(set.handlingBps), handlingCap: BigInt(set.handlingCap) });
+      expect(v.cases[0].input.feeUsdc).toBe(String(set.courtFeeUsdc));
+    }
+  });
+
   it.each((v.cases as any[]).map((c: any): [string, any] => [c.name, c]))('%s', (_n, c: any) => {
     const r = settleOutcome({
       ...c.input,

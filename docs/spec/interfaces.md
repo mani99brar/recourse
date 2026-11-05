@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.7 |
+| Version | 1.8 |
 | Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -23,6 +23,7 @@ is a bug.
 | 1.5 | 2026-11-05 | `RecourseCase` error `TemplateNotSet()` (openCase and refile revert until template text and policy URI are set); refused relay refunds go to the fee pool. |
 | 1.6 | 2026-11-05 | CCIP receive gas limits 150,000 both ways, from measurements. |
 | 1.7 | 2026-11-05 | Claim expiry: Filed from `filedAt`, Contested and AtCourt from `preCheckedAt`, PreChecked never; pre-lock `claimTimeout` 64,800; `claimExpiresAfter`, `canExpireClaim`, optional `CaseView.expiresAt`; vault `ExitDue()`; `RecourseCase.markStale`, `expiresAt`, `claimTimeout`, `NotExpired`, constructor `claimTimeout_`; the expiry gap between the chains. |
+| 1.8 | 2026-11-05 | Testnet demo USDC values: `courtFeeUsdc` 1,000,000, `handlingBase` 1,000,000, `handlingCap` 4,000,000, `minDeposit` 5,000,000 (pre-lock and locked). |
 
 ---
 
@@ -447,12 +448,18 @@ Seconds; µUSDC (6 decimals). Deploy scripts read `packages/shared/vectors/param
 for the first deploy, `locked` at config lock). Running services read live values from the
 contracts' `params()` views, never from this table.
 
+The USDC values are sized for the testnet demo, where the faucet gives 20 USDC per address. The
+platform deposits 18 USDC, the shop escrows 1 USDC per claim, and baskets are 2 to 3 USDC. The
+largest uncontested platform-fault payout is net loss 3 + handling min(1 + 5% × 3, 4) = 4.15 USDC,
+so the deposit covers four. A ruling against the platform also pays an amount equal to the fee: 5.15
+USDC.
+
 | Name | Pre-lock | Locked | Units |
 |---|---|---|---|
 | `contestWindow` | 600 | 1,800 | s |
-| `courtFeeUsdc` | 3,000,000 | 3,000,000 | µUSDC |
-| `handlingBase` / `handlingBps` / `handlingCap` | 15,000,000 / 500 / 40,000,000 | same | µUSDC / bps / µUSDC |
-| `minDeposit` | 10,000,000 (start value; adjusted once the faucet amounts are known) | same | µUSDC |
+| `courtFeeUsdc` | 1,000,000 | 1,000,000 | µUSDC |
+| `handlingBase` / `handlingBps` / `handlingCap` | 1,000,000 / 500 / 4,000,000 | same | µUSDC / bps / µUSDC |
+| `minDeposit` | 5,000,000 | same | µUSDC |
 | `topUpWindow` / `exitDelay` | 604,800 / 600 | 604,800 / 10,368,000 | s |
 | `resendGap` / `maxSends` | 1,800 / 5 | same | s / count |
 | `caseDeadline` / `maxOpenCases` | 7,200 / 10 | same | s / count |

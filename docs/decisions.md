@@ -28,7 +28,7 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 | Record hash | SHA-256 over the exact pinned bytes. Buyer fields are salted. |
 | `orderId`, `claimId` | `keccak256(abi.encode("recourse.order.v1", platform, shop, orderNonce))`. `claimId = keccak256(abi.encode(296, claims, orderId))`. One claim per order. |
 | `packHash` | SHA-256 of the pinned `precheck-result` document. |
-| Court fee | 3 USDC, read from a parameter. |
+| Court fee | 1 USDC on the testnet demo, read from a parameter. |
 | Exit | `requestExit` plus `exitDelay`. |
 | Stuck claims | `claimTimeout` is 18 h. On Hedera, `expireClaim` works on a Filed claim after `claimTimeout` from `filedAt`, and on a Contested or AtCourt claim after `claimTimeout` from `preCheckedAt`. A PreChecked claim never expires: it closes uncontested once its contest window ends. A later ruling is ignored, with an event. |
 | Stale cases | On Arbitrum, anyone can call `markStale` once `filedAt + claimTimeout` has passed; it frees the open-case slot. Arbitrum counts from `filedAt` and Hedera from `preCheckedAt`, so a ruling that lands in the few minutes between the two is ignored on Arbitrum, and the claim then expires on Hedera with the court fee refunded. Accepted. |

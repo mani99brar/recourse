@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { erc20Abi, keccak256, type Abi, type Address, type Hex } from 'viem';
-import { Answer, ClaimStatus, Gap, ZERO_HASH, newOrderNonce, type RecordRefs } from '@recourse/shared';
+import { Answer, ClaimStatus, Gap, PARAMS, ZERO_HASH, newOrderNonce, type RecordRefs } from '@recourse/shared';
 import { Journal, memoryLogger } from '@recourse/records';
 import { chainClients, loadAbi, type ChainClients } from '../../shop/src/chain.js';
 import { CallRefused, readClaim, readClaimParams, readCredit, simulateCall, type RecourseContracts } from '../../shop/src/claim-actions.js';
@@ -167,7 +167,8 @@ describe('contest and withdraw-credit on the local contracts', () => {
     expect(dry.status, dry.stderr).toBe(0);
     expect(dry.stdout).toContain('status PreChecked');
     expect(dry.stdout).toContain('losing side: platform');
-    expect(dry.stdout).toContain('court fee 3000000 µUSDC; escrow open, 3000000 µUSDC from the shop');
+    const fee = PARAMS.preLock.courtFeeUsdc; // DeployLocal applies the preLock set
+    expect(dry.stdout).toContain(`court fee ${fee} µUSDC; escrow open, ${fee} µUSDC from the shop`);
     expect(dry.stdout).toContain('no expiry while PreChecked');
     expect(dry.stdout).toContain('dry run');
     expect((await readClaim(shop.publicClient, contracts, claimId)).status).toBe(ClaimStatus.PreChecked);
@@ -211,7 +212,7 @@ describe('contest and withdraw-credit on the local contracts', () => {
 
     await write(signerClients, contracts.claims, contracts.claimsAbi, 'closeUncontested', [lapsed.claimId]);
     const credit = await readCredit(shop.publicClient, contracts, shop.account.address);
-    expect(credit).toBeGreaterThan(3_000_000n);
+    expect(credit).toBeGreaterThan(BigInt(PARAMS.preLock.courtFeeUsdc)); // more than the refunded fee
 
     const dry = cli('withdraw-credit', ['--as', 'shop']);
     expect(dry.status, dry.stderr).toBe(0);

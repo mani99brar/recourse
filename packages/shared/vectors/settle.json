@@ -1,27 +1,27 @@
 {
   "params": {
-    "handlingBase": "15000000",
+    "handlingBase": "1000000",
     "handlingBps": "500",
-    "handlingCap": "40000000"
+    "handlingCap": "4000000"
   },
   "cases": [
     {
       "name": "uncontested, answer 1",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "uncontested",
         "gap": 1,
         "answer": 1
       },
       "expect": {
         "row": "uncontested_platform",
-        "toShop": "116500000",
-        "refundToShop": "3000000",
+        "toShop": "3125000",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
-        "handling": "21000000",
+        "handling": "1125000",
         "unresolved": false,
         "appliedAnswer": 1,
         "settledOutcome": null
@@ -30,9 +30,9 @@
     {
       "name": "uncontested, answer 0",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "uncontested",
         "gap": 255,
         "answer": 0
@@ -40,7 +40,7 @@
       "expect": {
         "row": "uncontested_other",
         "toShop": "0",
-        "refundToShop": "3000000",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
         "handling": "0",
@@ -52,9 +52,9 @@
     {
       "name": "uncontested, answer 2",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "uncontested",
         "gap": 3,
         "answer": 2
@@ -62,7 +62,7 @@
       "expect": {
         "row": "uncontested_other",
         "toShop": "0",
-        "refundToShop": "3000000",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
         "handling": "0",
@@ -74,9 +74,9 @@
     {
       "name": "uncontested, answer 3",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "uncontested",
         "gap": 0,
         "answer": 3
@@ -84,7 +84,7 @@
       "expect": {
         "row": "uncontested_other",
         "toShop": "0",
-        "refundToShop": "3000000",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
         "handling": "0",
@@ -96,9 +96,9 @@
     {
       "name": "ruling 1",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 1,
         "attempts": 1,
@@ -107,11 +107,11 @@
       },
       "expect": {
         "row": "ruled_platform",
-        "toShop": "119500000",
+        "toShop": "4125000",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "platform",
-        "handling": "21000000",
+        "handling": "1125000",
         "unresolved": false,
         "appliedAnswer": 1,
         "settledOutcome": 1
@@ -120,9 +120,9 @@
     {
       "name": "ruling 2",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 2,
         "attempts": 1,
@@ -133,7 +133,7 @@
         "row": "ruled_shop",
         "toShop": "0",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "shop",
         "handling": "0",
         "unresolved": false,
@@ -144,9 +144,9 @@
     {
       "name": "ruling 3, gap 1",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 3,
         "attempts": 1,
@@ -155,9 +155,9 @@
       },
       "expect": {
         "row": "ruled_neither_flagged",
-        "toShop": "3000000",
+        "toShop": "1000000",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "platform",
         "handling": "0",
         "unresolved": false,
@@ -168,9 +168,9 @@
     {
       "name": "ruling 3, gap 2",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 3,
         "attempts": 2,
@@ -179,9 +179,9 @@
       },
       "expect": {
         "row": "ruled_neither_flagged",
-        "toShop": "3000000",
+        "toShop": "1000000",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "platform",
         "handling": "0",
         "unresolved": false,
@@ -192,9 +192,9 @@
     {
       "name": "ruling 3, gap 255",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 3,
         "attempts": 1,
@@ -205,7 +205,7 @@
         "row": "ruled_neither_other",
         "toShop": "0",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "shop",
         "handling": "0",
         "unresolved": false,
@@ -216,9 +216,9 @@
     {
       "name": "ruling 3, gap 3",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 3,
         "attempts": 1,
@@ -229,7 +229,7 @@
         "row": "ruled_neither_other",
         "toShop": "0",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "shop",
         "handling": "0",
         "unresolved": false,
@@ -240,9 +240,9 @@
     {
       "name": "ruling 3, gap 0",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 3,
         "attempts": 1,
@@ -253,7 +253,7 @@
         "row": "ruled_neither_other",
         "toShop": "0",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "shop",
         "handling": "0",
         "unresolved": false,
@@ -264,9 +264,9 @@
     {
       "name": "ruling 0 twice, answer 1",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 0,
         "attempts": 2,
@@ -275,11 +275,11 @@
       },
       "expect": {
         "row": "zero_twice_answer",
-        "toShop": "119500000",
+        "toShop": "4125000",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "platform",
-        "handling": "21000000",
+        "handling": "1125000",
         "unresolved": false,
         "appliedAnswer": 1,
         "settledOutcome": 1
@@ -288,9 +288,9 @@
     {
       "name": "ruling 0 twice, answer 2",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 0,
         "attempts": 2,
@@ -301,7 +301,7 @@
         "row": "zero_twice_answer",
         "toShop": "0",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "shop",
         "handling": "0",
         "unresolved": false,
@@ -312,9 +312,9 @@
     {
       "name": "ruling 0 twice, answer 3, gap 2",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 0,
         "attempts": 2,
@@ -323,9 +323,9 @@
       },
       "expect": {
         "row": "zero_twice_answer",
-        "toShop": "3000000",
+        "toShop": "1000000",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "platform",
         "handling": "0",
         "unresolved": false,
@@ -336,9 +336,9 @@
     {
       "name": "ruling 0 twice, answer 3, gap 0",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 0,
         "attempts": 2,
@@ -349,7 +349,7 @@
         "row": "zero_twice_answer",
         "toShop": "0",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "shop",
         "handling": "0",
         "unresolved": false,
@@ -360,9 +360,9 @@
     {
       "name": "ruling 0 twice, answer 0, odd fee",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000001",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000001",
         "outcome": "ruled",
         "ruling": 0,
         "attempts": 2,
@@ -371,9 +371,9 @@
       },
       "expect": {
         "row": "zero_twice_unresolved",
-        "toShop": "1500000",
+        "toShop": "500000",
         "refundToShop": "0",
-        "toPool": "3000001",
+        "toPool": "1000001",
         "feeOn": "split",
         "handling": "0",
         "unresolved": true,
@@ -384,9 +384,9 @@
     {
       "name": "expired",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "expired",
         "gap": 0,
         "answer": 0
@@ -394,7 +394,7 @@
       "expect": {
         "row": "expired",
         "toShop": "0",
-        "refundToShop": "3000000",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
         "handling": "0",
@@ -406,9 +406,9 @@
     {
       "name": "closed undrawn",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "undrawn",
         "gap": 1,
         "answer": 1
@@ -416,7 +416,7 @@
       "expect": {
         "row": "undrawn",
         "toShop": "0",
-        "refundToShop": "3000000",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
         "handling": "0",
@@ -428,9 +428,9 @@
     {
       "name": "ruling 0, first attempt",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 0,
         "attempts": 1,
@@ -452,9 +452,9 @@
     {
       "name": "ruling out of range",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 4,
         "attempts": 1,
@@ -476,31 +476,31 @@
     {
       "name": "handling rounds down",
       "input": {
-        "basketUsdc": "123456789",
-        "netLossUsdc": "100000000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "2345679",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "1000000",
         "outcome": "uncontested",
         "gap": 1,
         "answer": 1
       },
       "expect": {
         "row": "uncontested_platform",
-        "toShop": "121172839",
-        "refundToShop": "3000000",
+        "toShop": "3117283",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
-        "handling": "21172839",
+        "handling": "1117283",
         "unresolved": false,
         "appliedAnswer": 1,
         "settledOutcome": null
       }
     },
     {
-      "name": "handling at the cap",
+      "name": "largest demo basket",
       "input": {
-        "basketUsdc": "600000000",
-        "netLossUsdc": "600000000",
-        "feeUsdc": "3000000",
+        "basketUsdc": "3000000",
+        "netLossUsdc": "3000000",
+        "feeUsdc": "1000000",
         "outcome": "ruled",
         "ruling": 1,
         "attempts": 1,
@@ -509,11 +509,57 @@
       },
       "expect": {
         "row": "ruled_platform",
-        "toShop": "643000000",
+        "toShop": "5150000",
         "refundToShop": "0",
-        "toPool": "3000000",
+        "toPool": "1000000",
         "feeOn": "platform",
-        "handling": "40000000",
+        "handling": "1150000",
+        "unresolved": false,
+        "appliedAnswer": 1,
+        "settledOutcome": 1
+      }
+    },
+    {
+      "name": "handling exactly at the cap",
+      "input": {
+        "basketUsdc": "60000000",
+        "netLossUsdc": "10000000",
+        "feeUsdc": "1000000",
+        "outcome": "uncontested",
+        "gap": 1,
+        "answer": 1
+      },
+      "expect": {
+        "row": "uncontested_platform",
+        "toShop": "14000000",
+        "refundToShop": "1000000",
+        "toPool": "0",
+        "feeOn": "none",
+        "handling": "4000000",
+        "unresolved": false,
+        "appliedAnswer": 1,
+        "settledOutcome": null
+      }
+    },
+    {
+      "name": "handling above the cap",
+      "input": {
+        "basketUsdc": "100000000",
+        "netLossUsdc": "100000000",
+        "feeUsdc": "1000000",
+        "outcome": "ruled",
+        "ruling": 1,
+        "attempts": 1,
+        "gap": 2,
+        "answer": 1
+      },
+      "expect": {
+        "row": "ruled_platform",
+        "toShop": "105000000",
+        "refundToShop": "0",
+        "toPool": "1000000",
+        "feeOn": "platform",
+        "handling": "4000000",
         "unresolved": false,
         "appliedAnswer": 1,
         "settledOutcome": 1
@@ -524,18 +570,18 @@
       "input": {
         "basketUsdc": "1",
         "netLossUsdc": "1",
-        "feeUsdc": "3000000",
+        "feeUsdc": "1000000",
         "outcome": "uncontested",
         "gap": 1,
         "answer": 1
       },
       "expect": {
         "row": "uncontested_platform",
-        "toShop": "15000001",
-        "refundToShop": "3000000",
+        "toShop": "1000001",
+        "refundToShop": "1000000",
         "toPool": "0",
         "feeOn": "none",
-        "handling": "15000000",
+        "handling": "1000000",
         "unresolved": false,
         "appliedAnswer": 1,
         "settledOutcome": null
@@ -544,9 +590,9 @@
     {
       "name": "escrowed fee differs from the current fee",
       "input": {
-        "basketUsdc": "120000000",
-        "netLossUsdc": "95500000",
-        "feeUsdc": "4000000",
+        "basketUsdc": "2500000",
+        "netLossUsdc": "2000000",
+        "feeUsdc": "2000000",
         "outcome": "ruled",
         "ruling": 1,
         "attempts": 1,
@@ -555,11 +601,11 @@
       },
       "expect": {
         "row": "ruled_platform",
-        "toShop": "120500000",
+        "toShop": "5125000",
         "refundToShop": "0",
-        "toPool": "4000000",
+        "toPool": "2000000",
         "feeOn": "platform",
-        "handling": "21000000",
+        "handling": "1125000",
         "unresolved": false,
         "appliedAnswer": 1,
         "settledOutcome": 1
@@ -568,16 +614,16 @@
   ],
   "drawFromDeposit": [
     {
-      "owed": "119500000",
-      "held": "200000000",
-      "paid": "119500000",
+      "owed": "4125000",
+      "held": "18000000",
+      "paid": "4125000",
       "notCovered": "0"
     },
     {
-      "owed": "119500000",
-      "held": "50000000",
-      "paid": "50000000",
-      "notCovered": "69500000"
+      "owed": "20000000",
+      "held": "18000000",
+      "paid": "18000000",
+      "notCovered": "2000000"
     },
     {
       "owed": "0",

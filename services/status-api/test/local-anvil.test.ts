@@ -1,6 +1,7 @@
 // Runs against a real local Hedera-side stack (DeployLocal plus the money proofs) when
 // LOCAL_ANVIL_URL and LOCAL_DEPLOYMENTS_FILE are set; skipped otherwise. The logs come from the
 // anvil node through a mirror-shaped fake, so the real ABIs and the real event data are decoded.
+import { PARAMS } from '@recourse/shared';
 import { createPublicClient, http, type Address, type Hex } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { loadDeployments } from '../src/deployments.js';
@@ -45,7 +46,7 @@ describe.skipIf(!url || !file)('local Hedera stack', () => {
     for (const r of rows) {
       if (r.statusKey === 'settled' || r.statusKey === 'closed_uncontested') {
         expect(r.owed).toBe((r.paid ?? 0n) + (r.notCovered ?? 0n));
-        expect(r.escrow.amount).toBe(3_000_000n);
+        expect(r.escrow.amount).toBe(BigInt(PARAMS.preLock.courtFeeUsdc)); // DeployLocal applies the preLock set
       }
     }
     const settled = rows.find((r) => r.statusKey === 'settled')!;

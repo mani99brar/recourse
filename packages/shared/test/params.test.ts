@@ -28,8 +28,18 @@ describe('params', () => {
     expect(PARAMS.locked.claimTimeout).toBeGreaterThan(PARAMS.locked.contestWindow);
   });
   it('handlingOf', () => {
-    expect(handlingOf(120_000_000n, PARAMS.locked)).toBe(21_000_000n);
-    expect(handlingOf(10_000_000_000n, PARAMS.locked)).toBe(40_000_000n);
+    expect(handlingOf(2_500_000n, PARAMS.locked)).toBe(1_125_000n);
+    expect(handlingOf(3_000_000n, PARAMS.locked)).toBe(1_150_000n);
+    expect(handlingOf(60_000_000n, PARAMS.locked)).toBe(4_000_000n);
+    expect(handlingOf(10_000_000_000n, PARAMS.locked)).toBe(4_000_000n);
+  });
+  it('the demo amounts fit a 20 USDC faucet: 18 USDC covers four uncontested platform-fault payouts on 3 USDC baskets', () => {
+    const p = PARAMS.locked;
+    const worstUncontested = 3_000_000n + handlingOf(3_000_000n, p);
+    expect(worstUncontested).toBe(4_150_000n);
+    expect(4n * worstUncontested).toBeLessThanOrEqual(18_000_000n);
+    expect(BigInt(p.courtFeeUsdc)).toBe(1_000_000n);
+    expect(BigInt(p.minDeposit)).toBeLessThanOrEqual(18_000_000n);
   });
 });
 
