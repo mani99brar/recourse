@@ -72,7 +72,7 @@ sequenceDiagram
   Sh->>HCS: record D (packed)
   Note over Ag,Sh: the wrong goods arrive
   Ag->>HCS: record R (arrived), signed by the buyer
-  Sh->>CL: fileClaim + 3 USDC court fee into the vault escrow
+  Sh->>CL: fileClaim + court fee (1 USDC on the testnet demo) into the vault escrow
   PC->>HCS: read the six records, run the fault rule
   PC->>CL: recordPreCheck (gap, answer, hash of the result document)
   alt nobody contests in the window
@@ -200,11 +200,11 @@ Ten roles, each with its own Foundry keystore kept outside the repo ([docs/keys.
 
 | Part | State |
 |---|---|
-| Solidity contracts (Claims, Vault, Case) | Written. Unit, fuzz and invariant tests pass locally. **Not deployed.** |
-| Deploy and wiring scripts | Written. Rehearsed on local anvils only. Not run on a testnet. |
+| Solidity contracts (Claims, Vault, Case) | Written. Unit, fuzz and invariant tests pass locally. DepositVault (`0.0.11329716`) and RecourseClaims (`0.0.11329717`) are deployed on Hedera testnet, on USDC `0.0.429274`, config not locked yet; see `deployments/hedera.json`. RecourseCase is **not deployed** on Arbitrum Sepolia yet. |
+| Deploy and wiring scripts | Written and rehearsed on local anvils. The Hedera deploy, USDC association and parameter steps have run on testnet; the Arbitrum deploy and the wiring between the chains have not. |
 | TypeScript services (shop, agent, pre-check, keeper, docket, intake, status API) | Written and tested against local chains and fakes. **Not running anywhere**; unit files are written but not installed. |
 | Web app | Builds. Not hosted. |
-| Funding | None. No role holds testnet HBAR, ETH, LINK or USDC yet. |
+| Funding | Small. Five Hedera roles hold a few HBAR from the faucet (at most 10 HBAR per address). No role holds Arbitrum Sepolia ETH or LINK yet. Testnet USDC has been requested for the platform, shop and agent and has not arrived yet. |
 | CCIP lanes | Public lanes exist on both testnets; no message from this project has been sent. |
 | Kleros dispute | No dispute has been created by this project. |
 | Arkiv docket | Reads and writes work against a local store; no entity has been written to the Arkiv testnet. |
