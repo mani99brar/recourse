@@ -2,7 +2,8 @@
 
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { Journal, createLogger, readJournal } from '@recourse/records';
+import { Journal, createLogger, ipfsOptionsFromEnv, pinDocument, pinProviderFromEnv, readJournal } from '@recourse/records';
+import { nullPinner, type Pinner } from './reason.js';
 import { createPublicClient, http, formatEther, type Address } from 'viem';
 import { loadSigner, readParties } from '@recourse/shared/node';
 import { createDocketApp } from './app.js';
@@ -67,6 +68,7 @@ export async function startDocket(env: Record<string, string | undefined> = proc
     now: () => Math.floor(Date.now() / 1000),
     log,
     alert,
+    pinner: buildPinner(env, log),
     reviews: buildReviews(cfg, env, log),
     retrySeconds: cfg.retrySeconds,
     retryMax: cfg.retryMax,
@@ -181,5 +183,16 @@ function buildReviews(cfg: DocketConfig, env: Record<string, string | undefined>
   } catch (error) {
     log.warn('reviews_off', { error: error instanceof Error ? error.message : String(error) });
     return cutReviews;
+  }
+}
+
+function buildPinner(env: Record<string, string | undefined>, log: ReturnType<typeof createLogger>): Pinner {
+  try {
+    const provider = pinProviderFromEnv(env);
+    const opts = ipfsOptionsFromEnv(env);
+    return { pin: async (bytes) => (await pinDocument(bytes, provider, opts)).cid };
+  } catch {
+    log.warn('pin_off', { note: 'IPFS pinning is not configured; reasonCid stays empty' });
+    return nullPinner;
   }
 }
