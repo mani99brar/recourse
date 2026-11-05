@@ -1,0 +1,25 @@
+packages:
+  - packages/*
+  - services/*
+  - apps/*
+
+# Peers are declared explicitly where they are needed. Auto-installing them would pull
+# hardhat and ethers in through @chainlink/local, which nothing here uses.
+autoInstallPeers: false
+strictPeerDependencies: false
+
+# Trim dependencies the Solidity packages carry for their own tooling. Nothing here
+# compiles against them, and two of them are git-hosted.
+overrides:
+  "@chainlink/contracts>@zksync/contracts": "-"
+  "@chainlink/contracts>@changesets/cli": "-"
+  "@chainlink/contracts>@changesets/get-github-info": "-"
+  "@chainlink/contracts>@eslint/eslintrc": "-"
+  "@chainlink/local>forge-std": "-"
+
+# No dependency install scripts run. The ones below are not needed at runtime:
+# esbuild finds its platform binary package without its postinstall check.
+allowBuilds:
+  "@arbitrum/nitro-contracts": false
+  esbuild: false
+  protobufjs: false

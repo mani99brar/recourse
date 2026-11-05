@@ -1,0 +1,20 @@
+{
+  "name": "@recourse/records",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1155.0",
+    "@hiero-ledger/sdk": "2.85.0",
+    "@ipld/car": "5.4.7",
+    "@recourse/shared": "workspace:*",
+    "multiformats": "14.0.5",
+    "viem": "2.57.8"
+  }
+}

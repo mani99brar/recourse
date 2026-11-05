@@ -1,0 +1,23 @@
+{
+  "name": "@recourse/intake",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@recourse/records": "workspace:*",
+    "@recourse/shared": "workspace:*",
+    "express": "5.3.0",
+    "tsx": "4.23.15",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6"
+  }
+}

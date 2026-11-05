@@ -1,0 +1,32 @@
+{
+  "name": "recourse",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.8.1",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --workspace-concurrency=1 typecheck",
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "forge:build": "cd contracts && forge build",
+    "forge:test": "cd contracts && forge test"
+  },
+  "dependencies": {
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@chainlink/contracts": "1.5.0",
+    "@chainlink/contracts-ccip": "2.0.0",
+    "@chainlink/local": "0.3.1",
+    "@kleros/kleros-v2-contracts": "0.12.0",
+    "@openzeppelin/contracts": "5.6.1",
+    "@openzeppelin/contracts-4.8.3": "npm:@openzeppelin/contracts@4.8.3",
+    "@openzeppelin/contracts-5.3.0": "npm:@openzeppelin/contracts@5.3.0",
+    "@types/node": "24.19.2",
+    "forge-std": "github:foundry-rs/forge-std#v1.17.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}
