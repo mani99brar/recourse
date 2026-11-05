@@ -2,7 +2,7 @@
 // connectivity check), and free routes for health, the catalogue, order status, complaints and the
 // ERC-8004 registration document.
 //
-// A paid order request passes a gate before any payment is verified: known item, order headers,
+// A paid order request is checked before any payment is verified: known item, order headers,
 // a body naming the order and the three records written before paying, no earlier order with the
 // same id, and (when the check is on) a platform in good standing. The paying account must be one
 // of the platform's record writers, checked before settlement. Payment settles before the handler
@@ -227,7 +227,10 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
   });
 
   app.get('/orders/:orderId', (req, res) => {
-    const order = book.get(req.params.orderId);
+    // Re-read: the pack and complaint commands append to the same journal from other processes.
+    const fresh = new OrderBook();
+    for (const row of journal.read().rows) fresh.apply(row);
+    const order = fresh.get(req.params.orderId) ?? book.get(req.params.orderId);
     if (!order) {
       res.status(404).json({ error: 'order_not_found' });
       return;
@@ -235,7 +238,7 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
     res.json({ order, inFlight: book.isInFlight(order.orderId) });
   });
 
-  // Gate: runs before the payment middleware, so a refused order never reaches settlement.
+  // Order check: runs before the payment middleware, so a refused order never reaches settlement.
   app.post(`${ORDER_ROUTE_PREFIX}/:sku/:qty`, async (req: Request, res: Response, next: NextFunction) => {
     const route = parseOrderPath(req.path);
     if (!route) {

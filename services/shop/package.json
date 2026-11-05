@@ -8,8 +8,9 @@
   },
   "scripts": {
     "start": "tsx src/main.ts",
-    "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "test": "vitest run --passWithNoTests --exclude '**/*.anvil.test.ts'",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:anvil": "vitest run --passWithNoTests anvil.test"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "2.85.0",

@@ -96,15 +96,21 @@ export function orderedDoc(input: { orderId: Hex; attrs: Attrs; x402TxId: string
   });
 }
 
-export function arrivedDoc(input: { orderId: Hex; attrs: Attrs; buyerSigner: string; buyerSignature: Hex; reportedAt: number }): Uint8Array {
+/** The arrived record without its signature fields: what the buyer signs. */
+export function arrivedBody(input: { orderId: Hex; attrs: Attrs; reportedAt: number }): Uint8Array {
+  return canonicalBytes({ v: '1', kind: 'arrived', orderId: input.orderId, attrs: attrsValue(input.attrs), reportedAt: String(input.reportedAt) });
+}
+
+/** The arrived record: the body plus the buyer's signature over its record hash. */
+export function arrivedDoc(input: { orderId: Hex; attrs: Attrs; reportedAt: number; buyerSigner: string; buyerSignature: Hex }): Uint8Array {
   return canonicalBytes({
     v: '1',
     kind: 'arrived',
     orderId: input.orderId,
     attrs: attrsValue(input.attrs),
+    reportedAt: String(input.reportedAt),
     buyerSigner: input.buyerSigner,
     buyerSignature: input.buyerSignature,
-    reportedAt: String(input.reportedAt),
   });
 }
 

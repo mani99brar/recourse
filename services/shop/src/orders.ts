@@ -48,6 +48,8 @@ export type ShopJournalRow =
     })
   | (At & { type: 'order_confirmed'; orderId: Hex; refs: { asked: RecordRef; shown: RecordRef; approval: RecordRef } })
   | (At & { type: 'payer_mismatch'; orderId: Hex; payer: string; txId: string })
+  /** The packed record's document, journaled before it is committed so a rerun commits the same bytes. */
+  | (At & { type: 'pack_draft'; orderId: Hex; doc: Hex })
   | (At & { type: 'packed'; orderId: Hex; seq: number; hash: Hex; cid: string })
   | (At & { type: 'complaint'; orderId: Hex; seq: string; hash: Hex; cid: string });
 
@@ -96,7 +98,7 @@ export class OrderBook {
       order.status = 'paid';
     }
     if (row.type === 'payer_mismatch') order.status = 'payer_mismatch';
-    if (row.type === 'packed') {
+    if (row.type === 'packed' && !order.packed) {
       order.packed = { seq: row.seq, hash: row.hash, cid: row.cid };
       order.status = 'packed';
     }

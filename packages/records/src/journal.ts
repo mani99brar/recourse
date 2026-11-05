@@ -8,6 +8,12 @@ import { dirname } from 'node:path';
 export interface JournalOptions {
   /** File mode for a new file, also enforced on open (default 0o600). */
   mode?: number;
+  /**
+   * Cut a torn final line on open (default true). A second process appending to a journal that a
+   * running service also writes passes false: the unterminated line may be that service's write in
+   * progress. Readers skip an unterminated final line either way.
+   */
+  cutTornTail?: boolean;
 }
 
 export interface JournalReadResult<Row> {
@@ -30,7 +36,7 @@ export class Journal<Row extends object> {
     const fd = openSync(path, 'a+', mode);
     chmodSync(path, mode);
     const text = readFileSync(path);
-    if (text.length > 0 && text[text.length - 1] !== 0x0a) {
+    if (options.cutTornTail !== false && text.length > 0 && text[text.length - 1] !== 0x0a) {
       const keep = text.lastIndexOf(0x0a) + 1;
       ftruncateSync(fd, keep);
       fsyncSync(fd);

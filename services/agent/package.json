@@ -8,10 +8,12 @@
   },
   "scripts": {
     "start": "tsx src/main.ts",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude '**/*.anvil.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "pay-once": "tsx scripts/pay-once.ts",
-    "h0-setup": "tsx scripts/h0-setup.ts"
+    "h0-setup": "tsx scripts/h0-setup.ts",
+    "test:anvil": "vitest run --passWithNoTests anvil.test",
+    "local-demo": "tsx scripts/local-demo.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "2.85.0",

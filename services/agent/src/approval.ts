@@ -59,3 +59,32 @@ export async function approvalSigner(message: ApprovalMessage, signature: Hex): 
     return null;
   }
 }
+
+/**
+ * The buyer's report of what arrived. The buyer key signs the record hash of the arrived record's
+ * body (the document without its two signature fields), so the record cannot be altered after the
+ * buyer signed it.
+ */
+export const REPORT_TYPES = {
+  RecourseArrived: [
+    { name: 'orderId', type: 'bytes32' },
+    { name: 'bodyHash', type: 'bytes32' },
+  ],
+} as const;
+
+function typedReport(orderId: Hex, bodyHash: Hex) {
+  return { domain: APPROVAL_DOMAIN, types: REPORT_TYPES, primaryType: 'RecourseArrived' as const, message: { orderId, bodyHash } };
+}
+
+export async function signReport(account: LocalAccount, orderId: Hex, bodyHash: Hex): Promise<Hex> {
+  return account.signTypedData(typedReport(orderId, bodyHash));
+}
+
+/** The address that signed the report, or null when the signature does not parse. */
+export async function reportSigner(orderId: Hex, bodyHash: Hex, signature: Hex): Promise<Address | null> {
+  try {
+    return await recoverTypedDataAddress({ ...typedReport(orderId, bodyHash), signature });
+  } catch {
+    return null;
+  }
+}

@@ -112,30 +112,44 @@ export class MemoryLedger {
     return this.txs.get(txId);
   }
 
-  /** Mirror node REST for the paths the records client reads. */
+  /**
+   * Mirror node REST for the paths the services read: topic messages (`sequencenumber=gt:|gte:N`,
+   * `order=asc|desc`, `limit`, one message by sequence number), topic info, transactions by id or by
+   * consensus timestamp, and the newest block.
+   */
   readonly fetch: FetchLike = async (input) => {
     const url = new URL(input);
     const path = url.pathname.replace(/^\/api\/v1/, '');
+    const messageJson = (topicId: string, x: MemoryMessage) => ({
+      sequence_number: x.seq,
+      consensus_timestamp: x.consensusAt,
+      payer_account_id: x.payer,
+      topic_id: topicId,
+      message: Buffer.from(x.bytes).toString('base64'),
+      chunk_info: x.chunkTotal ? { number: 1, total: x.chunkTotal } : null,
+    });
     let m = /^\/topics\/([^/]+)\/messages$/.exec(path);
     if (m) {
       this.mirrorHits.messages += 1;
       const topicId = decodeURIComponent(m[1]!);
       const list = this.topics.get(topicId);
       if (!list) return json(404, { _status: { messages: [{ message: 'Not found' }] } });
-      const from = Number((url.searchParams.get('sequencenumber') ?? 'gte:1').replace(/^gte:/, ''));
+      const filter = /^(gt|gte|lt|lte|eq)?:?(\d+)$/.exec(url.searchParams.get('sequencenumber') ?? 'gte:1');
+      const op = filter?.[1] ?? 'eq';
+      const n = Number(filter?.[2] ?? '1');
+      const keep = (seq: number) =>
+        op === 'gt' ? seq > n : op === 'gte' ? seq >= n : op === 'lt' ? seq < n : op === 'lte' ? seq <= n : seq === n;
       const limit = Number(url.searchParams.get('limit') ?? '25');
-      const page = list.filter((x) => x.seq >= from).slice(0, limit);
-      return json(200, {
-        messages: page.map((x) => ({
-          sequence_number: x.seq,
-          consensus_timestamp: x.consensusAt,
-          payer_account_id: x.payer,
-          topic_id: topicId,
-          message: Buffer.from(x.bytes).toString('base64'),
-          chunk_info: x.chunkTotal ? { number: 1, total: x.chunkTotal } : null,
-        })),
-        links: { next: null },
-      });
+      const ordered = url.searchParams.get('order') === 'desc' ? [...list].reverse() : list;
+      const page = ordered.filter((x) => keep(x.seq)).slice(0, limit);
+      return json(200, { messages: page.map((x) => messageJson(topicId, x)), links: { next: null } });
+    }
+    m = /^\/topics\/([^/]+)\/messages\/(\d+)$/.exec(path);
+    if (m) {
+      this.mirrorHits.messages += 1;
+      const topicId = decodeURIComponent(m[1]!);
+      const x = this.topics.get(topicId)?.[Number(m[2]) - 1];
+      return x ? json(200, messageJson(topicId, x)) : json(404, { _status: { messages: [{ message: 'Not found' }] } });
     }
     m = /^\/topics\/([^/]+)$/.exec(path);
     if (m) {
@@ -144,26 +158,35 @@ export class MemoryLedger {
       if (!this.topics.has(topicId)) return json(404, {});
       return json(200, { topic_id: topicId, memo: 'memory', admin_key: null, submit_key: null, deleted: false });
     }
+    const txJson = (tx: MemoryTx) => {
+      const [account, start] = tx.txId.split('@') as [string, string];
+      return {
+        transaction_id: `${account}-${start.replace('.', '-')}`,
+        result: tx.result,
+        consensus_timestamp: tx.consensusAt,
+        name: tx.name,
+        payer_account_id: tx.payer,
+        nonce: 0,
+        scheduled: false,
+        transfers: [],
+        token_transfers: [],
+      };
+    };
     m = /^\/transactions\/(\d+\.\d+\.\d+)-(\d+)-(\d+)$/.exec(path);
     if (m) {
       this.mirrorHits.transactions += 1;
-      const txId = `${m[1]}@${m[2]}.${m[3]}`;
-      const tx = this.txs.get(txId);
+      const tx = this.txs.get(`${m[1]}@${m[2]}.${m[3]}`);
       if (!tx) return json(404, {});
-      return json(200, {
-        transactions: [
-          {
-            transaction_id: `${m[1]}-${m[2]}-${m[3]}`,
-            result: tx.result,
-            consensus_timestamp: tx.consensusAt,
-            name: tx.name,
-            nonce: 0,
-            scheduled: false,
-            transfers: [],
-            token_transfers: [],
-          },
-        ],
-      });
+      return json(200, { transactions: [txJson(tx)] });
+    }
+    if (path === '/transactions') {
+      this.mirrorHits.transactions += 1;
+      const at = (url.searchParams.get('timestamp') ?? '').replace(/^eq:/, '');
+      return json(200, { transactions: [...this.txs.values()].filter((tx) => tx.consensusAt === at).map(txJson), links: { next: null } });
+    }
+    if (path === '/blocks') {
+      const to = `${this.clock}.${String(this.nanos).padStart(9, '0')}`;
+      return json(200, { blocks: [{ number: this.clock, timestamp: { from: `${this.clock}.000000000`, to } }], links: { next: null } });
     }
     return json(404, {});
   };

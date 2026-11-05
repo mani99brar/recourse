@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import { decodeRecordMsg, RecordKind } from '@recourse/shared';
 import { render, type RenderInput } from '@recourse/renderer';
+import type { Server } from 'node:http';
+import { join } from 'node:path';
+import { memoryLogger, readJournal } from '@recourse/records';
 import { approvalSigner, signApproval } from '../src/approval.js';
+import { createApprovalsApi } from '../src/approvals-api.js';
+import type { AgentRow } from '../src/buy.js';
 import { AGENT, ASKED_CAP, TOPIC, docAt, world, type World } from './world.js';
 
 let w: World | null = null;
@@ -102,6 +107,27 @@ describe('above the spend limit', () => {
     const a = messages(w).find((m) => m.kind === RecordKind.Approval)!;
     expect(await docAt(w, a.cid)).toMatchObject({ approval: 'approved', approvalBasis: 'buyer', signer: w.buyerAccount.address });
     expect(w.fake.settled).toHaveLength(1);
+  });
+
+  test('the approvals API shows what the buyer signs, read from the journal', async () => {
+    w = await world();
+    const { orderId, request } = await pending(w);
+    const api = createApprovalsApi({ rows: () => readJournal<AgentRow>(join(w!.dir, 'orders.jsonl')).rows, log: memoryLogger(), now: () => w!.ledger.clock });
+    const server = await new Promise<Server>((resolve) => {
+      const s = api.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    try {
+      const port = (server.address() as { port: number }).port;
+      const res = await fetch(`http://127.0.0.1:${port}/approvals/${request.approvalId}`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { orderId: string; textHash: string; text: string; expired: boolean; typedData: { message: Record<string, unknown> } };
+      expect(body).toMatchObject({ orderId, textHash: request.rendered.textHash, expired: false });
+      expect(render(request.rendered.renderInput).text).toBe(body.text);
+      expect(body.typedData.message).toMatchObject({ orderId, textHash: request.rendered.textHash, amount: request.terms.amount, decision: 'approved' });
+      expect((await fetch(`http://127.0.0.1:${port}/approvals/unknown`)).status).toBe(404);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 
   test('a decline is recorded and nothing is paid', async () => {

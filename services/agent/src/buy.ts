@@ -2,6 +2,7 @@
 //
 //   draft -> probe the 402 -> render the shown text -> approve -> commit asked, shown, approval
 //         -> pay -> commit ordered
+//   and later, for a complaint: report (buyer-signed arrived record) -> commit arrived -> tell the shop
 //
 // The order nonce is drawn and journaled before any network call, so a restart reuses it. Every
 // step reads the journal first and resumes where the last run stopped.
@@ -15,13 +16,13 @@
 // new nonce is the way forward, because the shown record of this one is already on the topic.
 
 import type { Address, Hex, LocalAccount } from 'viem';
-import { bytesToHex } from 'viem';
+import { bytesToHex, hexToBytes } from 'viem';
 import type { ClientHederaSigner } from '@x402/hedera';
-import { RecordKind, newOrderNonce, orderIdOf, type Attrs, type RecordKind as Kind } from '@recourse/shared';
+import { RecordKind, newOrderNonce, orderIdOf, recordHash, type Attrs, type RecordKind as Kind } from '@recourse/shared';
 import { render, type RenderInput } from '@recourse/renderer';
 import { validStartSeconds, type Journal, type Logger, type MirrorClient, type Pinned, type RecordsClient } from '@recourse/records';
-import { signApproval } from './approval.js';
-import { approvalDoc, askedDoc, mandateDoc, orderedDoc, saltedBuyer, shownDoc } from './docs.js';
+import { signApproval, signReport } from './approval.js';
+import { approvalDoc, arrivedBody, arrivedDoc, askedDoc, mandateDoc, orderedDoc, saltedBuyer, shownDoc } from './docs.js';
 import { decideLimit, utcDay, type Limits } from './limits.js';
 import { NETWORK, PaymentRefused, chooseRequirement, payExactly, probe402, type FetchLike, type Terms } from './x402-pay.js';
 
@@ -71,7 +72,20 @@ export type AgentRow =
   | (At & { type: 'paid'; txId: string; source: 'settlement' | 'shop' | 'mirror'; offer: Omit<Attrs, 'price'> | null })
   | (At & { type: 'pay_failed'; status: number; error: string })
   | (At & { type: 'abandoned'; reason: string })
-  | (At & { type: 'done' });
+  | (At & { type: 'done' })
+  /** The buyer-signed arrived record, kept so a rerun commits the same bytes. */
+  | (At & { type: 'report_signed'; doc: Hex })
+  | (At & { type: 'complained'; status: number; accepted: boolean; error?: string });
+
+export interface ReportOutcome {
+  orderId: Hex;
+  seq: number;
+  hash: Hex;
+  cid: string;
+  /** Whether the shop took the complaint; `shopError` says why not. */
+  shopAccepted: boolean;
+  shopError?: string;
+}
 
 export type OrderOutcome =
   | { state: 'done'; orderId: Hex; txId: string }
@@ -115,6 +129,25 @@ function salt(): Hex {
   const b = new Uint8Array(32);
   crypto.getRandomValues(b);
   return bytesToHex(b);
+}
+
+function lastOf<T extends AgentRow['type']>(rows: readonly AgentRow[], orderId: Hex, type: T): Extract<AgentRow, { type: T }> | undefined {
+  return rows.filter((r) => r.type === type && 'orderId' in r && r.orderId === orderId).at(-1) as Extract<AgentRow, { type: T }> | undefined;
+}
+
+/** The approval an order is waiting on, with what the buyer must sign; null when none is open. */
+export function pendingApprovalOf(rows: readonly AgentRow[], orderId: Hex) {
+  const waiting = lastOf(rows, orderId, 'awaiting_approval');
+  const rendered = lastOf(rows, orderId, 'rendered');
+  const probed = lastOf(rows, orderId, 'probed');
+  const ended = rows.some((r) => 'orderId' in r && r.orderId === orderId && (r.type === 'approved' || r.type === 'abandoned' || r.type === 'refused'));
+  if (!waiting || !rendered || !probed || ended) return null;
+  return { approvalId: waiting.approvalId, expiresAt: waiting.expiresAt, rendered, terms: probed.terms };
+}
+
+export function orderOfApproval(rows: readonly AgentRow[], approvalId: string): Hex | null {
+  const row = rows.find((r) => r.type === 'awaiting_approval' && r.approvalId === approvalId);
+  return row && 'orderId' in row ? row.orderId : null;
 }
 
 export class Buyer {
@@ -343,18 +376,64 @@ export class Buyer {
     this.write({ type: 'approved', at: iso(), orderId, basis: 'buyer', decision, expiresAt, signer, signature });
   }
 
+  /**
+   * Reports what arrived for a paid order: the arrived record, signed by the buyer key, is built
+   * once and journaled, so a rerun commits the same bytes (the first report stands); then the shop
+   * is pointed at it. A shop that does not see the record yet (mirror lag) is asked again a few
+   * times. Safe to call again.
+   */
+  async report(orderId: Hex, input: { attrs: Attrs; buyerAccount: LocalAccount; attempts?: number }): Promise<ReportOutcome> {
+    const ended = this.endState(orderId);
+    if (ended?.state !== 'done') throw new Error(`order ${orderId} is not paid and recorded (state: ${ended?.state ?? 'open'})`);
+    let signed = this.last(orderId, 'report_signed');
+    if (!signed) {
+      const reportedAt = this.now();
+      const bodyHash = recordHash(arrivedBody({ orderId, attrs: input.attrs, reportedAt }));
+      const buyerSignature = await signReport(input.buyerAccount, orderId, bodyHash);
+      const doc = arrivedDoc({ orderId, attrs: input.attrs, reportedAt, buyerSigner: input.buyerAccount.address, buyerSignature });
+      signed = { type: 'report_signed', at: iso(), orderId, doc: bytesToHex(doc) };
+      this.write(signed);
+    }
+    await this.commit(orderId, RecordKind.Arrived, hexToBytes(signed.doc));
+    const r = this.rowsOf(orderId).find((x): x is Extract<AgentRow, { type: 'committed' }> => x.type === 'committed' && x.kind === RecordKind.Arrived)!;
+    const out = { orderId, seq: r.seq, hash: r.hash, cid: r.cid };
+    if (this.last(orderId, 'complained')?.accepted) return { ...out, shopAccepted: true };
+    const url = `${this.deps.shop.apiBase.replace(/\/+$/, '')}/orders/${orderId}/complaint`;
+    const attempts = input.attempts ?? 6;
+    let error = 'not sent';
+    let status = 0;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const res = await this.fetchImpl(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ orderId, seq: String(r.seq), hash: r.hash, cid: r.cid }),
+        });
+        status = res.status;
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (res.ok) {
+          this.write({ type: 'complained', at: iso(), orderId, status, accepted: true });
+          return { ...out, shopAccepted: true };
+        }
+        error = body.error ?? `status ${res.status}`;
+        if (error !== 'complaint_not_on_topic') break;
+      } catch (e) {
+        error = e instanceof Error ? e.message.slice(0, 200) : String(e);
+      }
+      if (attempt < attempts) await this.sleep(this.deps.pollMs ?? 5000);
+    }
+    this.write({ type: 'complained', at: iso(), orderId, status, accepted: false, error });
+    this.deps.log?.warn('complaint_not_taken', { orderId, status, error });
+    return { ...out, shopAccepted: false, shopError: error };
+  }
+
   /** The approval waiting for a buyer, with what the buyer must sign. */
   pendingApproval(orderId: Hex) {
-    const waiting = this.last(orderId, 'awaiting_approval');
-    const rendered = this.last(orderId, 'rendered');
-    const probed = this.last(orderId, 'probed');
-    if (!waiting || !rendered || !probed || this.last(orderId, 'approved')) return null;
-    return { approvalId: waiting.approvalId, expiresAt: waiting.expiresAt, rendered, terms: probed.terms };
+    return pendingApprovalOf(this.rows, orderId);
   }
 
   findByApprovalId(approvalId: string): Hex | null {
-    const row = this.rows.find((r) => r.type === 'awaiting_approval' && r.approvalId === approvalId);
-    return row && 'orderId' in row ? row.orderId : null;
+    return orderOfApproval(this.rows, approvalId);
   }
 
   private endState(orderId: Hex): OrderOutcome | null {

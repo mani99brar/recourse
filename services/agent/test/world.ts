@@ -96,6 +96,7 @@ export async function world(options: { limits?: Partial<Limits> } = {}) {
     fake,
     ledger,
     ipfs,
+    pin,
     shop,
     dir,
     agentAccount,

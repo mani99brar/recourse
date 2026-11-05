@@ -39,9 +39,16 @@ export interface HederaDeployment {
   file: string;
 }
 
-/** Reads `hedera.json` (or a `*.local.json` written for anvil) from the deployments directory. */
+/**
+ * Reads `hedera.json` from the deployments directory, or the `*.local.json` written for anvil that
+ * `file` or HEDERA_LOCAL_FILE names (a bare file name).
+ */
 export function readHederaDeployment(options: { env?: Env; file?: string } = {}): HederaDeployment {
-  const file = join(deploymentsDir(options.env), options.file ?? 'hedera.json');
+  const name = options.file ?? (options.env ?? process.env).HEDERA_LOCAL_FILE ?? 'hedera.json';
+  if (name !== 'hedera.json' && !/^[A-Za-z0-9_.-]+\.local\.json$/.test(name)) {
+    throw new Error(`deployment: ${name} must be hedera.json or a bare *.local.json name`);
+  }
+  const file = join(deploymentsDir(options.env), name);
   if (!existsSync(file)) throw new Error(`deployment: ${file} does not exist yet`);
   const raw = JSON.parse(readFileSync(file, 'utf8')) as {
     chainId: number;
