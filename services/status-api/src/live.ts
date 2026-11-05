@@ -106,7 +106,7 @@ export class ViemReader implements Reader {
   }
 
   private async arbBlock(): Promise<bigint> {
-    return (await this.arb.getBlockNumber()) - BigInt(this.cfg.arbConfirmations);
+    return (await this.arb.getBlockNumber({ cacheTime: 0 })) - BigInt(this.cfg.arbConfirmations);
   }
 
   async claimsParams(): Promise<ClaimsParams> {
@@ -233,14 +233,20 @@ export class ViemReader implements Reader {
       args: [disputeId],
       blockNumber,
     });
-    const d = await this.arb.readContract({
-      address: this.cfg.klerosCore,
-      abi: klerosAbi,
-      functionName: 'disputes',
-      args: [disputeId],
-      blockNumber,
-    });
-    return { period: Number(d[2]), currentRuling: ruling, tied, overridden };
+    let period: number | null = null;
+    try {
+      const d = await this.arb.readContract({
+        address: this.cfg.klerosCore,
+        abi: klerosAbi,
+        functionName: 'disputes',
+        args: [disputeId],
+        blockNumber,
+      });
+      period = Number(d[2]);
+    } catch {
+      // a court without the public dispute getter still reports its ruling
+    }
+    return { period, currentRuling: ruling, tied, overridden };
   }
 
   async party(address: Address): Promise<PartyViews> {

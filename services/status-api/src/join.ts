@@ -197,7 +197,7 @@ export function caseViewOf(claim: FoldedClaim, events: readonly IndexedEvent[], 
       lastMessageId: c.lastMessageId,
     };
     if (kl) {
-      v.period = kl.period;
+      if (kl.period !== null) v.period = kl.period;
       v.currentRuling = kl.currentRuling;
       v.tied = kl.tied;
       v.overridden = kl.overridden;

@@ -4,6 +4,7 @@ import { toEventSelector, type Abi } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { claimsAbi } from '../src/abi/claims.js';
 import { vaultAbi } from '../src/abi/vault.js';
+import { caseAbi } from '../src/abi/case.js';
 
 const dir = join(__dirname, '../../../deployments/abi');
 
@@ -28,3 +29,4 @@ function check(name: string, mine: Abi) {
 }
 check('RecourseClaims', claimsAbi);
 check('DepositVault', vaultAbi);
+check('RecourseCase', caseAbi);

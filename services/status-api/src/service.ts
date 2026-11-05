@@ -443,7 +443,7 @@ export class StatusService {
         attempts: caseView?.attempts ?? attemptsOpened.length,
         disputeIds,
         period: kl ? kl.period : null,
-        periodName: kl ? (PERIODS[kl.period] ?? null) : null,
+        periodName: kl && kl.period !== null ? (PERIODS[kl.period] ?? null) : null,
         currentRuling: kl ? kl.currentRuling : null,
         tied: kl ? kl.tied : null,
         overridden: kl ? kl.overridden : null,

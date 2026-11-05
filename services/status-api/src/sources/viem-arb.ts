@@ -5,7 +5,7 @@ import type { ArbLogRow, ArbRpc } from './arbitrum.js';
 export function viemArbRpc(url: string, timeoutMs: number): ArbRpc {
   const c = createPublicClient({ transport: http(url, { timeout: timeoutMs }) });
   return {
-    blockNumber: () => c.getBlockNumber(),
+    blockNumber: () => c.getBlockNumber({ cacheTime: 0 }),
     blockTime: async (n) => (await c.getBlock({ blockNumber: n })).timestamp,
     finalizedBlock: async () => (await c.getBlock({ blockTag: 'finalized' })).number,
     logs: async (a: { address: Address; fromBlock: bigint; toBlock: bigint; topics?: (Hex | Hex[] | null)[] }) => {

@@ -36,7 +36,8 @@ export interface RawCaseView {
 }
 
 export interface KlerosRead {
-  period: number;
+  /** Null when the arbitrator does not expose the dispute period. */
+  period: number | null;
   currentRuling: bigint;
   tied: boolean;
   overridden: boolean;
