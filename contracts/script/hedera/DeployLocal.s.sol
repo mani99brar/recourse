@@ -42,7 +42,8 @@ import {HederaScript} from "./HederaScript.sol";
 ///
 /// A ruling is delivered locally by calling the router's permissionless
 /// `routeMessage(Any2EVMMessage{messageId, sourceChainSelector: arbSelector, sender: abi.encode(peer),
-/// data: BridgeCodec.encodeRulingBack(...), destTokenAmounts: []}, 5000, 400000, claims)`.
+/// data: BridgeCodec.encodeRulingBack(...), destTokenAmounts: []}, 5000, gasRulingBack, claims)`, with
+/// gasRulingBack from the parameter file and a fixed transaction gas limit well above it.
 /// Sends from claims are recorded by the local router (`SentToCourt` carries the message id) but
 /// delivered nowhere while the peer has no code.
 contract DeployLocal is HederaScript {

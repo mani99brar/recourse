@@ -22,7 +22,7 @@ import {HederaBase} from "./HederaBase.sol";
 abstract contract ClaimsBase is HederaBase {
     uint64 internal constant ARB_SEL = RecourseAddresses.ARBITRUM_SELECTOR;
     uint256 internal constant FEE = 3_000_000;
-    uint256 internal constant RECEIVE_GAS = 400_000;
+    uint256 internal constant RECEIVE_GAS = 150_000;
     uint256 internal constant DEPOSIT = 5_000 * USDC;
     uint256 internal constant BASKET = 120 * USDC;
     uint256 internal constant NET_LOSS = 100 * USDC;

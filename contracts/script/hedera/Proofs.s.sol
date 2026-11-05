@@ -30,7 +30,7 @@ import {HederaScript} from "./HederaScript.sol";
 contract Proofs is HederaScript {
     uint256 internal constant BASKET = 120e6;
     uint256 internal constant NET_LOSS = 100e6;
-    uint256 internal constant ROUTE_TX_GAS = 800_000;
+    uint256 internal constant ROUTE_TX_OVERHEAD = 400_000;
 
     struct Stack {
         RecourseClaims claims;
@@ -144,9 +144,10 @@ contract Proofs is HederaScript {
             );
             m.destTokenAmounts = new Client.EVMTokenAmount[](0);
             vm.broadcast(s.relayer);
-            // The router forwards exactly 400k gas and checks it has that much left, so an
-            // estimated gas limit is too low: the transaction's limit is fixed here.
-            (bool ok,,) = s.router.routeMessage{gas: ROUTE_TX_GAS}(m, 5_000, 400_000, address(s.claims));
+            // The router forwards exactly the message gas limit and checks it has that much left,
+            // so an estimated gas limit is too low: the transaction's limit is fixed here.
+            uint256 limit = _gasRulingBack("preLock");
+            (bool ok,,) = s.router.routeMessage{gas: limit + ROUTE_TX_OVERHEAD}(m, 5_000, limit, address(s.claims));
             require(ok, "ruling delivery reverted");
         } else {
             vm.broadcast(s.relayer);

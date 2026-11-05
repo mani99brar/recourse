@@ -47,7 +47,7 @@ contract RecourseClaimsTest is ClaimsBase {
         assertEq(p.handlingCap, 40_000_000);
         assertEq(p.resendGap, 30 minutes);
         assertEq(p.maxSends, 5);
-        assertEq(c.extraArgs(), BridgeCodec.extraArgsFor(300_000));
+        assertEq(c.extraArgs(), BridgeCodec.extraArgsFor(150_000));
         assertEq(c.feeToken(), address(linkToken));
         assertEq(c.link(), address(linkToken));
         assertEq(c.vault(), address(vault));

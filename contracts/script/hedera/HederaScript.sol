@@ -106,6 +106,10 @@ abstract contract HederaScript is Script {
         return _num(vm.readFile(PARAMS_FILE), stage, "gasClaimToCourt");
     }
 
+    function _gasRulingBack(string memory stage) internal view returns (uint256) {
+        return _num(vm.readFile(PARAMS_FILE), stage, "gasRulingBack");
+    }
+
     function _num(string memory json, string memory stage, string memory key) private pure returns (uint256) {
         return vm.parseJsonUint(json, string.concat(".", stage, ".", key));
     }

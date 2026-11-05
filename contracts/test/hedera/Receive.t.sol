@@ -244,7 +244,7 @@ contract ReceiveTest is ClaimsBase {
         console2.log("ccipReceive gas, valid ruling:", gasValid);
         console2.log("ccipReceive gas, refusal ignored:", gasIgnored);
         console2.log("ccipReceive gas, wrong sender:", gasBadSender);
-        assertLe(gasValid, 300_000);
-        assertLe(gasIgnored, 300_000);
+        assertLe(gasValid, 150_000);
+        assertLe(gasIgnored, 150_000);
     }
 }

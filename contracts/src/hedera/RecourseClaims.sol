@@ -41,7 +41,7 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
 
     /// @dev Amount ceiling for baskets and amount parameters, so settle sums can never overflow.
     uint256 internal constant MAX_AMOUNT = type(uint128).max;
-    uint256 internal constant DEFAULT_GAS_LIMIT = 300_000;
+    uint256 internal constant DEFAULT_GAS_LIMIT = 150_000;
 
     address public immutable link;
     address public immutable vault;

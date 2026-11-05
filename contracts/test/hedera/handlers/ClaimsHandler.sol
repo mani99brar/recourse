@@ -160,7 +160,7 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
         uint8 a = raw ? attempts % 4 : 1 + attempts % 2;
         m.data = abi.encode(RulingBack({version: 1, claimId: id, disputeId: messageNonce, ruling: r, attempts: a}));
         m.destTokenAmounts = new Client.EVMTokenAmount[](0);
-        (bool success,,) = router.routeMessage(m, 5_000, 400_000, address(claims));
+        (bool success,,) = router.routeMessage(m, 5_000, 150_000, address(claims));
         if (!success) receiveReverted = true;
         _moved(id, c.status);
     }
