@@ -153,7 +153,7 @@ contract DeployLocal is HederaScript {
     }
 
     function _deploy(Roles memory r, Setup memory s) internal returns (Deployed memory d) {
-        d.startBlock = block.number;
+        d.startBlock = block.number + 1; // anvil mines one block per transaction
         d.startTime = block.timestamp;
         VaultParams memory vp = _vaultParams("preLock");
 
@@ -211,7 +211,7 @@ contract DeployLocal is HederaScript {
     // ------------------------------------------------------------ deployments file
 
     function _writeJson(Roles memory r, Setup memory s, Deployed memory d) internal {
-        string[] memory top = new string[](16);
+        string[] memory top = new string[](17);
         top[0] = _qn("chainId", block.chainid);
         top[1] = _qr("contracts", _contractsJson(d));
         top[2] = _qr("deployOrder", '["DepositVault","RecourseClaims"]');
@@ -238,6 +238,7 @@ contract DeployLocal is HederaScript {
         top[12] = _qr("sourcify", "null");
         top[13] = _qr("local", _localJson(s, d, r));
         top[14] = _qr("roles", _rolesJson(r));
+        top[16] = _qr("batch", "false");
         top[15] = _qs("note", "local anvil run with test mocks; never a testnet deployment");
 
         string memory path = string.concat(DEPLOYMENTS_DIR, "/", s.file);

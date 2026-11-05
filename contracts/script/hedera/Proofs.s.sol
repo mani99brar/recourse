@@ -16,14 +16,14 @@ import {HederaScript} from "./HederaScript.sol";
 ///         contest window runs on the node's clock:
 ///
 ///   stage 1: a deposit in good standing; claim A filed (fee escrowed), pre-checked, contested,
-///            sent to court, ruled for the platform and settled; claim B filed and pre-checked
+///            sent to court, ruled against the platform (ruling 1) and settled; claim B filed and pre-checked
 ///            with an answer for the merchant, then left alone.
 ///   (wrapper: evm_increaseTime past the contest window, evm_mine)
 ///   stage 2: claim B closed uncontested (fee refunded to the shop), the shop withdraws its whole
 ///            credit, and the vault's books equal its USDC balance.
 ///
 ///   forge script script/hedera/Proofs.s.sol --sig "run(uint8,uint256)" 1 <tag> \
-///       --rpc-url http://127.0.0.1:8550 --broadcast --unlocked --sender <owner>
+///       --rpc-url http://127.0.0.1:8550 --broadcast --unlocked --sender <an unlocked account>
 ///
 /// `hedera.sh rehearse` runs both stages. Signing is by anvil's unlocked accounts as named in the
 /// local deployments file.
@@ -39,7 +39,6 @@ contract Proofs is HederaScript {
         CCIPLocalRouter router;
         uint64 arbSelector;
         address peer;
-        address owner;
         address relayer;
         address signer;
         address platform;
@@ -69,7 +68,6 @@ contract Proofs is HederaScript {
         s.router = CCIPLocalRouter(vm.parseJsonAddress(json, ".local.router"));
         s.arbSelector = uint64(vm.parseUint(vm.parseJsonString(json, ".local.arbSelector")));
         s.peer = vm.parseJsonAddress(json, ".local.casePeer");
-        s.owner = vm.parseJsonAddress(json, ".roles.owner");
         s.relayer = vm.parseJsonAddress(json, ".roles.rulingRelayer");
         s.signer = vm.parseJsonAddress(json, ".roles.preCheckSigner");
         s.platform = vm.parseJsonAddress(json, ".roles.platform");
@@ -97,14 +95,14 @@ contract Proofs is HederaScript {
         // Claim A: the answer favours the shop, so the platform contests.
         vm.broadcast(s.platform);
         s.claims.contest(idA);
-        vm.broadcast(s.owner);
+        vm.broadcast(s.relayer); // permissionless call; any funded account works
         s.claims.sendToCourt(idA);
         _deliverRuling(s, idA, 1, 1);
         require(s.claims.getClaim(idA).status == ClaimStatus.Ruled, "claim A not ruled");
 
         (uint256 toShop,,) = s.claims.previewSettle(idA);
         uint256 creditBefore = s.vault.creditOf(s.shop);
-        vm.broadcast(s.owner);
+        vm.broadcast(s.relayer); // permissionless call; any funded account works
         s.claims.settle(idA);
         require(s.vault.creditOf(s.shop) == creditBefore + toShop, "settle: shop credit");
         require(s.claims.getClaim(idA).status == ClaimStatus.Settled, "claim A not settled");
@@ -119,7 +117,7 @@ contract Proofs is HederaScript {
 
         uint256 fee = s.vault.escrowOf(idB).amount;
         uint256 creditBefore = s.vault.creditOf(s.shop);
-        vm.broadcast(s.owner);
+        vm.broadcast(s.relayer); // permissionless call; any funded account works
         s.claims.closeUncontested(idB);
         require(s.vault.creditOf(s.shop) == creditBefore + fee, "U2: fee not refunded");
 
