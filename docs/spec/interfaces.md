@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.3 |
+| Version | 1.4 |
 | Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -19,6 +19,7 @@ is a bug.
 | 1.1 | 2026-11-05 | `minDeposit` start value 10 USDC; `RecourseCase` additions (payable `relayRuling`, relay quotes, extra views and errors, `openCase`/`refile` return the disputeId, indexed topics). |
 | 1.2 | 2026-11-05 | Court evidence format and policy record; env names `PRECHECK_QUIET_S` and `SEND_PAUSE_WINDOWS` with `parseSendPauseWindows` and `isSendPaused`; Kleros and OffRamp ABI fragments. |
 | 1.3 | 2026-11-05 | Env name `COURT_URL_TEMPLATE`; the `GET /claims` response shape `{rows, standing?, groups?}`. |
+| 1.4 | 2026-11-05 | Docket and intake endpoints and bodies as built; deployment file shapes. |
 
 ---
 
@@ -582,8 +583,10 @@ Batch names (`openBatch`, `drawBatch`, `BatchOpened`, `BatchDrawn`, `ClosedUndra
 | status-api | `GET /claims/:claimId` | claim fields, `statusKey`, records (kind, seq, hash, cid, held), pre-check result, contest, court (attempts, disputeIds, period, currentRuling), bridge (messageId, direction, sendNo, executionState), money (as the rows, incl. `escrow {amount, fate}`), docket (writeStatus, entityKey), events (name, chain, tx, time) |
 | status-api | `GET /parties/:address` | role, balance, required, inGoodStanding, topUpDeadline, credit, escrowOpen, openClaims, exitRequestedAt |
 | status-api | `GET /search?q=` | matches on claim, order, dispute, message, tx, hash, HCS seq |
-| docket | `GET /write-status/:claimId` | `none`, `pending`, `written` (entityKey), `failed`; `store` (`arkiv` or `local`) |
-| intake | `POST /intake` | `ruleResult` (the shared fault rule), `llmTag`, `packCid` |
+| docket (port 8707) | `GET /write-status/:claimId` | `{claimId, writeStatus: none\|pending\|written\|failed, store: arkiv\|local, entityKey (0x…, local:0x… or null), attempts, lastError, errorKind: auth\|quota\|gas\|rpc\|null, updatedAt (unix s), settlementPending, reviews {platform, shop: {status: cut\|none\|pending\|sent\|failed\|skipped, tx?}}}`; 404 `{error: "unknown claim"}`, 400 on a bad id |
+| docket | `GET /docket/cases`, `GET /docket/counts`, `GET /rates?platform=\|shop=`, `GET /health` | docket rows, monthly counts, Wilson 95% fault rates (uncontested and unresolved counted beside), health |
+| intake (port 8716) | `POST /intake` | `ruleResult` (the shared fault rule), `llmTag` (null when off), `llmStatus` (`disabled` without a key), `packHash`, `packCid` (null without a pin key); 413 over the size cap, 429 per-IP limit |
+| intake | `GET /intake/stats`, `GET /health` | counters, health |
 | shop | x402 route (path set by the shop) | 402 with price and `payTo`; the agent reads both from the 402 |
 
 ---
@@ -706,3 +709,38 @@ list.
   block, so its CIDv1 is the same wherever it is pinned:
   `bafkreiczyufqa6mwis3riitqeiz6cozbk6zpgyx5xy3rpm4usqedje45im`. `POLICY.uri`, the template's
   `policyURI`, is `/ipfs/` + that CID.
+
+---
+
+## 17. Deployment files
+
+`deployments/` holds one JSON file per chain. Testnet files are committed. `*.local.json` files are written by the `DeployLocal` scripts and are gitignored. Addresses are 0x hex. Block numbers, gas and small integers are JSON numbers. Wei amounts, dispute ids, external ids and CCIP selectors are decimal strings. Writers only add keys; they never rename or move them.
+
+**`arbitrum.json`** (Arbitrum Sepolia)
+- `chainId`: 421614.
+- `contracts.case.address`.
+- `startBlock`: the L2 block from the deploy receipt.
+- `deployTx`, `deployedAt` (ISO UTC), `deployer`.
+- `constructorArgs`:
+  - `router`, `link`, `arbitrator`, `templateRegistry`, `owner`;
+  - `hederaSelector`;
+  - `params {caseDeadline, maxOpenCases, resendGap, maxSends}`;
+  - `relayGasLimit`.
+- `config`: `templateTag`, `templateVariant`, `templateTextHash`, `policyURI`, `extraArgs`, `extraData`, `numberOfChoices`.
+- `abi`.
+- `gas.<op> {used, limit}`.
+- `testCases[]`: DisputeResolver trial disputes.
+
+`arbitrum.local.json` adds `rpcUrl`, `mocks {...}`, `outside {offRampHedera, offRampArb, klerosCore, evidenceModule}` and `mocksOnly`. Read `peer()`, `locked()`, `feePool()`, `trustedRelay()` and the case states live from the contract.
+
+**`hedera.json`** (Hedera testnet): shape defined by the Hedera deploy scripts (see `contracts/script/hedera/`). `hedera.local.json` adds:
+- `chainId` 31337;
+- `startBlock`, `startTimestamp`;
+- `local {router, link, usdc, hts, prng, simulator, arbSelector, casePeer, feeToken, ccipFee}`;
+- `roles {owner, rulingRelayer, preCheckSigner, platform, shop, pool}`;
+- `mode` (0 Both, 1 OutOnly, 2 None).
+
+**`abi/`**: `RecourseClaims.json`, `DepositVault.json`, `RecourseCase.json`. Each holds the ABI array only.
+
+**`parties.json`**: see §14 and `parseParties`.
+
