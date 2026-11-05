@@ -44,7 +44,7 @@ try {
     },
     stats: () => ({ ...counts }),
   });
-  app.listen(cfg.port, () => log.info('listening', { port: cfg.port, llm: tagger.status }));
+  app.listen(cfg.port, '127.0.0.1', () => log.info('listening', { port: cfg.port, llm: tagger.status }));
 } catch (error) {
   console.error(JSON.stringify({ service: 'intake', level: 'error', event: 'boot_failed', error: error instanceof Error ? error.message : String(error) }));
   process.exit(1);

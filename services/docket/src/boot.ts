@@ -61,7 +61,7 @@ export async function startDocket(env: Record<string, string | undefined> = proc
   let lastError: string | null = null;
   const app = createDocketApp({ docket, store: store.kind, rate: { publishThreshold: cfg.publishThreshold, sampleMode: cfg.sampleMode, z: cfg.z } });
   app.get('/sources', (_req, res) => res.json({ sources: pollers.map((p) => p.name), lastError }));
-  app.listen(cfg.port, () => log.info('listening', { port: cfg.port, store: store.kind, sources: pollers.length }));
+  app.listen(cfg.port, '127.0.0.1', () => log.info('listening', { port: cfg.port, store: store.kind, sources: pollers.length }));
 
   const tick = async (): Promise<void> => {
     for (const p of pollers) {
