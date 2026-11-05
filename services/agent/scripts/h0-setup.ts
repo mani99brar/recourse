@@ -29,6 +29,7 @@ import {
   agentCompanyRegistration,
   checkAccount,
   describeCheck,
+  displayNameOf,
   readH0Ids,
   shopRegistration,
   toDataUri,
@@ -58,7 +59,7 @@ function shopUri(env: Env, payTo: string, agentId?: string): { uri: string; kind
   }
   const base = (env.SHOP_BASE_URL || `http://127.0.0.1:${env.SHOP_PORT || '8720'}`).replace(/\/+$/, '');
   const doc = shopRegistration({
-    name: env.SHOP_DISPLAY_NAME || 'Demo Shop',
+    name: displayNameOf('shop', env),
     x402BaseUrl: `${base}/x402/`,
     payTo,
     asset: addressBook.hedera.usdc.tokenId,
@@ -69,7 +70,7 @@ function shopUri(env: Env, payTo: string, agentId?: string): { uri: string; kind
 }
 
 function platformUri(env: Env, agentId?: string): { uri: string; kind: string } {
-  const doc = agentCompanyRegistration({ name: env.PLATFORM_DISPLAY_NAME || 'Demo Agent Co', ...(agentId ? { agentId } : {}) });
+  const doc = agentCompanyRegistration({ name: displayNameOf('platform', env), ...(agentId ? { agentId } : {}) });
   return { uri: toDataUri(doc), kind: 'data' };
 }
 
@@ -77,9 +78,9 @@ async function main(): Promise<number> {
   const { values } = parseArgs({
     options: { broadcast: { type: 'boolean', default: false }, 'update-uris': { type: 'boolean', default: false } },
   });
-  const plan: RunMode = { broadcast: values.broadcast ?? false, updateUris: values['update-uris'] ?? false };
+  const mode: RunMode = { broadcast: values.broadcast ?? false, updateUris: values['update-uris'] ?? false };
   const env = process.env;
-  console.log(plan.broadcast ? 'h0-setup: BROADCAST (transactions will be sent)' : 'h0-setup: dry run (nothing is sent)');
+  console.log(mode.broadcast ? 'h0-setup: BROADCAST (transactions will be sent)' : 'h0-setup: dry run (nothing is sent)');
 
   const ids = accountIdsFromEnv(env);
   const rpcUrl = env.HEDERA_RPC_URL_1;
@@ -120,7 +121,7 @@ async function main(): Promise<number> {
     { role: 'facilitator', evmAddress: facilitatorAddress, hederaAccountId: ids.facilitator, hcsWriters: [] },
   ];
   const save = () => {
-    if (plan.broadcast) writeH0Ids(out);
+    if (mode.broadcast) writeH0Ids(out);
   };
 
   // --- topic ---
@@ -131,7 +132,7 @@ async function main(): Promise<number> {
       throw new Error(`topic ${t.topicId} does not match: memo=${t.memo} submitKey=${t.hasSubmitKey} adminKey=${t.hasAdminKey} deleted=${t.deleted}`);
     }
     console.log(`topic ${t.topicId}: exists, memo ${t.memo}, no admin key, no submit key`);
-  } else if (!plan.broadcast) {
+  } else if (!mode.broadcast) {
     console.log(`topic: would create (memo ${RECORDS_TOPIC_MEMO}, no admin key, no submit key) paid by ops-hedera ${ids['ops-hedera']}`);
   } else {
     out.topic = await createTopic(ids['ops-hedera'], env);
@@ -167,8 +168,8 @@ async function main(): Promise<number> {
         args: [BigInt(current.agentId)],
       })) as string;
       console.log(`${role} agent ${current.agentId}: exists, owner ${owner}, uri ${describeUri(uri)}`);
-      if (plan.updateUris && uri !== desired.uri) {
-        if (!plan.broadcast) {
+      if (mode.updateUris && uri !== desired.uri) {
+        if (!mode.broadcast) {
           console.log(`${role}: would set agentURI to ${describeUri(desired.uri)}`);
         } else {
           const txHash = await sendSetUri(publicClient, rpcUrl, account, BigInt(current.agentId), desired.uri);
@@ -189,7 +190,7 @@ async function main(): Promise<number> {
       args: [desired.uri],
       account: account.address,
     });
-    if (!plan.broadcast) {
+    if (!mode.broadcast) {
       console.log(`${role}: would register from ${account.address} (estimated gas ${gas}), uri ${describeUri(desired.uri)}`);
       continue;
     }
@@ -199,7 +200,7 @@ async function main(): Promise<number> {
     console.log(`${role} agent ${registered.agentId}: registered, tx ${registered.txHash}`);
   }
 
-  if (!plan.broadcast) {
+  if (!mode.broadcast) {
     console.log('dry run complete; rerun with --broadcast to send');
   } else {
     save();

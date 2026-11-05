@@ -2,7 +2,7 @@
 // are passed on to the loaders by env var name.
 
 import { addressBook } from '@recourse/shared';
-import { hederaAccountOf } from '@recourse/records';
+import { displayNameOf, hederaAccountOf } from '@recourse/records';
 import { parseFacilitatorUrls } from './facilitators.js';
 
 type Env = Record<string, string | undefined>;
@@ -42,9 +42,9 @@ export function loadShopConfig(env: Env = process.env, defaults: { stateDir: str
     facilitatorUrls: parseFacilitatorUrls(env.X402_FACILITATOR_URLS),
     priceAsset,
     mirrorUrl: env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl,
-    stateDir: env.SHOP_STATE_DIR || defaults.stateDir,
+    stateDir: defaults.stateDir,
     standingCheck,
     topicId: env.HCS_RECORDS_TOPIC_ID || null,
-    displayName: env.SHOP_DISPLAY_NAME || 'Demo Shop',
+    displayName: displayNameOf('shop', env),
   };
 }

@@ -2,7 +2,7 @@
 // it is built, HEDERA_ACCOUNT_IDS is the fallback, and callers log which one they used.
 
 import { existsSync } from 'node:fs';
-import { parseHederaAccountIds, partyByRole, type HederaRole } from '@recourse/shared';
+import { hcsWritersFor, parseHederaAccountIds, partyByRole, type HederaRole, type PartyRole } from '@recourse/shared';
 import { readParties } from '@recourse/shared/node';
 
 type Env = Record<string, string | undefined>;
@@ -30,4 +30,30 @@ export function accountIdsFromEnv(env: Env = process.env): Record<HederaRole, st
   const parsed = parseHederaAccountIds(text);
   if (!parsed.ok) throw new Error(parsed.error);
   return parsed.value;
+}
+
+/** Names used before the party map exists. Fictional. */
+export const DEFAULT_DISPLAY_NAMES = { shop: 'Demo Shop', platform: 'Demo Agent Co' } as const;
+
+/** The party's display name from the party map, or the default while the map does not exist yet. */
+export function displayNameOf(role: 'shop' | 'platform', env: Env = process.env): string {
+  if (env.PARTIES_FILE && existsSync(env.PARTIES_FILE)) return partyByRole(readParties(env), role as PartyRole).displayName;
+  return DEFAULT_DISPLAY_NAMES[role];
+}
+
+/**
+ * Checks that `payer` is in the writer set for the records it will write (the platform's writers
+ * for every kind but packed, the shop's for packed). Messages from any other account are ignored
+ * by every reader, so a service must not start writing with one. Skipped, returning false, while
+ * the party map does not exist yet.
+ */
+export function assertRecordWriter(role: 'agent' | 'shop', payer: string, env: Env = process.env): boolean {
+  if (!env.PARTIES_FILE || !existsSync(env.PARTIES_FILE)) return false;
+  const kind = role === 'shop' ? 4 : 0;
+  const writers = hcsWritersFor(readParties(env), kind);
+  if (!writers.has(payer)) {
+    const owner = role === 'shop' ? 'shop' : 'platform';
+    throw new Error(`records: ${payer} is not in the ${owner} party's hcsWriters (${[...writers].join(', ') || 'none'}); its records would be ignored`);
+  }
+  return true;
 }

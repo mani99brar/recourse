@@ -4,7 +4,7 @@
 
 import { ENV_DEFAULTS } from '@recourse/shared';
 import { loadKeyBytes } from '@recourse/shared/node';
-import { hederaAccountOf } from './accounts.js';
+import { assertRecordWriter, hederaAccountOf } from './accounts.js';
 import { readH0Ids } from './h0-ids.js';
 import { SdkHcsSubmitter } from './hcs.js';
 import { ipfsOptionsFromEnv, pinDocument, pinProviderFromEnv } from './ipfs.js';
@@ -44,6 +44,7 @@ export function openRecordsClient(options: { role: WriterRole; journalPath: stri
   const provider = pinProviderFromEnv(env);
   const ipfs = ipfsOptionsFromEnv(env);
   const payer = hederaAccountOf(options.role, env).accountId;
+  assertRecordWriter(options.role, payer, env);
   const submitter = SdkHcsSubmitter.fromKeyBytes(payer, loadKeyBytes(options.role === 'agent' ? 'AGENT_KEY_FILE' : 'SHOP_KEY_FILE', env));
   const mirror = mirrorFromEnv(env);
   const reader = new TopicReader(mirror, topicId);
