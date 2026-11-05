@@ -1,0 +1,115 @@
+{
+  "canonical": [
+    {
+      "name": "record document",
+      "value": {
+        "attrs": {
+          "size": "m",
+          "brand": "Northwind",
+          "price": "95.50"
+        },
+        "kind": "asked",
+        "orderId": "0xabababababababababababababababababababababababababababababababab",
+        "v": "1"
+      },
+      "text": "{\"attrs\":{\"brand\":\"Northwind\",\"price\":\"95.50\",\"size\":\"m\"},\"kind\":\"asked\",\"orderId\":\"0xabababababababababababababababababababababababababababababababab\",\"v\":\"1\"}",
+      "sha256": "0xc20fe5ed6213c9b615ad59ec3899622c11c906874d32843b63eeb9e2a5659c91"
+    },
+    {
+      "name": "escapes, nesting and key order by UTF-16 code units",
+      "value": {
+        "\u0001": "ctl",
+        "a": [
+          "x",
+          true,
+          false,
+          [],
+          {}
+        ],
+        "b": "é\n\"q\"\\",
+        "€": "z",
+        "😀": "emoji"
+      },
+      "text": "{\"\\u0001\":\"ctl\",\"a\":[\"x\",true,false,[],{}],\"b\":\"é\\n\\\"q\\\"\\\\\",\"€\":\"z\",\"😀\":\"emoji\"}",
+      "sha256": "0x37776aa852bfaa8c654c59bda05919b74f657254111143df7a4806e7036fe18a"
+    },
+    {
+      "name": "UTF-16 code unit order differs from code point order",
+      "value": {
+        "ﬁ": "a",
+        "😀": "b"
+      },
+      "text": "{\"😀\":\"b\",\"ﬁ\":\"a\"}",
+      "sha256": "0x068414146a5fd2c8793a756a4816e72503258f84730d595b92a4854fa39ba272"
+    }
+  ],
+  "nonCanonical": [
+    {
+      "name": "whitespace",
+      "hex": "7b2261223a202262227d"
+    },
+    {
+      "name": "unsorted keys",
+      "hex": "7b2262223a2231222c2261223a2232227d"
+    },
+    {
+      "name": "number",
+      "hex": "7b2261223a317d"
+    },
+    {
+      "name": "null",
+      "hex": "7b2261223a6e756c6c7d"
+    },
+    {
+      "name": "trailing newline",
+      "hex": "7b2261223a2262227d0a"
+    },
+    {
+      "name": "byte order mark",
+      "hex": "efbbbf7b2261223a2262227d"
+    },
+    {
+      "name": "duplicate key",
+      "hex": "7b2261223a2262222c2261223a2262227d"
+    },
+    {
+      "name": "escaped slash",
+      "hex": "7b2261223a22785c2f79227d"
+    },
+    {
+      "name": "upper-case unicode escape",
+      "hex": "7b2261223a225c7530304539227d"
+    },
+    {
+      "name": "needless unicode escape",
+      "hex": "7b2261223a225c7530303431227d"
+    },
+    {
+      "name": "invalid UTF-8",
+      "hex": "7b2261223a22c3227d"
+    },
+    {
+      "name": "lone surrogate escape",
+      "hex": "7b2261223a225c7564383030227d"
+    },
+    {
+      "name": "not JSON",
+      "hex": "7b2261223a"
+    }
+  ],
+  "recordMsg": {
+    "fields": {
+      "cid": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy",
+      "hash": "0xc20fe5ed6213c9b615ad59ec3899622c11c906874d32843b63eeb9e2a5659c91",
+      "kind": 0,
+      "orderId": "0xabababababababababababababababababababababababababababababababab"
+    },
+    "text": "{\"cid\":\"bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy\",\"hash\":\"0xc20fe5ed6213c9b615ad59ec3899622c11c906874d32843b63eeb9e2a5659c91\",\"kind\":\"0\",\"orderId\":\"0xabababababababababababababababababababababababababababababababab\",\"v\":\"1\"}",
+    "sha256": "0x816f961cdbd1d8bba7ad7120150923b2d4909d5aac3dc457148ca9bca6a9394f"
+  },
+  "saltedField": {
+    "salt": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "value": "Ada Lovelace, 1 Example Street",
+    "expected": "0x2be717bf4a87b1e059344cf4a37de8620011f2daea64aa98fb275d8b0ad2760e"
+  }
+}

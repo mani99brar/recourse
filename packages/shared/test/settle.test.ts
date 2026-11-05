@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+import { drawFromDeposit, settleOutcome } from '../src/index.js';
+import { vector } from './vectors.js';
+
+const v = vector('settle.json');
+const params = {
+  handlingBase: BigInt(v.params.handlingBase),
+  handlingBps: BigInt(v.params.handlingBps),
+  handlingCap: BigInt(v.params.handlingCap),
+};
+const big = (o: Record<string, unknown>) =>
+  Object.fromEntries(Object.entries(o).map(([k, x]) => [k, ['toShop', 'refundToShop', 'toPool', 'handling'].includes(k) ? BigInt(x as string) : x]));
+
+describe('settle mirror', () => {
+  it.each(v.cases.map((c: any) => [c.name, c] as const))('%s', (_n, c: any) => {
+    const r = settleOutcome({
+      ...c.input,
+      basketUsdc: BigInt(c.input.basketUsdc),
+      netLossUsdc: BigInt(c.input.netLossUsdc),
+      feeUsdc: BigInt(c.input.feeUsdc),
+      params,
+    });
+    expect(r).toEqual(big(c.expect));
+    if (r.row !== 'not_settleable') expect(r.toPool + r.refundToShop).toBe(BigInt(c.input.feeUsdc));
+  });
+
+  it.each(v.drawFromDeposit.map((d: any) => [d.owed, d.held, d] as const))('drawFromDeposit(%s, %s)', (_o, _h, d: any) => {
+    expect(drawFromDeposit(BigInt(d.owed), BigInt(d.held))).toEqual({ paid: BigInt(d.paid), notCovered: BigInt(d.notCovered) });
+  });
+});

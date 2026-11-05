@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1 |
+| Version | 1.1 |
 | Core commit | `b3bf133` (`core: install`) |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -16,6 +16,7 @@ is a bug.
 | Version | Date | Change |
 |---|---|---|
 | 1 | 2026-11-05 | First version. |
+| 1.1 | 2026-11-05 | `minDeposit` start value 10 USDC; `RecourseCase` additions (payable `relayRuling`, relay quotes, extra views and errors, `openCase`/`refile` return the disputeId, indexed topics). |
 
 ---
 
@@ -436,7 +437,7 @@ contracts' `params()` views, never from this table.
 | `contestWindow` | 600 | 1,800 | s |
 | `courtFeeUsdc` | 3,000,000 | 3,000,000 | µUSDC |
 | `handlingBase` / `handlingBps` / `handlingCap` | 15,000,000 / 500 / 40,000,000 | same | µUSDC / bps / µUSDC |
-| `minDeposit` | set by the operator from what the faucet delivered (not in `params.json` until then) | same | µUSDC |
+| `minDeposit` | 10,000,000 (start value; adjusted once the faucet amounts are known) | same | µUSDC |
 | `topUpWindow` / `exitDelay` | 604,800 / 600 | 604,800 / 10,368,000 | s |
 | `resendGap` / `maxSends` | 1,800 / 5 | same | s / count |
 | `caseDeadline` / `maxOpenCases` | 7,200 / 10 | same | s / count |
@@ -536,7 +537,7 @@ case 8560-8569, agent and shop 8570-8579, precheck and keeper 8580-8589, docket 
 |---|---|
 | `RecourseClaims` | `ClaimFiled(claimId, orderId, shop, platform, refs, basketUsdc, netLossUsdc, filedAt)`, `PreCheckRecorded(claimId, gap, answer, packHash)`, `Contested(claimId, by)`, `ClosedUncontested(claimId, answer, toShop)`, `SentToCourt(claimId, messageId)`, `RulingReceived(claimId, disputeId, ruling, attempts, messageId)`, `RulingIgnored(claimIdOrZero, reason, messageId)`, `Settled(claimId, outcome, toShop, toPool)`, `ClaimExpired(claimId)`, `BatchOpened(batchId, pBps, k, claimIds)`, `BatchDrawn(batchId, seed)`, `ClosedUndrawn(claimId, batchId)`, `PeerSet(peer)`, `ParamsSet(...)`, `BridgeModeSet(mode, relayer)`, `ExtraArgsSet(bytes)`, `ConfigLocked()`, `PreCheckSignerSet(signer)`, `FeeTokenSet(token)`, `NativeFunded(from, amount)`, `NativeSwept(to, amount)`, `LinkSwept(to, amount)` |
 | `DepositVault` | `ClaimsBound(claims)`, `UsdcAssociated(responseCode)`, `DepositPosted(platform, from, amount, balance)`, `RequiredSet(platform, amount)`, `FeeEscrowed(claimId, shop, amount)`, `OutcomeApplied(claimId, platform, shop, paid, refund, toPool)`, `Shortfall(claimId, platform, amount)`, `CreditWithdrawn(account, amount)`, `TopUpClockStarted(platform, deadline)`, `TopUpCleared(platform)`, `ExitRequested(platform, availableAt)`, `Exited(platform, amount)` |
-| `RecourseCase` | `ClaimReceived(claimId, messageId, payload)` (messageId 0 from `relayClaim`), `ClaimDuplicate(claimId, messageId)`, `ClaimRejected(messageId, reason)`, `ClaimStale(claimId)`, `CaseOpened(claimId, disputeId, attempt)`, `DisputeRequest(arbitrator, disputeId, externalId, templateId, templateUri)`, `Ruling(arbitrator, disputeId, ruling)`, `RefileNeeded(claimId)`, `RulingFinal(claimId, disputeId, ruling, attempts)`, `RuleIgnored(disputeId, ruling)`, `RulingRelayed(claimId, disputeId, ruling, messageId)`, `FeePoolFunded(from, amount)`, `FeePoolWithdrawn(to, amount)`, `LinkSwept(to, amount)`, `TrustedRelaySet(relay)`, `PeerSet(peer)`, `ParamsSet`, `ConfigLocked`, `TemplateTextSet(textHash)`, `PolicyURISet(uri)`, `ExtraArgsSet(bytes)` |
+| `RecourseCase` | `ClaimReceived(claimId, messageId, payload)` (messageId 0 from `relayClaim`), `ClaimDuplicate(claimId, messageId)`, `ClaimRejected(messageId, reason)`, `ClaimStale(claimId)`, `CaseOpened(claimId, disputeId, attempt)`, `DisputeRequest(arbitrator, disputeId, externalId, templateId, templateUri)`, `Ruling(arbitrator, disputeId, ruling)`, `RefileNeeded(claimId)`, `RulingFinal(claimId, disputeId, ruling, attempts)`, `RuleIgnored(disputeId, ruling)`, `RulingRelayed(claimId, disputeId, ruling, messageId)`, `FeePoolFunded(from, amount)`, `FeePoolWithdrawn(to, amount)`, `LinkSwept(to, amount)`, `TrustedRelaySet(relay)`, `PeerSet(peer)`, `ParamsSet(caseDeadline, maxOpenCases, resendGap, maxSends)`, `ConfigLocked`, `TemplateTextSet(textHash)`, `PolicyURISet(uri)`, `ExtraArgsSet(bytes)` |
 
 **Who consumes what.**
 
@@ -618,7 +619,7 @@ list.
 
 ### Arbitrum: `RecourseCase`
 
-`IRecourseCase.sol` in `contracts/src/arbitrum/` is the code form of this list.
+`IRecourseCase.sol` in `contracts/src/arbitrum/` (as of `87f6c83`) is the code form of this list.
 
 - `CaseState` and `CaseView` as in sections 3 and 4; `caseOf(bytes32 claimId) returns (CaseView)`.
 - Transitions: None → Received (`_ccipReceive` or `relayClaim`, valid); Received → Opened
@@ -630,17 +631,25 @@ list.
   `openCases()`, `feePool()`, `costNow()`, `EXTRA_DATA`, `NUMBER_OF_CHOICES`, `trustedRelay()`,
   `locked()`, `peer()`, `params() returns (uint64 caseDeadline, uint16 maxOpenCases, uint64
   resendGap, uint8 maxSends)`, `extraArgs()`, `policyURI()`, `externalIdOf(bytes32 claimId, uint8
-  attempt) returns (uint256)`.
-- Functions: `openCase(bytes payload)`, `refile(bytes payload)` (the payload from
-  `ClaimReceived`), `relayRuling`, `relayClaim(bytes payload)`, `setTrustedRelay(address)`,
-  `setPeer(address)`, `setParams(uint64 caseDeadline, uint16 maxOpenCases, uint64 resendGap, uint8
-  maxSends)` before lock, `setTemplateText(string[4] parts)`.
+  attempt) returns (uint256)`, `quoteRelay`, `quoteRelayNative`, `hederaSelector()`,
+  `templateParts()`, `arbitrator()`, `templateRegistry()`, `link()`, `TEMPLATE_TAG()`.
+- Functions: `openCase(bytes payload)` and `refile(bytes payload)` (the payload from
+  `ClaimReceived`) return the disputeId (0 when the claim went Stale); `relayRuling(bytes32
+  claimId)` is payable: with no value it pays the CCIP fee in LINK held by the contract, with value
+  it pays from `msg.value` and refunds the surplus to the caller (the fee pool is never touched);
+  `relayClaim(bytes payload)`, `setTrustedRelay(address)`, `setPeer(address)`, `setParams(uint64
+  caseDeadline, uint16 maxOpenCases, uint64 resendGap, uint8 maxSends)` before lock (event
+  `ParamsSet(caseDeadline, maxOpenCases, resendGap, maxSends)`), `setTemplateText(string[4] parts)`.
+- Indexed topics: `claimId` on `ClaimReceived`, `ClaimDuplicate`, `ClaimStale`, `CaseOpened`,
+  `RefileNeeded`, `RulingFinal` and `RulingRelayed`; `messageId` on `ClaimReceived` and
+  `ClaimRejected`.
 - `ClaimRejected(messageId, reason)` reasons: 1 wrong source selector, 2 wrong sender, 3
   undecodable (`BadLength`, `DirtyWord` or `BadCode`), 4 unknown version (`BadVersion`).
 - Errors: `NotArbitrator`, `UnknownDispute`, `WrongState(bytes32 claimId, CaseState state)`,
   `HashMismatch`, `CapReached`, `FeePoolLow(uint256 have, uint256 need)`, `SendTooSoon(uint64
   nextAt)`, `MaxSendsReached`, `PeerNotSet`, `InsufficientLink(uint256 have, uint256 need)`,
   `ConfigIsLocked`, `NotTrustedRelay`, `RelayDisabled`, `ZeroAddress`, `WithdrawTooLarge`,
-  `EthSendFailed`, `ZeroGasLimit`.
+  `EthSendFailed`, `ZeroGasLimit`, `InsufficientValue(uint256 have, uint256 need)`, `BadParams`,
+  `BadPayload`.
 - `deployments/arbitrum.json` keys written separately: `testCases`, `gas`, then the deploy keys.
   ABI in `deployments/abi/RecourseCase.json`.

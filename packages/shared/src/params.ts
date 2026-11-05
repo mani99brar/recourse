@@ -13,8 +13,8 @@ export interface ParamSet {
   handlingBps: number;
   /** µUSDC. */
   handlingCap: number;
-  /** µUSDC; set by the operator from what the faucet delivered. Absent until then. */
-  minDeposit?: number;
+  /** µUSDC; start value, to be adjusted once the faucet amounts are known. */
+  minDeposit: number;
   /** s. */
   topUpWindow: number;
   /** s. */
@@ -44,6 +44,7 @@ export interface ParamSet {
 
 const shared = {
   courtFeeUsdc: 3_000_000,
+  minDeposit: 10_000_000,
   handlingBase: 15_000_000,
   handlingBps: 500,
   handlingCap: 40_000_000,
