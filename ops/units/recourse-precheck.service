@@ -1,0 +1,24 @@
+# Recourse pre-check: records the rule-based answer on each filed claim.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @NODE@ and @REPO@.
+[Unit]
+Description=Recourse pre-check: records the rule-based answer on each filed claim
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/services/precheck
+EnvironmentFile=%h/.config/recourse/recourse.env
+EnvironmentFile=-%h/.config/recourse/precheck.env
+Environment=PRECHECK_PORT=8705
+Environment=PRECHECK_STATE_DIR=%h/.local/state/recourse/precheck
+Environment=NODE_OPTIONS=--max-old-space-size=96
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/precheck
+ExecStart=@NODE@ --import tsx src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=128M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

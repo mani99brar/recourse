@@ -1,0 +1,24 @@
+# Recourse intake: tags public feedback text.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @NODE@ and @REPO@.
+[Unit]
+Description=Recourse intake: tags public feedback text
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/services/intake
+EnvironmentFile=%h/.config/recourse/recourse.env
+EnvironmentFile=-%h/.config/recourse/intake.env
+Environment=INTAKE_PORT=8716
+Environment=INTAKE_STATE_DIR=%h/.local/state/recourse/intake
+Environment=NODE_OPTIONS=--max-old-space-size=64
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/intake
+ExecStart=@NODE@ --import tsx src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=96M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

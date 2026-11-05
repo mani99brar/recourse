@@ -1,0 +1,24 @@
+# Recourse docket: fault rates published to Arkiv.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @NODE@ and @REPO@.
+[Unit]
+Description=Recourse docket: fault rates published to Arkiv
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/services/docket
+EnvironmentFile=%h/.config/recourse/recourse.env
+EnvironmentFile=-%h/.config/recourse/docket.env
+Environment=DOCKET_PORT=8707
+Environment=DOCKET_STATE_DIR=%h/.local/state/recourse/docket
+Environment=NODE_OPTIONS=--max-old-space-size=96
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/docket
+ExecStart=@NODE@ --import tsx src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=128M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,23 @@
+# Recourse demo shop: x402 seller and claim filer.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @NODE@ and @REPO@.
+[Unit]
+Description=Recourse demo shop: x402 seller and claim filer
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/services/shop
+EnvironmentFile=%h/.config/recourse/recourse.env
+EnvironmentFile=-%h/.config/recourse/shop.env
+Environment=SHOP_PORT=8720
+Environment=NODE_OPTIONS=--max-old-space-size=96
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/shop
+ExecStart=@NODE@ --import tsx src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=128M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

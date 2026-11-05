@@ -1,0 +1,24 @@
+# Recourse status API: claims, chain state and documents for the web app.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @NODE@ and @REPO@.
+[Unit]
+Description=Recourse status API: claims, chain state and documents for the web app
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/services/status-api
+EnvironmentFile=%h/.config/recourse/recourse.env
+EnvironmentFile=-%h/.config/recourse/status-api.env
+Environment=STATUS_API_PORT=8787
+Environment=STATUS_API_STATE_DIR=%h/.local/state/recourse/status-api
+Environment=NODE_OPTIONS=--max-old-space-size=120
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/status-api
+ExecStart=@NODE@ --import tsx src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=160M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

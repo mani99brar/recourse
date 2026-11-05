@@ -1,0 +1,24 @@
+# Recourse keeper: moves claims between Hedera and Arbitrum Sepolia.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @NODE@ and @REPO@.
+[Unit]
+Description=Recourse keeper: moves claims between Hedera and Arbitrum Sepolia
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/services/keeper
+EnvironmentFile=%h/.config/recourse/recourse.env
+EnvironmentFile=-%h/.config/recourse/keeper.env
+Environment=KEEPER_PORT=8706
+Environment=KEEPER_STATE_DIR=%h/.local/state/recourse/keeper
+Environment=NODE_OPTIONS=--max-old-space-size=144
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/keeper
+ExecStart=@NODE@ --import tsx src/main.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=192M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

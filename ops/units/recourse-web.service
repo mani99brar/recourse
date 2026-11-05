@@ -1,0 +1,23 @@
+# Recourse web: serves the built apps/web and forwards /api to the status API.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @NODE@ and @REPO@.
+[Unit]
+Description=Recourse web: static files for apps/web and the /api forward
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/ops/units
+EnvironmentFile=%h/.config/recourse/recourse.env
+EnvironmentFile=-%h/.config/recourse/web.env
+Environment=WEB_PORT=8788
+Environment=WEB_DIST_DIR=@REPO@/apps/web/dist
+Environment=NODE_OPTIONS=--max-old-space-size=32
+ExecStart=@NODE@ web-server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=48M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
