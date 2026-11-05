@@ -53,7 +53,7 @@ export interface Harness {
   reader: Reader & { calls: string[] };
 }
 
-export function harness(opts: { store?: Store; reader?: Reader | null; now?: number; fetch?: FetchLike; parties?: Parties | null; cfg?: Partial<Config> } = {}): Harness {
+export function harness(opts: { store?: Store; reader?: Reader | null; now?: number; fetch?: FetchLike; parties?: Parties | null; cfg?: Partial<Config>; deployments?: Partial<Deployments> } = {}): Harness {
   const store = opts.store ?? new Store();
   const clock = { now: opts.now ?? 1_700_000_100 };
   const reader = (opts.reader ?? fakeReader()) as Reader & { calls: string[] };
@@ -64,7 +64,7 @@ export function harness(opts: { store?: Store; reader?: Reader | null; now?: num
   const svc = new StatusService({
     store,
     cfg,
-    deployments: testDeployments(),
+    deployments: testDeployments(opts.deployments),
     reader: opts.reader === null ? null : reader,
     parties: () => parties,
     docs,
