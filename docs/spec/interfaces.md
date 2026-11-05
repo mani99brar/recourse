@@ -8,7 +8,7 @@ is a bug.
 | | |
 |---|---|
 | Version | 1.2 |
-| Core commit | `b3bf133` (`core: install`) |
+| Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
 **Change log**
