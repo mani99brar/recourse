@@ -122,6 +122,17 @@ export class Alerter {
     return this.last.get(dedupeKey(kind, claimId));
   }
 
+  /** The most recent alert raised for a claim, sent or not. */
+  latestFor(claimId: Hex): { kind: AlertKind; raisedAt: number } | undefined {
+    const prefix = `${claimId.toLowerCase()}|`;
+    let best: { kind: AlertKind; raisedAt: number } | undefined;
+    for (const [key, at] of this.last) {
+      if (!key.startsWith(prefix)) continue;
+      if (best === undefined || at > best.raisedAt) best = { kind: key.slice(prefix.length) as AlertKind, raisedAt: at };
+    }
+    return best;
+  }
+
   /** Raises an alert unless the same (claim, kind) was raised inside the dedupe window. */
   raise(alert: Alert): boolean {
     const now = this.now();

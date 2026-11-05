@@ -137,7 +137,7 @@ export function applyEvent(book: Map<string, KeeperClaim>, e: ChainEvent, ctx: A
         c.rulingReceivedAt ??= e.time;
         break;
       case 'RulingIgnored':
-        (c.rulingIgnored ??= []).push({ reason: num(a.reason), at: e.time });
+        (c.rulingIgnored ??= []).push({ reason: num(a.reason), at: e.time, messageId: hex(a.messageId) });
         break;
       case 'Settled':
         c.terminal = 'Settled';
@@ -305,6 +305,21 @@ export class ClaimBook {
     this.journal?.append({ t: 'state', claimId: c.claimId, phase: phaseOf(c), claim: JSON.parse(JSON.stringify(c)) });
   }
 
+  private readonly texts = new Map<string, string>();
+
+  /** Journals built evidence once and records its hash on the claim. */
+  saveEvidence(c: KeeperClaim, attempt: number, text: string, sha256: Hex): void {
+    this.journal?.append({ t: 'evidence', claimId: c.claimId, attempt, sha256, text });
+    this.texts.set(`${c.claimId}:${attempt}`, text);
+    c.evidence = { ...(c.evidence ?? {}), [String(attempt)]: { sha256 } };
+    this.save(c);
+  }
+
+  /** The evidence text built for an attempt, if any. */
+  evidenceText(claimId: Hex, attempt: number): string | undefined {
+    return this.texts.get(`${claimId.toLowerCase()}:${attempt}`);
+  }
+
   /** Rebuilds from replayed records. Terminal claims come back as they were and are never re-checked. */
   load(records: readonly JournalRecord[]): void {
     for (const r of records) {
@@ -316,6 +331,8 @@ export class ClaimBook {
         if (applyEvent(this.claims, e, this.applyCtx()) === undefined) this.globalEvents.push(e);
       } else if (r.t === 'state' && typeof r.claimId === 'string' && r.claim) {
         this.claims.set(r.claimId, r.claim as unknown as KeeperClaim);
+      } else if (r.t === 'evidence' && typeof r.claimId === 'string' && typeof r.text === 'string') {
+        this.texts.set(`${r.claimId}:${String(r.attempt)}`, r.text);
       }
     }
   }

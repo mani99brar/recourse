@@ -3,6 +3,7 @@
 
 import type { Address, Hex } from 'viem';
 import type { BridgeMode, CaseView, Claim, ExecutionState } from '@recourse/shared';
+import type { JournalRecord } from './journal.js';
 
 export type Chain = 'hedera' | 'arbitrum';
 
@@ -91,6 +92,11 @@ export type CallResult =
 
 /** Everything the machine needs from the two chains. */
 export interface Chains {
+  /**
+   * Restores sender state (open intents and their results) from the replayed journal. Called once
+   * at start, before any read or send.
+   */
+  load(records: readonly JournalRecord[]): void;
   /** Contract address of the Arbitrum case contract and the Arbitrum chain id (for external ids). */
   readonly caseAddress: Address;
   readonly arbChainId: number;
@@ -202,7 +208,7 @@ export interface KeeperClaim {
   refileNeededAt?: number;
   rulingFinal?: { disputeId: string; ruling: number; attempts: number; at: number };
   rulingReceivedAt?: number;
-  rulingIgnored?: { reason: number; at: number }[];
+  rulingIgnored?: { reason: number; at: number; messageId?: Hex }[];
   staleAt?: number;
   terminal?: 'Settled' | 'Closed' | 'Expired';
   terminalAt?: number;
@@ -212,8 +218,11 @@ export interface KeeperClaim {
   autoHold?: { reason: string; atMs: number };
   /** One-shot markers: nudges sent, once-only alerts. */
   done: string[];
-  /** Built evidence per attempt: the exact string to post and its SHA-256. */
-  evidence?: Record<string, { text: string; sha256: Hex }>;
+  /**
+   * Built evidence per attempt, by SHA-256. The text itself is journaled once as its own record
+   * (see ClaimBook.evidenceText) so state snapshots stay small.
+   */
+  evidence?: Record<string, { sha256: Hex }>;
   /** Last read of the dispute's ruling. */
   lastRuling?: { attempt: number; ruling: string; tied: boolean; overridden: boolean; at: number };
   lastError?: string;
