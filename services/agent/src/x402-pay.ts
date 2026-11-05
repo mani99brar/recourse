@@ -121,17 +121,32 @@ export async function payExactly(input: {
 }): Promise<PaidResponse> {
   const { approved } = input;
   let signed: SignedPayment | null = null;
+  // The payment wrapper may swallow or re-wrap errors from the selector and signer; keep the refusal.
+  let refused: PaymentRefused | null = null;
+  const refuse = (e: PaymentRefused): never => {
+    refused = e;
+    throw e;
+  };
 
   const guardedSigner: ClientHederaSigner = {
     accountId: input.signer.accountId,
     createPartiallySignedTransferTransaction: async (requirements) => {
-      assertSameTerms(termsOf(requirements), approved);
+      try {
+        assertSameTerms(termsOf(requirements), approved);
+      } catch (e) {
+        refuse(e as PaymentRefused);
+      }
       const tx = await input.signer.createPartiallySignedTransferTransaction(requirements);
       const info = inspectHederaTransaction(tx);
-      checkSignedTransfer(info, input.signer.accountId, approved);
+      try {
+        checkSignedTransfer(info, input.signer.accountId, approved);
+      } catch (e) {
+        if (e instanceof PaymentRefused) refuse(e);
+        throw e;
+      }
       const feePayer = String(requirements.extra.feePayer);
       if (info.transactionIdAccountId !== feePayer) {
-        throw new PaymentRefused('fee_payer_mismatch', 'signed transaction is not paid by the facilitator fee payer');
+        refuse(new PaymentRefused('fee_payer_mismatch', 'signed transaction is not paid by the facilitator fee payer'));
       }
       const s = { txId: info.transactionId, feePayer };
       input.onSigned(s);
@@ -143,7 +158,7 @@ export async function payExactly(input: {
   const client = new x402Client((_version, requirements) => {
     const match = requirements.filter((r) => sameTerms(termsOf(r), approved));
     if (match.length !== 1) {
-      throw new PaymentRefused('terms_changed', 'the 402 no longer offers the approved amount, asset and payTo');
+      refuse(new PaymentRefused('terms_changed', 'the 402 no longer offers the approved amount, asset and payTo'));
     }
     return match[0]!;
   });
@@ -155,13 +170,39 @@ export async function payExactly(input: {
   const httpClient = new x402HTTPClient(client);
   const payingFetch = wrapFetchWithPayment(input.fetchImpl ?? fetch, httpClient);
 
-  const res = await payingFetch(input.url, input.init);
+  let res: Response;
+  try {
+    res = await payingFetch(input.url, input.init);
+  } catch (error) {
+    if (refused) throw refused;
+    if (!signed) {
+      // Refused inside the payment wrapper (spend controls) before signing: read the terms again.
+      const current = await probe402(input.url, input.init, input.fetchImpl ?? fetch).catch(() => null);
+      if (current && !current.paymentRequired.accepts.some((r) => sameTerms(termsOf(r), approved))) {
+        throw new PaymentRefused('terms_changed', 'the 402 no longer offers the approved amount, asset and payTo');
+      }
+    }
+    throw error;
+  }
+  if (refused) throw refused;
   const text = await res.text();
   let body: unknown = text;
   try {
     body = text ? JSON.parse(text) : null;
   } catch {
     // keep the raw text
+  }
+  if (res.status === 402 && !signed) {
+    // Nothing was signed; a 402 whose terms no longer match the approval is a change of terms.
+    let offered: PaymentRequirements[] = [];
+    try {
+      offered = httpClient.getPaymentRequiredResponse((name) => res.headers.get(name), body).accepts;
+    } catch {
+      offered = [];
+    }
+    if (offered.length > 0 && !offered.some((r) => sameTerms(termsOf(r), approved))) {
+      throw new PaymentRefused('terms_changed', 'the 402 no longer offers the approved amount, asset and payTo');
+    }
   }
   let settlement: SettleResponse | null = null;
   try {
