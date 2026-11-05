@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.4 |
+| Version | 1.5 |
 | Install commit | `b3bf133` (`core: install`); the change log below dates every later version |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -20,6 +20,7 @@ is a bug.
 | 1.2 | 2026-11-05 | Court evidence format and policy record; env names `PRECHECK_QUIET_S` and `SEND_PAUSE_WINDOWS` with `parseSendPauseWindows` and `isSendPaused`; Kleros and OffRamp ABI fragments. |
 | 1.3 | 2026-11-05 | Env name `COURT_URL_TEMPLATE`; the `GET /claims` response shape `{rows, standing?, groups?}`. |
 | 1.4 | 2026-11-05 | Docket and intake endpoints and bodies as built; deployment file shapes. |
+| 1.5 | 2026-11-05 | `RecourseCase` error `TemplateNotSet()` (openCase and refile revert until template text and policy URI are set); refused relay refunds go to the fee pool. |
 
 ---
 
