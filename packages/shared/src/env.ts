@@ -62,6 +62,8 @@ export const ENV_NAMES = [
   'KEEPER_ARB_CONFIRMATIONS',
   'KEEPER_POLL_MS',
   'KEEPER_AUTO_MANUAL_EXEC',
+  'PRECHECK_QUIET_S',
+  'SEND_PAUSE_WINDOWS',
   // docket and intake
   'DOCKET_PORT',
   'DOCKET_STATE_DIR',
@@ -113,6 +115,8 @@ export const VITE_ENV_NAMES = ['VITE_STATUS_API_URL', 'VITE_ARKIV_PUBLIC_RPC_URL
 export const ENV_DEFAULTS: Partial<Record<EnvName, string>> = {
   HEDERA_MIRROR_URL: 'https://testnet.mirrornode.hedera.com',
   SUITE_LOCK_FILE: '/home/agentops/.local/state/recourse/suite.lock',
+  PRECHECK_QUIET_S: '120',
+  SEND_PAUSE_WINDOWS: '',
 };
 
 type Env = Record<string, string | undefined>;
@@ -143,4 +147,47 @@ export function readEnv<N extends EnvName>(
   }
   if (missing.length > 0) throw new Error(`readEnv: missing ${missing.join(', ')}`);
   return out;
+}
+
+export type PauseChain = 'hedera' | 'arbitrum';
+
+/** A span in which no transaction is sent to `chain`: `from` ≤ now < `to`, unix seconds. */
+export interface SendPauseWindow {
+  chain: PauseChain;
+  from: number;
+  to: number;
+}
+
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
+function isoSeconds(text: string, item: string): number {
+  if (!ISO_UTC.test(text)) throw new Error(`SEND_PAUSE_WINDOWS: "${item}" needs UTC ISO times like 2026-11-06T17:45:00Z`);
+  const ms = Date.parse(text);
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 19) !== text.slice(0, 19)) {
+    throw new Error(`SEND_PAUSE_WINDOWS: "${item}" has an invalid time`);
+  }
+  return Math.floor(ms / 1000);
+}
+
+/**
+ * Parses SEND_PAUSE_WINDOWS: a comma list of `<chain>@<fromISO>/<toISO>`, chain `hedera` or
+ * `arbitrum`, times in UTC with `Z`. Empty or blank text means no windows.
+ */
+export function parseSendPauseWindows(text: string): SendPauseWindow[] {
+  if (text.trim() === '') return [];
+  return text.split(',').map((raw) => {
+    const item = raw.trim();
+    const m = /^(hedera|arbitrum)@([^/]+)\/([^/]+)$/.exec(item);
+    if (m === null) throw new Error(`SEND_PAUSE_WINDOWS: "${item}" is not <hedera|arbitrum>@<fromISO>/<toISO>`);
+    const from = isoSeconds(m[2]!, item);
+    const to = isoSeconds(m[3]!, item);
+    if (from >= to) throw new Error(`SEND_PAUSE_WINDOWS: "${item}" ends before it starts`);
+    return { chain: m[1] as PauseChain, from, to };
+  });
+}
+
+/** True when `nowSec` falls inside a window for `chain`. */
+export function isSendPaused(windows: readonly SendPauseWindow[], chain: PauseChain, nowSec: number | bigint): boolean {
+  const now = Number(nowSec);
+  return windows.some((w) => w.chain === chain && w.from <= now && now < w.to);
 }

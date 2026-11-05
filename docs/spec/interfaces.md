@@ -7,7 +7,7 @@ is a bug.
 
 | | |
 |---|---|
-| Version | 1.1 |
+| Version | 1.2 |
 | Core commit | `b3bf133` (`core: install`) |
 | Edits | Operator only from here. Ask for a change; do not edit in place. |
 
@@ -17,6 +17,7 @@ is a bug.
 |---|---|---|
 | 1 | 2026-11-05 | First version. |
 | 1.1 | 2026-11-05 | `minDeposit` start value 10 USDC; `RecourseCase` additions (payable `relayRuling`, relay quotes, extra views and errors, `openCase`/`refile` return the disputeId, indexed topics). |
+| 1.2 | 2026-11-05 | Court evidence format and policy record; env names `PRECHECK_QUIET_S` and `SEND_PAUSE_WINDOWS` with `parseSendPauseWindows` and `isSendPaused`. |
 
 ---
 
@@ -44,7 +45,7 @@ is a bug.
 | `params.ts` | `PARAMS` (`preLock`, `locked`), `ParamSet`, `handlingOf` |
 | `addresses.ts` | `addressBook`, `chainSelectorOf`, `HEDERA_TESTNET_CHAIN_ID`, `ARBITRUM_SEPOLIA_CHAIN_ID` |
 | `parties.ts` | `Party`, `Parties`, `PartyRole`, `PARTY_ROLES`, `HEDERA_ROLES`, `parseParties`, `partyByRole`, `partiesByRole`, `partyByAddress`, `hcsWritersFor`, `parseHederaAccountIds` |
-| `env.ts` | `ENV_NAMES`, `EnvName`, `VITE_ENV_NAMES`, `ENV_DEFAULTS`, `readEnv` |
+| `env.ts` | `ENV_NAMES`, `EnvName`, `VITE_ENV_NAMES`, `ENV_DEFAULTS`, `readEnv`, `parseSendPauseWindows`, `isSendPaused`, `SendPauseWindow`, `PauseChain` |
 | `abi/erc8004.ts` | `erc8004IdentityAbi`, `erc8004ReputationAbi` |
 
 | Solidity (`contracts/src/shared/`) | Holds |
@@ -518,10 +519,23 @@ by the core owner.
 | Parties, deployments, tooling | `HEDERA_ACCOUNT_IDS`, `DEPLOYMENTS_DIR` (absolute), `PARTIES_FILE` (absolute), `SUITE_LOCK_FILE` |
 | Contract deploy inputs | `RULING_RELAYER_ADDRESS`, `PRECHECK_SIGNER_ADDRESS`, `POOL_ADDRESS`, `ANVIL_PORT_HEDERA` |
 | Agent and shop | `AGENT_SPEND_LIMIT_USDC` (µUSDC), `AGENT_MAX_ORDER_USDC`, `AGENT_DAILY_CAP_USDC`, `AGENT_APPROVAL_TTL_SEC`, `PRICE_ASSET`, `SHOP_PUBLIC_URL`, `SHOP_BASE_URL`, `SHOP_PORT`, `AGENT_PORT`, `SHOP_STANDING_CHECK` |
-| Precheck and keeper | `PRECHECK_STATE_DIR`, `PRECHECK_PORT`, `KEEPER_STATE_DIR`, `KEEPER_PORT`, `KEEPER_REFILE_HOLD_MIN`, `KEEPER_ARB_CONFIRMATIONS`, `KEEPER_POLL_MS`, `KEEPER_AUTO_MANUAL_EXEC` |
+| Precheck and keeper | `PRECHECK_STATE_DIR`, `PRECHECK_PORT`, `KEEPER_STATE_DIR`, `KEEPER_PORT`, `KEEPER_REFILE_HOLD_MIN`, `KEEPER_ARB_CONFIRMATIONS`, `KEEPER_POLL_MS`, `KEEPER_AUTO_MANUAL_EXEC`, `PRECHECK_QUIET_S`, `SEND_PAUSE_WINDOWS` |
 | Docket and intake | `DOCKET_PORT`, `DOCKET_STATE_DIR`, `DOCKET_STORE`, `DOCKET_PUBLISH_THRESHOLD`, `DOCKET_SAMPLE_MODE`, `DOCKET_Z`, `DOCKET_POLL_SECONDS`, `DOCKET_RETRY_SECONDS`, `DOCKET_RETRY_MAX`, `ARKIV_LIFETIME_DAYS`, `ARKIV_PAGE_SIZE`, `ARKIV_MIN_TGLM`, `SCHEME_MIN_HBAR`, `REVIEWS_ENABLED`, `REVIEW_VALUE_FAULT`, `REVIEW_VALUE_CLEAR`, `REVIEW_TAG1`, `INTAKE_PORT`, `INTAKE_CORS_ORIGIN`, `INTAKE_MAX_BYTES`, `INTAKE_RATE_PER_MIN`, `INTAKE_LLM_TIMEOUT_MS`, `INTAKE_LLM_PAUSE_MIN` |
 | Status API | `STATUS_API_PORT`, `STATUS_API_STATE_DIR`, `POLL_MS`, `ARB_CONFIRMATIONS`, `ARB_LOG_CHUNK`, `SOURCE_TIMEOUT_MS`, `VIEW_CACHE_MS`, `LAG_WARN_S_HEDERA`, `LAG_WARN_S_ARB`, `LAG_WARN_S_HCS`, `IPFS_RATE_PER_MIN`, `DOCKET_URL`, `INTAKE_URL`, `AGENT_URL`, `PRECHECK_URL`, `WEB_ORIGIN` |
 | Web (public, build time) | `VITE_STATUS_API_URL`, `VITE_ARKIV_PUBLIC_RPC_URL`, `VITE_POLL_MS` |
+
+Defaults in `ENV_DEFAULTS`: `HEDERA_MIRROR_URL` `https://testnet.mirrornode.hedera.com`,
+`SUITE_LOCK_FILE` `/home/agentops/.local/state/recourse/suite.lock`, `PRECHECK_QUIET_S` `120`,
+`SEND_PAUSE_WINDOWS` empty.
+
+- `PRECHECK_QUIET_S`: seconds a record topic must stay quiet before a missing record counts as
+  final.
+- `SEND_PAUSE_WINDOWS`: comma list of `<chain>@<fromISO>/<toISO>`, chain `hedera` or `arbitrum`,
+  times UTC with `Z` (for example `hedera@2026-11-06T17:45:00Z/2026-11-06T18:55:00Z`). No
+  transaction is sent to that chain while `from` ≤ now < `to`. `parseSendPauseWindows(text)`
+  returns `{chain, from, to}` in unix seconds (empty text gives no windows) and throws
+  `SEND_PAUSE_WINDOWS: ...` on any bad item; `isSendPaused(windows, chain, nowSec)` checks one
+  instant. Precheck and keeper read both names.
 
 Local anvil port ranges, per area: shared core 8540-8549, Hedera contracts 8550-8559, Arbitrum
 case 8560-8569, agent and shop 8570-8579, precheck and keeper 8580-8589, docket and intake
@@ -653,3 +667,36 @@ list.
   `BadPayload`.
 - `deployments/arbitrum.json` keys written separately: `testCases`, `gas`, then the deploy keys.
   ABI in `deployments/abi/RecourseCase.json`.
+
+### Court: evidence and policy (`packages/court`)
+
+`packages/court/src/evidence.ts` and `policy.ts` (as of `7ea0bc8`) are the code form of this list.
+
+- `buildEvidence(input) returns EvidenceBundle` is pure: same input, same bytes. Input: the
+  decoded `ClaimToCourt`, `attempt` (1 or 2), `externalId` (`externalIdUint`), the documents for
+  the held slots (`{kind, bytes, cid?, hcsSeq?}`), the `precheck-result` document (`{bytes, cid?}`),
+  optional `notice` and optional `fileURI`.
+- `EvidenceBundle {version "1", claimId, attempt, externalId, evidence, byteLength, sha256,
+  slots}`. `evidence` is the exact string posted to `EvidenceModule.submitEvidence(externalId,
+  evidence)`; `byteLength` and `sha256` are over its UTF-8 bytes.
+- `evidence` is inline JSON `{name, description, fileURI?}` (`fileURI` is an optional
+  `/ipfs/<cid>` of a pinned copy). `description` is Markdown and holds, in order: a header line,
+  the pre-check finding, one section per record kind in order (a held record shows its SHA-256,
+  HCS sequence and CID, then the document byte for byte in a fenced block; an absent or rejected
+  one is a line), and the `precheck-result` document byte for byte with its SHA-256.
+- Cap: 16 KB = 16,384 UTF-8 bytes (`EVIDENCE_MAX_BYTES`); larger throws `EvidenceTooLarge`.
+- Checks, in order: SHA-256 of the `precheck-result` document equals the payload `packHash`; each
+  held document's SHA-256 equals that slot's `hcsHash` in the pre-check document. A mismatch, or a
+  held slot with no document, throws `EvidenceHashMismatch(kind)`. A held slot whose
+  `refs.hashes[k]` is zero or differs is marked `fromIndex`.
+- Fields read from the `precheck-result` document (anything else is ignored; a bad shape throws
+  `EvidenceInputError`): `records`, exactly 6 entries in record-kind order, each `{outcome:
+  "held" | "absent" | "rejected", hcsHash (32-byte hex, required when held), cid?, seq? (decimal
+  string), reason?}`; `gap`, `answer`, `reasonKey` (strings; `result.gap`, `result.answer`,
+  `result.reasonKey` are read when the top-level field is absent); `result.step` and
+  `result.flaggedCells[] {record, attribute}`.
+- Policy: `packages/court/policy/policy-v1.md`, 5,769 bytes, SHA-256
+  `0x59c50b00799644b71422702233e13b2157b2f362fdbe3717b394940834939d43`, stored as one raw IPFS
+  block, so its CIDv1 is the same wherever it is pinned:
+  `bafkreiczyufqa6mwis3riitqeiz6cozbk6zpgyx5xy3rpm4usqedje45im`. `POLICY.uri`, the template's
+  `policyURI`, is `/ipfs/` + that CID.

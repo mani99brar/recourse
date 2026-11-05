@@ -1,5 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { PARAMS, handlingOf, readEnv, ENV_NAMES } from '../src/index.js';
+import {
+  PARAMS,
+  handlingOf,
+  readEnv,
+  ENV_NAMES,
+  VITE_ENV_NAMES,
+  isSendPaused,
+  parseSendPauseWindows,
+} from '../src/index.js';
 import { vector } from './vectors.js';
 
 describe('params', () => {
@@ -36,5 +46,48 @@ describe('readEnv', () => {
   });
   it('lists every name once', () => {
     expect(new Set(ENV_NAMES).size).toBe(ENV_NAMES.length);
+  });
+  it('.env.example lists exactly the env names and the VITE names, with no values', () => {
+    const text = readFileSync(fileURLToPath(new URL('../../../.env.example', import.meta.url)), 'utf8');
+    const lines = text.split('\n').filter((l) => l.trim() !== '' && !l.startsWith('#'));
+    expect(lines.every((l) => /^[A-Z0-9_]+=$/.test(l))).toBe(true);
+    expect(lines.map((l) => l.slice(0, -1)).sort()).toEqual([...ENV_NAMES, ...VITE_ENV_NAMES].sort());
+  });
+  it('the precheck quiet time and the pause windows are optional', () => {
+    expect(readEnv(['PRECHECK_QUIET_S', 'SEND_PAUSE_WINDOWS'], { env: {} })).toEqual({
+      PRECHECK_QUIET_S: '120',
+      SEND_PAUSE_WINDOWS: '',
+    });
+  });
+});
+
+describe('send pause windows', () => {
+  const at = (iso: string) => Date.parse(iso) / 1000;
+  it('parses a comma list and checks [from, to) per chain', () => {
+    const w = parseSendPauseWindows(
+      'hedera@2026-11-06T17:45:00Z/2026-11-06T18:55:00Z, arbitrum@2026-11-07T00:00:00Z/2026-11-07T00:30:00.5Z',
+    );
+    expect(w).toEqual([
+      { chain: 'hedera', from: at('2026-11-06T17:45:00Z'), to: at('2026-11-06T18:55:00Z') },
+      { chain: 'arbitrum', from: at('2026-11-07T00:00:00Z'), to: at('2026-11-07T00:30:00Z') },
+    ]);
+    expect(isSendPaused(w, 'hedera', at('2026-11-06T17:44:59Z'))).toBe(false);
+    expect(isSendPaused(w, 'hedera', at('2026-11-06T17:45:00Z'))).toBe(true);
+    expect(isSendPaused(w, 'hedera', BigInt(at('2026-11-06T18:54:59Z')))).toBe(true);
+    expect(isSendPaused(w, 'hedera', at('2026-11-06T18:55:00Z'))).toBe(false);
+    expect(isSendPaused(w, 'arbitrum', at('2026-11-06T18:00:00Z'))).toBe(false);
+    expect(parseSendPauseWindows('')).toEqual([]);
+    expect(parseSendPauseWindows('  ')).toEqual([]);
+  });
+  it.each([
+    'hedera@2026-11-06T17:45:00Z',
+    'base@2026-11-06T17:45:00Z/2026-11-06T18:55:00Z',
+    'hedera@2026-11-06T17:45:00/2026-11-06T18:55:00Z',
+    'hedera@2026-11-06T17:45:00+01:00/2026-11-06T18:55:00Z',
+    'hedera@2026-02-30T17:45:00Z/2026-03-06T18:55:00Z',
+    'hedera@2026-11-06T18:55:00Z/2026-11-06T18:55:00Z',
+    'hedera@2026-11-06T17:45:00Z/2026-11-06T18:55:00Z,',
+  ])('rejects %s', (text) => {
+    expect(() => parseSendPauseWindows(text)).toThrow(/^SEND_PAUSE_WINDOWS: /);
   });
 });
