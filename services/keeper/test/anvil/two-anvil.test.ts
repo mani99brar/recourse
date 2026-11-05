@@ -274,10 +274,10 @@ function useStack(o: { mode: 'Both' | 'None'; hederaPort: number; arbPort: numbe
   const giveRuling = (disputeId: bigint, ruling: bigint) =>
     act(A_URL, { chain: null, account: ACCOUNT0, address: s.arb.klerosCore, abi: mockArbitrator, functionName: 'giveRuling', args: [disputeId, ruling] });
 
-  function journalCalls(): { calls: string[]; intents: JournalRecord[]; results: JournalRecord[] } {
+  function journalCalls(): { calls: string[]; intents: JournalRecord[]; results: JournalRecord[]; events: JournalRecord[] } {
     const records = replayJournal(stateDir).records;
     const intents = records.filter((r) => r.t === 'intent');
-    return { calls: intents.map((r) => String(r.call)), intents, results: records.filter((r) => r.t === 'result') };
+    return { calls: intents.map((r) => String(r.call)), intents, results: records.filter((r) => r.t === 'result'), events: records.filter((r) => r.t === 'event') };
   }
 
   return { s, makeKeeper, until, claimStatus, caseOf, fileAndContest, giveRuling, journalCalls };
@@ -317,7 +317,9 @@ describe('keeper on two anvil nodes, both legs over the local CCIP relay', () =>
 
     // One transaction per step, all from the keeper's two keys, all mined successfully.
     rig.journal.close();
-    const { calls, intents, results } = st.journalCalls();
+    const { calls, intents, results, events } = st.journalCalls();
+    // The evidence posts were also read back from the chain through the external-id log filter.
+    expect(events.filter((e) => e.source === 'evidence' && e.name === 'Evidence')).toHaveLength(2);
     for (const fn of ['sendToCourt', 'openCase', 'refile', 'relayRuling', 'settle']) expect(calls.filter((c) => c === fn), fn).toHaveLength(1);
     expect(calls.filter((c) => c === 'submitEvidence')).toHaveLength(2);
     expect(results.every((r) => r.outcome === 'success')).toBe(true);
