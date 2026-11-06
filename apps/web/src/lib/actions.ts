@@ -261,7 +261,7 @@ export function movementWords(a: Pick<PreviewAmount, 'movement' | 'account'>, fr
 export function feeWords(fee: NativeFee, chainId: number): string[] {
   const out = [`At most ${units(fee.amount, fee.decimals, fee.symbol)} on ${chainLabel(chainId)}, for ${BigInt(fee.gas).toLocaleString('en-US')} gas at the price when this was built.`];
   out.push(fee.basis === 'budget' ? 'Part of it is a fixed budget: a later step cannot be simulated until the step before it has mined. Once it has, this page asks for an estimate and uses it when it is lower.' : 'Estimated by simulating the call against the latest block.');
-  if (chainId === 296) out.push('Hedera charges at least 80% of the gas limit.');
+  if (chainId === 296) out.push('Hedera charges for the gas the call uses, so this, from the gas limit, is the most it can cost.');
   out.push('Your wallet shows the final fee before you sign, and may set its own price.');
   return out;
 }

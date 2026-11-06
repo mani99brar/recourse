@@ -472,7 +472,8 @@ describe('what the person sees', () => {
     expect(html).toContain('Leaves your wallet into the claim&#x27;s escrow');
     expect(html).toContain('Held from the agent company&#x27;s deposit in the vault');
     expect(html).toContain('At most 0.60918 HBAR');
-    expect(html).toContain('at least 80% of the gas limit');
+    expect(html).toContain('Hedera charges for the gas the call uses');
+    expect(html).not.toContain('80%');
     expect(html).toContain('fixed budget');
     expect(html).toContain('2 transactions, signed in this order');
     expect(html).toContain('VaultToken.approve');
@@ -486,7 +487,7 @@ describe('what the person sees', () => {
     expect(html).toContain('Arbitrum Sepolia (chain 421614)');
     expect(html).toContain('No money moves.');
     expect(html).toContain('0.0000096 ETH');
-    expect(html).not.toContain('80%');
+    expect(html).not.toContain('Hedera charges');
   });
   it('will not offer to sign an answer that failed a check', () => {
     const html = view({ kind: 'preview', resp: example('contest'), problems: ['The transaction does not match the call shown.'] });
