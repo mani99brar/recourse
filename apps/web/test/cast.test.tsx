@@ -89,7 +89,28 @@ describe('the cast page', () => {
     const html = renderToString(<CastView d={{ ...d, members: d.members.slice(0, 2) }} />);
     expect(html).toContain('The demo cast has not been registered yet');
     expect(html).toContain('Example Shop (sample)');
-    expect(renderToString(<CastView d={{ ...d, members: [] }} />)).toContain('None registered yet');
+    // no member at all: the party map has none or could not be read, not "the first shop and agent company"
+    const none = renderToString(<CastView d={{ ...d, members: [] }} />);
+    expect(none).toContain('None registered yet');
+    expect(none).toContain('the party map has none, or it could not be read just now');
+    expect(none).not.toContain('has not been registered yet');
+  });
+
+  it('tells a registration not read yet from an id with no agent and from a link with no readable registration', () => {
+    const d = fullCast();
+    const [a, b, c] = d.members;
+    const members = [
+      { ...a!, owner: null, ownerIsParty: false, agentURI: null, registration: null },
+      { ...b!, agentURI: 'http://127.0.0.1:8720/.well-known/agent-registration.json', registration: null },
+      { ...c!, agentURI: '', registration: null },
+    ];
+    const html = renderToString(<CastView d={{ ...d, members }} />);
+    expect(html).toContain('The registry has no agent with this id.');
+    expect(html).toContain('no agent with this id on the registry');
+    expect(html).toContain('a link this demo does not fetch');
+    expect(html).toContain('No registration could be read from the link it gives.');
+    expect(html).toContain('none set');
+    expect(html).not.toContain('has not been read yet');
   });
 
   it('says when the registry could not be read, and shows the last values read', () => {

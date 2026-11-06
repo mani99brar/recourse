@@ -55,11 +55,23 @@ function outcomeWords(claims: CastClaim[]): string {
   return `${claims.length} (${[...n].map(([t, k]) => `${k} ${t}`).join('; ')})`;
 }
 
-function uriWords(uri: string | null): string {
-  if (uri === null) return 'not read yet';
+function uriWords(m: CastMember): string {
+  const uri = m.agentURI;
+  if (uri === null) return m.readAt === null ? 'not read yet' : 'none';
+  if (uri === '') return 'none set';
   if (uri.startsWith('data:')) return 'inline in the registry';
   if (uri.startsWith('ipfs://')) return 'on IPFS';
-  return 'a web page';
+  if (uri.startsWith('https://')) return 'a web page';
+  return 'a link this demo does not fetch';
+}
+
+/** The one line under the name: the type's summary, else the registration's description, else why there is none. */
+function summaryWords(m: CastMember): string {
+  const r = m.registration;
+  if (r) return r.recourse?.summary ?? r.description ?? 'Its registration does not say what type it is.';
+  if (m.readAt === null) return 'The registration has not been read yet.';
+  if (m.owner === null) return 'The registry has no agent with this id.';
+  return 'No registration could be read from the link it gives.';
 }
 
 function Member({ m, token }: { m: CastMember; token: VaultToken | undefined }) {
@@ -72,9 +84,7 @@ function Member({ m, token }: { m: CastMember; token: VaultToken | undefined }) 
         {type ? <Pill tone="plain">{type.label}</Pill> : <Pill tone="wait">Type not stated</Pill>}
         {!m.current && m.readAt !== null && <Pill tone="wait">as read {when(m.readAt)}</Pill>}
       </p>
-      <p className="muted">
-        {type?.summary ?? m.registration?.description ?? (m.registration === null ? 'The registration has not been read yet.' : 'Its registration does not say what type it is.')}
-      </p>
+      <p className="muted">{summaryWords(m)}</p>
       <dl>
         <Row label="ERC-8004 id">
           <ExtLink href={m.explorer}>{m.agentId}</ExtLink>
@@ -84,7 +94,7 @@ function Member({ m, token }: { m: CastMember; token: VaultToken | undefined }) 
           {m.ownerIsParty === false && m.owner && <span className="muted small"> (not the party's own account)</span>}
         </Row>
         <Row label="Registration">
-          {m.agentURI?.startsWith('https://') ? <ExtLink href={m.agentURI}>{uriWords(m.agentURI)}</ExtLink> : uriWords(m.agentURI)}
+          {m.agentURI?.startsWith('https://') ? <ExtLink href={m.agentURI}>{uriWords(m)}</ExtLink> : uriWords(m)}
           {type && <span className="mono"> {type.kind}</span>}
         </Row>
         <Row label="Orders recorded">{m.orders}</Row>
@@ -128,8 +138,12 @@ export function CastView({ d }: { d: CastBody }) {
   const shops = d.members.filter((m) => m.role === 'shop');
   const companies = d.members.filter((m) => m.role !== 'shop');
   const notes: string[] = [];
-  if (d.degraded?.includes('identity')) notes.push('The ERC-8004 registry on Hedera could not be read just now. Owners, registrations and types below are the last ones read, where there are any.');
-  if (shops.length <= 1 && companies.length <= 1) {
+  if (d.degraded?.includes('identity')) {
+    notes.push('The ERC-8004 registry on Hedera, or a registration document it names, could not be read just now. Owners, registrations and types below are the last ones read, where there are any.');
+  }
+  if (d.members.length === 0) {
+    notes.push('No shop or agent company with an ERC-8004 id is listed: the party map has none, or it could not be read just now.');
+  } else if (shops.length <= 1 && companies.length <= 1) {
     notes.push('The demo cast has not been registered yet. So far the registry holds the first shop and the first agent company; more shop and agent types appear here once they are registered.');
   }
   return (
