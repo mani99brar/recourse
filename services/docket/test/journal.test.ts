@@ -150,6 +150,31 @@ describe('docket journal', () => {
     expect(restarted.writeStatus(cid(1))).toMatchObject({ writeStatus: 'written', entityKey });
   });
 
+  it('gives a create cut off mid-call retrySeconds to land before writing it again', async () => {
+    for (const lands of [true, false]) {
+      const r = rig();
+      r.docket.ingest([E.filed(1), E.precheck(1, 2, 1), E.ruling(1, 1)]);
+      await r.docket.flush();
+      const { readFileSync, writeFileSync } = await import('node:fs');
+      const lines = readFileSync(r.journalPath, 'utf8').trim().split('\n');
+      // a crash while the create was in flight: the journal stops at the intent, and the node does not show the entity yet
+      writeFileSync(r.journalPath, `${lines.filter((l) => !(l.includes('"target":"case"') && (l.includes('"phase":"sent"') || l.includes('"phase":"done"')))).join('\n')}\n`);
+      const landed = new Map([...r.io.entities].filter(([, e]) => e.schema === 'case'));
+      for (const k of landed.keys()) r.io.entities.delete(k);
+      const restarted = r.reopen();
+      r.clock.t += 30;
+      await restarted.flush();
+      expect(caseEntities(r.io)).toHaveLength(0);
+      expect(restarted.writeStatus(cid(1))?.writeStatus).toBe('pending');
+
+      if (lands) for (const [k, v] of landed) r.io.entities.set(k, v);
+      r.clock.t += 600;
+      await restarted.flush();
+      expect(caseEntities(r.io)).toHaveLength(1); // adopted when it landed, written again once when it did not
+      expect(restarted.writeStatus(cid(1))).toMatchObject({ writeStatus: 'written', ...(lands ? { entityKey: [...landed.keys()][0] } : {}) });
+    }
+  });
+
   it('keeps counts in step with the claim set as write status changes', async () => {
     const r = rig();
     r.docket.ingest([E.filed(1), E.precheck(1, 2, 1), E.ruling(1, 1), E.filed(2)]);

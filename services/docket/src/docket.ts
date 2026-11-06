@@ -274,7 +274,9 @@ export class Docket {
   /**
    * Settles every write that has an intent but no recorded result, by asking the store. A write
    * whose transaction is still pending, cannot be looked up, or landed but is not queryable yet is
-   * waited for: it is planned again only once nothing was sent, or what was sent is known failed.
+   * waited for: it is planned again only once what was sent is known failed, or, for a run cut off
+   * before the store gave a transaction, once retrySeconds have passed since the intent with
+   * nothing found.
    */
   private async resolveIntents(): Promise<void> {
     for (const [target, map] of [['case', this.caseWrites], ['count', this.countWrites]] as const) {
@@ -288,11 +290,11 @@ export class Docket {
             : await this.deps.store.findCount(parseCountKey(id));
         if (found !== null) {
           this.journalW({ t: 'w', target, id, phase: 'done', entityKey: found.entityKey, row: found.row, at: this.deps.now() });
-        } else if (tx !== 'success') {
+        } else if (tx === 'failed' || (tx === null && this.deps.now() >= w.updatedAt + this.retrySeconds)) {
           // nothing landed: drop the intent so the write is planned again
           w.intent = false;
         }
-        // else it landed and the store does not show it yet: wait
+        // else it landed and the store does not show it yet, or a cut-off create may still land: wait
       }
     }
   }
