@@ -107,8 +107,17 @@ export function writerFilter(parties: Parties): (m: ValidRecordMsg) => boolean {
   };
 }
 
+/** Messages a reader holds per order, kind and payer. An honest writer posts one; refs use the first. */
+export const READER_HELD_PER_SLOT = 8;
+/** Messages a reader holds per payer account; past it the account's oldest are let go. */
+export const READER_HELD_PER_WRITER = 5_000;
+
 export interface TopicReaderOptions {
   pageSize?: number;
+  /** Messages held per order, kind and payer; later ones are dropped. Default READER_HELD_PER_SLOT. */
+  heldPerSlot?: number;
+  /** Messages held per payer account; past it the account's oldest are let go. Default READER_HELD_PER_WRITER. */
+  heldPerWriter?: number;
   /**
    * Keeps a valid message only when this returns true, for example `writerFilter(parties)`. The
    * topic has no submit key, so without a filter every well-formed message anyone posts is kept.
@@ -120,12 +129,22 @@ export interface TopicReaderOptions {
  * Keeps an in-memory index of the topic's record messages by order, paging forward from the last
  * sequence number it has read. Messages that do not decode (and, with `keep`, messages from
  * accounts that write for no party) are counted and dropped, never held: anyone can post to the
- * topic, so what is held must not grow with what strangers post.
+ * topic, so what is held must not grow with what strangers post. What one payer has held is capped
+ * too: the first `heldPerSlot` messages per order and kind (refs use the first), and `heldPerWriter`
+ * in all, past which its oldest are let go. So with `keep`, what is held is bounded by the number
+ * of party writers; without it, each payer is bounded but the number of payers is not.
  */
 export class TopicReader {
   private readonly byOrder = new Map<string, ValidRecordMsg[]>();
+  /** Held messages per order, kind and payer. */
+  private readonly perSlot = new Map<string, number>();
+  /** Held messages per payer, oldest first (`head` is the oldest still held). */
+  private readonly perWriter = new Map<string, { held: ValidRecordMsg[]; head: number }>();
   private nextSeq = 1;
   private droppedCount = 0;
+  private cappedCount = 0;
+  private readonly heldPerSlot: number;
+  private readonly heldPerWriter: number;
   private running: Promise<number> | undefined;
   private readonly pageSize: number;
   private readonly keep: ((m: ValidRecordMsg) => boolean) | undefined;
@@ -139,6 +158,8 @@ export class TopicReader {
     // The mirror serves at most 100 messages a page; a short page means the reader has caught up.
     this.pageSize = Math.min(o.pageSize ?? 100, 100);
     this.keep = o.keep;
+    this.heldPerSlot = o.heldPerSlot ?? READER_HELD_PER_SLOT;
+    this.heldPerWriter = o.heldPerWriter ?? READER_HELD_PER_WRITER;
   }
 
   /** One page of messages from `fromSeq`, decoded; reads the mirror node directly. */
@@ -175,13 +196,54 @@ export class TopicReader {
           this.droppedCount += 1;
           continue;
         }
-        const list = this.byOrder.get(m.orderId) ?? [];
-        list.push(m);
-        this.byOrder.set(m.orderId, list);
+        this.hold(m);
       }
       if (batch.length < this.pageSize) break;
     }
     return read;
+  }
+
+  private hold(m: ValidRecordMsg): void {
+    const payer = m.payer ?? '';
+    const slot = `${m.orderId}:${m.kind}:${payer}`;
+    const n = this.perSlot.get(slot) ?? 0;
+    if (n >= this.heldPerSlot) {
+      this.cappedCount += 1;
+      return;
+    }
+    this.perSlot.set(slot, n + 1);
+    const list = this.byOrder.get(m.orderId) ?? [];
+    list.push(m);
+    this.byOrder.set(m.orderId, list);
+    let q = this.perWriter.get(payer);
+    if (q === undefined) {
+      q = { held: [], head: 0 };
+      this.perWriter.set(payer, q);
+    }
+    q.held.push(m);
+    while (q.held.length - q.head > this.heldPerWriter) {
+      const oldest = q.held[q.head]!;
+      q.head += 1;
+      this.cappedCount += 1;
+      this.letGo(oldest);
+    }
+    if (q.head > 1024 && q.head * 2 > q.held.length) {
+      q.held = q.held.slice(q.head);
+      q.head = 0;
+    }
+  }
+
+  private letGo(m: ValidRecordMsg): void {
+    const list = this.byOrder.get(m.orderId);
+    if (list !== undefined) {
+      const i = list.indexOf(m);
+      if (i >= 0) list.splice(i, 1);
+      if (list.length === 0) this.byOrder.delete(m.orderId);
+    }
+    const slot = `${m.orderId}:${m.kind}:${m.payer ?? ''}`;
+    const n = (this.perSlot.get(slot) ?? 1) - 1;
+    if (n <= 0) this.perSlot.delete(slot);
+    else this.perSlot.set(slot, n);
   }
 
   /** Valid kept messages for the order at or after `fromSeq`, oldest first, after syncing. */
@@ -202,5 +264,10 @@ export class TopicReader {
   /** Messages read and not kept: they did not decode, or (with `keep`) no party writes with their payer. */
   get dropped(): number {
     return this.droppedCount;
+  }
+
+  /** Valid kept messages the caps let go: past `heldPerSlot` for their order and kind, or a payer's oldest past `heldPerWriter`. */
+  get capped(): number {
+    return this.cappedCount;
   }
 }

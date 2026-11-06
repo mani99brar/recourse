@@ -106,6 +106,38 @@ describe('topic reads', () => {
     expect(reader.dropped).toBe(2101);
   });
 
+  it('holds at most eight messages of one payer for one order and kind; refs still name the first', async () => {
+    const ledger = new MemoryLedger();
+    ledger.createTopic(TOPIC);
+    const reader = new TopicReader(ledger.mirror(), TOPIC, { keep: writerFilter(PARTIES) });
+    ledger.append(TOPIC, AGENT_PAYER, message(1));
+    for (let i = 1; i <= 3000; i++) ledger.append(TOPIC, AGENT_PAYER, message(1, ORDER, i));
+    ledger.append(TOPIC, SHOP_PAYER, message(4));
+    const records = await reader.readOrderRecords(ORDER);
+    expect(records.filter((m) => m.kind === 1)).toHaveLength(8);
+    expect(records.filter((m) => m.kind === 4).map((m) => m.seq)).toEqual([3002]);
+    expect(reader.capped).toBe(2993);
+    const refs = await reader.refsFor(ORDER, PARTIES);
+    expect(refs.seq[1]).toBe(1n);
+    expect(refs.hashes[1]).toBe(recordHash(doc(1)));
+    expect(refs.seq[4]).toBe(3002n);
+  });
+
+  it('a payer over its total lets its own oldest go, never another payer\'s', async () => {
+    const ledger = new MemoryLedger();
+    ledger.createTopic(TOPIC);
+    const reader = new TopicReader(ledger.mirror(), TOPIC, { keep: writerFilter(PARTIES), heldPerWriter: 10 });
+    ledger.append(TOPIC, SHOP_PAYER, message(4));
+    const orders = Array.from({ length: 30 }, (_, i) => `0x${(i + 1).toString(16).padStart(64, '0')}` as const);
+    for (const o of orders) ledger.append(TOPIC, AGENT_PAYER, message(0, o));
+    await reader.sync();
+    expect((await reader.readOrderRecords(ORDER)).map((m) => m.seq)).toEqual([1]); // the shop's packed record stays
+    expect(await reader.readOrderRecords(orders[0]!)).toEqual([]);
+    expect(await reader.readOrderRecords(orders[19]!)).toEqual([]);
+    expect((await reader.readOrderRecords(orders[20]!)).map((m) => m.seq)).toEqual([22]);
+    expect(reader.capped).toBe(20);
+  });
+
   it('parses topic numbers', () => {
     expect(topicNumOf('0.0.42')).toBe(42n);
     expect(() => topicNumOf('0.1.42')).toThrow();
