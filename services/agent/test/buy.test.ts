@@ -62,6 +62,37 @@ describe('below the spend limit', () => {
     expect(w.fake.settled).toHaveLength(1);
   });
 
+  test('a mandate approval cites the mandate stating the limits it was decided under', async () => {
+    w = await world();
+    const mandateOf = async (orderId: string) => {
+      const approval = messages(w!).find((m) => m.orderId === orderId && m.kind === RecordKind.Approval)!;
+      const cid = (await docAt(w!, approval.cid))!.mandateCid as string;
+      return { cid, doc: await docAt(w!, cid) };
+    };
+    const first = w.open().buyer;
+    const a = first.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect((await first.run(a)).state).toBe('done');
+    const before = await mandateOf(a);
+    expect(before.doc).toMatchObject({ spendLimitUsdc: '5000000' });
+
+    // The operator raises the spend limit: the next approval cites a new mandate saying so.
+    w.limits.spendLimit = 10_000_000n;
+    const { buyer } = w.open();
+    const b = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect((await buyer.run(b)).state).toBe('done');
+    const after = await mandateOf(b);
+    expect(after.cid).not.toBe(before.cid);
+    expect(after.doc).toMatchObject({ spendLimitUsdc: '10000000' });
+
+    // The same limits again: no new mandate.
+    const c = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect((await buyer.run(c)).state).toBe('done');
+    expect((await mandateOf(c)).cid).toBe(after.cid);
+    const rows = readJournal<AgentRow>(join(w.dir, 'orders.jsonl')).rows;
+    expect(rows.filter((r) => r.type === 'mandate').map((r) => r.type === 'mandate' && r.cid)).toEqual([before.cid, after.cid]);
+    expect(rows.find((r) => r.type === 'approved' && r.orderId === b)).toMatchObject({ basis: 'mandate', mandateCid: after.cid });
+  });
+
   test('a changed offer fills the change slot and is still bought on the mandate when within the cap', async () => {
     w = await world();
     const { buyer } = w.open();

@@ -46,7 +46,11 @@ export interface ShopTarget {
 type At = { at: string; orderId: Hex };
 
 export type AgentRow =
-  | { type: 'mandate'; at: string; cid: string; hash: Hex }
+  /**
+   * A pinned mandate document. `limits` (µUSDC, decimal) on rows written since the limits are
+   * compared; older rows are matched by `hash`, the record hash of the document they pinned.
+   */
+  | { type: 'mandate'; at: string; cid: string; hash: Hex; limits?: { spendLimit: string; maxOrder: string; dailyCap: string } }
   | (At & {
       type: 'draft';
       orderNonce: Hex;
@@ -64,7 +68,16 @@ export type AgentRow =
   | (At & { type: 'rendered'; renderInput: RenderInput; textHash: Hex; changes: string[]; rendererVersion: string })
   | (At & { type: 'refused'; reason: string })
   | (At & { type: 'awaiting_approval'; approvalId: string; expiresAt: number })
-  | (At & { type: 'approved'; basis: 'mandate' | 'buyer'; decision: 'approved' | 'not_approved'; expiresAt: number; signer: string; signature: Hex })
+  | (At & {
+      type: 'approved';
+      basis: 'mandate' | 'buyer';
+      decision: 'approved' | 'not_approved';
+      expiresAt: number;
+      signer: string;
+      signature: Hex;
+      /** For a mandate approval: the mandate in force when it was signed (absent on older rows). */
+      mandateCid?: string;
+    })
   | (At & { type: 'committed'; kind: Kind; seq: number; hash: Hex; cid: string; simulated?: true })
   | (At & { type: 'pay_attempt'; startedAt: number })
   | (At & { type: 'pay_signed'; txId: string; feePayer: string })
@@ -274,20 +287,38 @@ export class Buyer {
     return sum;
   }
 
+  /**
+   * The mandate in force: the pinned document stating the current limits, pinned now when the
+   * limits changed since the last one (a document is matched by its record hash, so a row from
+   * before the limits were journaled still counts when it states the same limits).
+   */
   private async mandateCid(): Promise<string> {
-    const existing = this.rows.find((r): r is Extract<AgentRow, { type: 'mandate' }> => r.type === 'mandate');
-    if (existing) return existing.cid;
-    const pinned = await this.deps.pin(
-      mandateDoc({
-        platform: this.deps.platform,
-        agentSigner: this.deps.agentAccount.address,
-        spendLimit: this.deps.limits.spendLimit,
-        maxOrder: this.deps.limits.maxOrder,
-        dailyCap: this.deps.limits.dailyCap,
-      }),
-    );
-    this.write({ type: 'mandate', at: iso(), cid: pinned.cid, hash: pinned.hash });
+    const { spendLimit, maxOrder, dailyCap } = this.deps.limits;
+    const doc = mandateDoc({ platform: this.deps.platform, agentSigner: this.deps.agentAccount.address, spendLimit, maxOrder, dailyCap });
+    const hash = recordHash(doc);
+    const mandates = this.rows.filter((r): r is Extract<AgentRow, { type: 'mandate' }> => r.type === 'mandate');
+    const current = mandates.filter((r) => r.hash === hash).at(-1);
+    if (current) return current.cid;
+    const pinned = await this.deps.pin(doc);
+    this.write({
+      type: 'mandate',
+      at: iso(),
+      cid: pinned.cid,
+      hash: pinned.hash,
+      limits: { spendLimit: spendLimit.toString(), maxOrder: maxOrder.toString(), dailyCap: dailyCap.toString() },
+    });
+    if (mandates.length > 0) this.deps.log?.info('mandate_repinned', { cid: pinned.cid, replaces: mandates.at(-1)!.cid });
     return pinned.cid;
+  }
+
+  /**
+   * The mandate a mandate approval cites: the one journaled with it at signing, else (a row signed
+   * before that was journaled) the first mandate pinned, which is what such an approval always
+   * cited, so its approval record reads the same on a rerun.
+   */
+  private async mandateOf(approved: Extract<AgentRow, { type: 'approved' }>): Promise<string> {
+    if (approved.mandateCid) return approved.mandateCid;
+    return this.rows.find((r): r is Extract<AgentRow, { type: 'mandate' }> => r.type === 'mandate')?.cid ?? (await this.mandateCid());
   }
 
   private async commit(orderId: Hex, kind: Kind, bytes: Uint8Array): Promise<void> {
@@ -383,6 +414,8 @@ export class Buyer {
         return { state: 'awaiting_approval', orderId, approvalId, expiresAt };
       }
       const expiresAt = this.now() + this.deps.limits.approvalTtlSec;
+      // The mandate stating the limits this approval was decided under, pinned before signing.
+      const mandateCid = await this.mandateCid();
       const signature = await signApproval(this.deps.agentAccount, {
         orderId,
         textHash: rendered.textHash,
@@ -391,7 +424,7 @@ export class Buyer {
         decision: 'approved',
         expiresAt,
       });
-      approved = { type: 'approved', at: iso(), orderId, basis: 'mandate', decision: 'approved', expiresAt, signer: this.deps.agentAccount.address, signature };
+      approved = { type: 'approved', at: iso(), orderId, basis: 'mandate', decision: 'approved', expiresAt, signer: this.deps.agentAccount.address, signature, mandateCid };
       this.write(approved);
     }
 
@@ -427,7 +460,7 @@ export class Buyer {
         expiresAt: approved.expiresAt,
         signer: approved.signer,
         signature: approved.signature,
-        ...(approved.basis === 'mandate' ? { mandateCid: await this.mandateCid() } : {}),
+        ...(approved.basis === 'mandate' ? { mandateCid: await this.mandateOf(approved) } : {}),
       }),
     );
     if (approved.decision !== 'approved') {
