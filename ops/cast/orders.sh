@@ -128,6 +128,9 @@ with_shop() {
   mapfile -t assign < <(env_for "$o")
   (cd "$ROOT/services/shop" && exec env -u SHOP_PUBLIC_URL -u SHOP_BASE_URL "${assign[@]}" SHOP_PORT="$port" node --import tsx src/main.ts) >>"$STATE/$shop/shop.log" 2>&1 &
   pid=$!
+  # An interrupt, or a die inside the command, stops the shop too, so its port is free for the next run.
+  trap "kill $pid 2>/dev/null || true" EXIT
+  trap "kill $pid 2>/dev/null || true; exit 130" INT TERM
   for _ in $(seq 1 60); do curl -fs -m 2 "$health" >/dev/null 2>&1 && break; sleep 1; done
   if ! curl -fs -m 2 "$health" >/dev/null 2>&1; then
     kill "$pid" 2>/dev/null || true
@@ -140,6 +143,7 @@ with_shop() {
   set +e; "$@"; code=$?; set -e
   SHOP_UP=0
   kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  trap - EXIT INT TERM
   return "$code"
 }
 
