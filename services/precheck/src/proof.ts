@@ -2,7 +2,8 @@
 // claim's refs name if it passes every check, else the earliest message the topic index holds for
 // the order and kind that passes them. A slot ends as held, absent or rejected. A failure to look
 // at the mirror (lag, errors, a message not yet visible) is a retry and is never turned into an
-// absence.
+// absence. Only a refs seq past every message the index has read, once it has read through the
+// filing, is final: it can only name a message after the filing (after_filing).
 //
 // A record document that cannot be read is a retry only for a bounded time. It is rejected as
 // doc_unavailable once the claim is `docWaitS` past its filing, the document has failed on every
@@ -106,12 +107,12 @@ async function payerOf(msg: IndexedMessage, ports: ProofPorts): Promise<string> 
   return account;
 }
 
-async function messageAt(seq: bigint, ports: ProofPorts): Promise<IndexedMessage> {
+/** The message at `seq`, or null when the mirror has no such message (yet). */
+async function messageAt(seq: bigint, ports: ProofPorts): Promise<IndexedMessage | null> {
   const known = ports.index.get(seq);
   if (known !== undefined) return known;
   const m = await ports.mirror.topicMessage(ports.index.topicId, seq);
-  if (m === null) throw new TransientError(`topic message ${seq} is not on the mirror yet`);
-  return toIndexed(m);
+  return m === null ? null : toIndexed(m);
 }
 
 /**
@@ -148,6 +149,12 @@ async function check(
   // A refs seq of 0 names no message at all.
   if (seq <= 0n) return { ok: false, reason: 'doc_invalid', seq };
   const msg = await messageAt(seq, ports);
+  if (msg === null) {
+    // Once the index has read every message up to the filing, a sequence number past the last one
+    // it read can only name a message after the filing; before that, the mirror may just lag.
+    if (seq > ports.index.lastSeq && ports.index.readThrough(claim.filedAt, ports.quietS)) return { ok: false, reason: 'after_filing', seq };
+    throw new TransientError(`topic message ${seq} is not on the mirror yet`);
+  }
   // 2 decodes (a chunked message never does; nor does one whose cid is not the CID of its hash)
   if (!msg.decoded.ok) return { ok: false, reason: 'doc_invalid', seq };
   const f = msg.decoded.value;

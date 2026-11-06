@@ -4,6 +4,9 @@ import { addLaterMessage, alertKinds, cleanupRigs, FILED_AT, journalRecords, mak
 
 afterEach(cleanupRigs);
 
+const resolvedSlots = (rig: ReturnType<typeof makeRig>, claimId: string) =>
+  (journalRecords(rig).find((r) => r.t === 'claimResolved' && r.claimId === claimId)?.slots ?? []) as Record<string, unknown>[];
+
 describe('transient faults are retries, never absences', () => {
   for (const [name, mode] of [
     ['a 5xx', 503],
@@ -77,20 +80,50 @@ describe('transient faults are retries, never absences', () => {
     svc.close();
   });
 
-  it('a refs seq the mirror never has keeps the claim retrying and alerts at ten minutes', async () => {
+  it('a refs seq past the topic tip, once the index has read through the filing, is after_filing; the slot does not stall', async () => {
     const rig = makeRig();
     const orderId = orderIdOf(2);
     addLaterMessage(rig.world);
     const claimId = rig.world.fileClaim(orderId, refsOf(500n, { 3: { seq: 9999, hash: recordHash(new Uint8Array([1])) } }));
     rig.chain.claims.set(claimId, { status: 1, packHash: ZERO_HASH });
     const svc = await rig.start();
-    for (let i = 0; i < 12; i++) {
-      await svc.tick();
-      rig.clock.advance(60_000);
-    }
+    await svc.tick();
+    const view = svc.result(claimId);
+    expect(view?.slots.map((s) => s.outcome)).toEqual(['absent', 'absent', 'absent', 'rejected', 'absent', 'absent']);
+    expect(view?.slots[3]).toMatchObject({ reason: 'after_filing' });
+    expect(resolvedSlots(rig, claimId)[3]).toMatchObject({ outcome: 'rejected', reason: 'after_filing', seq: '9999' });
+    expect(rig.node.broadcasts).toHaveLength(1);
+    expect(alertKinds(rig)).not.toContain('precheck_stalled');
+    svc.close();
+  });
+
+  it('a refs seq past the topic tip falls back to the record the index holds for the slot', async () => {
+    const rig = makeRig();
+    const orderId = orderIdOf(3);
+    const added = rig.world.addOrder(orderId);
+    const named = Object.fromEntries(added.map((a, k) => [k, k === 3 ? { seq: 9999, hash: a.hash } : { seq: a.seq, hash: a.hash }]));
+    addLaterMessage(rig.world);
+    const claimId = rig.world.fileClaim(orderId, refsOf(500n, named));
+    rig.chain.claims.set(claimId, { status: 1, packHash: ZERO_HASH });
+    const svc = await rig.start();
+    await svc.tick();
+    const view = svc.result(claimId);
+    expect(view?.slots.map((s) => s.outcome)).toEqual(['held', 'held', 'held', 'held', 'held', 'held']);
+    expect(resolvedSlots(rig, claimId)[3]).toMatchObject({ outcome: 'held', seq: String(added[3]!.seq), refs: { seq: '9999', reason: 'after_filing' } });
+    expect(rig.node.broadcasts).toHaveLength(1);
+    svc.close();
+  });
+
+  it('a refs seq the mirror does not show is a retry while the index has not read through the filing', async () => {
+    const rig = makeRig();
+    const orderId = orderIdOf(2);
+    // no message after the filing and the quiet wait not over: the index cannot tell yet
+    const claimId = rig.world.fileClaim(orderId, refsOf(500n, { 3: { seq: 9999, hash: recordHash(new Uint8Array([1])) } }));
+    rig.chain.claims.set(claimId, { status: 1, packHash: ZERO_HASH });
+    const svc = await rig.start();
+    await svc.tick();
     expect(svc.result(claimId)).toMatchObject({ state: 'seen', slots: [] });
     expect(rig.node.broadcasts).toHaveLength(0);
-    expect(alertKinds(rig)).toContain('precheck_stalled');
     svc.close();
   });
 

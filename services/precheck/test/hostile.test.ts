@@ -99,10 +99,9 @@ describe('a store outage', () => {
 describe('a claim whose records cannot be proved', () => {
   it('a claim that left Filed on chain while its records could not be proved is closed, not retried for ever', async () => {
     const rig = makeRig();
-    const orderId = orderIdOf(4);
-    // The refs name a sequence number the mirror never has: the proof cannot settle.
-    const claimId = rig.world.fileClaim(orderId, refsOf(500n, { 3: { seq: 9999, hash: `0x${'aa'.repeat(32)}` } }));
-    rig.chain.claims.set(claimId, { status: 1, packHash: ZERO_HASH });
+    // The store serves no document at all, this service's own included: the proof cannot settle.
+    const { claimId } = setupClaim(rig, { orderId: orderIdOf(4), later: true });
+    rig.world.fail(/gateway\.example/, 503, 10_000);
     const svc = await rig.start();
     await tickFor(svc, rig, 3);
     expect(svc.result(claimId)?.state).toBe('seen');
