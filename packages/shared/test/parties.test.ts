@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountIdOf, hcsWritersFor, hederaAccountIdOf, parseHederaAccountIds, parseParties, partyByRole } from '../src/index.js';
+import { accountIdOf, hcsWritersFor, hederaAccountIdOf, orderWritersFor, parseHederaAccountIds, parseParties, partyByRole, partyWithRole } from '../src/index.js';
 
 const base = [
   {
@@ -66,8 +66,49 @@ describe('parseParties', () => {
     ['empty display name', [{ ...base[0], displayName: ' ' }]],
     ['unknown field', [{ ...base[0], extra: 1 }]],
     ['duplicate address', [base[0], { ...base[1], evmAddress: base[0]!.evmAddress }]],
+    ['a writer shared by a platform and a shop', [base[0], { ...base[2], hcsWriters: ['0.0.1003', '0.0.1002'] }]],
   ])('rejects %s', (_label, json) => {
     expect(parseParties(JSON.parse(JSON.stringify(json))).ok).toBe(false);
+  });
+
+  it('names the party that already holds a shared writer', () => {
+    const r = parseParties(JSON.parse(JSON.stringify([base[0], base[1], { ...base[2], hcsWriters: ['0.0.1002'] }])));
+    expect(r).toEqual({ ok: false, error: 'parties[2].hcsWriters: 0.0.1002 is already a writer of parties[0]' });
+  });
+});
+
+describe('writers of one order', () => {
+  const second = {
+    role: 'platform',
+    evmAddress: '0x00000000000000000000000000000000000000b1',
+    hederaAccountId: '0.0.2001',
+    hcsWriters: ['0.0.2002'],
+    displayName: 'Second Example Platform',
+  };
+  const secondShop = {
+    role: 'shop',
+    evmAddress: '0x00000000000000000000000000000000000000b3',
+    hederaAccountId: '0.0.2003',
+    hcsWriters: ['0.0.2003'],
+    displayName: 'Second Example Shop',
+  };
+  const r = parseParties(JSON.parse(JSON.stringify([...base, second, secondShop])));
+  if (!r.ok) throw new Error(r.error);
+  const parties = r.value;
+  const order = { platform: base[0]!.evmAddress, shop: base[2]!.evmAddress };
+
+  it('takes only the order\'s own platform for kinds 0-3 and 5 and its own shop for kind 4', () => {
+    for (const kind of [0, 1, 2, 3, 5]) expect([...orderWritersFor(parties, kind, order)]).toEqual(['0.0.1002']);
+    expect([...orderWritersFor(parties, 4, order)]).toEqual(['0.0.1003']);
+    // The role-wide set still holds both platforms' writers.
+    expect([...hcsWritersFor(parties, 0)].sort()).toEqual(['0.0.1002', '0.0.2002']);
+  });
+
+  it('is empty for an address that is no party of the role', () => {
+    expect(orderWritersFor(parties, 0, { ...order, platform: base[2]!.evmAddress }).size).toBe(0);
+    expect(orderWritersFor(parties, 4, { ...order, shop: '0x00000000000000000000000000000000000000ff' }).size).toBe(0);
+    expect(partyWithRole(parties, 'shop', base[0]!.evmAddress)).toBeUndefined();
+    expect(partyWithRole(parties, 'platform', base[0]!.evmAddress.toUpperCase().replace('0X', '0x'))?.displayName).toBe('Example Platform');
   });
 });
 

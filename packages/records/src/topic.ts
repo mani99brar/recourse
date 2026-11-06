@@ -1,7 +1,7 @@
 // Reads the records topic from the mirror node. Every message is decoded with the shared record
 // message codec; a message that does not decode is returned flagged, never thrown on. `refsFor`
 // builds the on-chain record pointers of an order from the first message of each kind whose payer
-// is an allowed writer for that kind.
+// is an allowed writer for that kind: given the order's platform and shop, only their own writers.
 
 import type { Hex } from 'viem';
 import {
@@ -9,6 +9,8 @@ import {
   decodeRecordMsg,
   emptyRecordRefs,
   hcsWritersFor,
+  orderWritersFor,
+  type OrderParties,
   type Parties,
   type RecordKind,
   type RecordRefs,
@@ -63,9 +65,17 @@ export function topicNumOf(topicId: string): bigint {
 
 /**
  * The first message of each kind for the order whose payer is in that kind's writer set.
- * Missing kinds keep seq 0 and the zero hash.
+ * Missing kinds keep seq 0 and the zero hash. With `order` (the order's platform and shop
+ * addresses, as the claim will name them), the writer set is that platform's or shop's own
+ * hcsWriters, which is what the pre-check accepts; without it, any party of the role counts.
  */
-export function refsFromMessages(topicId: string, orderId: Hex, messages: readonly RecordMsg[], parties: Parties): RecordRefs {
+export function refsFromMessages(
+  topicId: string,
+  orderId: Hex,
+  messages: readonly RecordMsg[],
+  parties: Parties,
+  order?: OrderParties,
+): RecordRefs {
   const refs = emptyRecordRefs(topicNumOf(topicId));
   const seq = [...refs.seq] as [bigint, bigint, bigint, bigint, bigint, bigint];
   const hashes = [...refs.hashes] as [Hex, Hex, Hex, Hex, Hex, Hex];
@@ -74,7 +84,8 @@ export function refsFromMessages(topicId: string, orderId: Hex, messages: readon
   for (const m of sorted) {
     if (!m.valid || m.orderId !== target || m.payer === null) continue;
     if (hashes[m.kind] !== ZERO_HASH) continue;
-    if (!hcsWritersFor(parties, m.kind).has(m.payer)) continue;
+    const writers = order === undefined ? hcsWritersFor(parties, m.kind) : orderWritersFor(parties, m.kind, order);
+    if (!writers.has(m.payer)) continue;
     seq[m.kind] = BigInt(m.seq);
     hashes[m.kind] = m.hash;
   }
@@ -121,8 +132,8 @@ export class TopicReader {
     return this.messages.filter((m): m is ValidRecordMsg => m.valid && m.orderId === target && m.seq >= fromSeq);
   }
 
-  async refsFor(orderId: Hex, parties: Parties): Promise<RecordRefs> {
-    return refsFromMessages(this.topicId, orderId, await this.readOrderRecords(orderId), parties);
+  async refsFor(orderId: Hex, parties: Parties, order?: OrderParties): Promise<RecordRefs> {
+    return refsFromMessages(this.topicId, orderId, await this.readOrderRecords(orderId), parties, order);
   }
 
   /** Highest sequence number read so far (0 before the first sync). */

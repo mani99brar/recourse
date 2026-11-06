@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ZERO_HASH, encodeRecordMsg, recordHash, utf8ToBytes, type RecordKind } from '@recourse/shared';
+import { getAddress } from 'viem';
+import { ZERO_HASH, encodeRecordMsg, recordHash, utf8ToBytes, type Parties, type RecordKind } from '@recourse/shared';
 import { cidOfHash } from '../src/car.js';
 import { MemoryLedger } from '../src/testing.js';
 import { TopicReader, topicNumOf } from '../src/topic.js';
@@ -52,6 +53,25 @@ describe('topic reads', () => {
     expect(refs.hashes[0]).toBe(recordHash(doc(0)));
     expect(refs.hashes[4]).toBe(recordHash(doc(4)));
     for (const i of [1, 2, 3, 5]) expect(refs.hashes[i]).toBe(ZERO_HASH);
+  });
+
+  it('with the order\'s platform and shop, another platform\'s writer never fills a slot', async () => {
+    const { ledger, reader } = setup();
+    const OTHER_WRITER = '0.0.5005';
+    const parties: Parties = [
+      ...PARTIES,
+      { role: 'platform', evmAddress: getAddress('0x00000000000000000000000000000000000000c1'), hcsWriters: [OTHER_WRITER], displayName: 'Other Agent Co' },
+    ];
+    ledger.append(TOPIC, OTHER_WRITER, message(2, ORDER, 1)); // the other platform writes first
+    ledger.append(TOPIC, AGENT_PAYER, message(2));
+    const order = { platform: PARTIES[0]!.evmAddress, shop: PARTIES[1]!.evmAddress };
+    const scoped = await reader.refsFor(ORDER, parties, order);
+    expect(scoped.seq[2]).toBe(2n);
+    expect(scoped.hashes[2]).toBe(recordHash(doc(2)));
+    // Role-wide (no order given) the first platform writer wins, as before.
+    expect((await reader.refsFor(ORDER, parties)).seq[2]).toBe(1n);
+    // An order naming an address that is not a platform party has no writers at all.
+    expect((await reader.refsFor(ORDER, parties, { ...order, platform: PARTIES[1]!.evmAddress })).seq[2]).toBe(0n);
   });
 
   it('parses topic numbers', () => {

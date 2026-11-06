@@ -68,12 +68,15 @@ const PARTY_KEYS = new Set(['role', 'evmAddress', 'hederaAccountId', 'hcsWriters
 
 /**
  * Validates the parsed contents of parties.json. Pure: takes the JSON value (not text) and
- * returns either the normalised party list or the first problem found.
+ * returns either the normalised party list or the first problem found. A Hedera account may be an
+ * HCS writer of one party only: a shared writer would let one party's messages count as another's
+ * records.
  */
 export function parseParties(json: unknown): ParseResult<Parties> {
   if (!Array.isArray(json)) return { ok: false, error: 'parties: expected a JSON array' };
   const out: Parties = [];
   const seenAddress = new Set<string>();
+  const writerOf = new Map<string, number>();
   for (let i = 0; i < json.length; i++) {
     const entry: unknown = json[i];
     const at = `parties[${i}]`;
@@ -102,6 +105,13 @@ export function parseParties(json: unknown): ParseResult<Parties> {
 
     if (!Array.isArray(e.hcsWriters) || !e.hcsWriters.every(isHederaAccountId)) {
       return { ok: false, error: `${at}.hcsWriters: expected a list of shard.realm.num ids` };
+    }
+    for (const w of e.hcsWriters as string[]) {
+      const other = writerOf.get(w);
+      if (other !== undefined && other !== i) {
+        return { ok: false, error: `${at}.hcsWriters: ${w} is already a writer of parties[${other}]` };
+      }
+      writerOf.set(w, i);
     }
 
     let agentId: string | undefined;
@@ -151,14 +161,41 @@ export function partyByAddress(parties: Parties, address: string): Party | undef
 }
 
 /**
- * Hedera accounts allowed to pay for the HCS message of a record kind (0-5). The packed record
- * (kind 4) belongs to shops; every other kind belongs to platforms (their agent pays).
+ * Hedera accounts allowed to pay for the HCS message of a record kind (0-5) for some order: the
+ * writers of every party with the role. The packed record (kind 4) belongs to shops; every other
+ * kind belongs to platforms (their agent pays). To judge one order's records, use
+ * `orderWritersFor`, which takes only that order's own shop or platform.
  */
 export function hcsWritersFor(parties: Parties, kind: number): Set<string> {
   const role: PartyRole = kind === 4 ? 'shop' : 'platform';
   const set = new Set<string>();
   for (const p of partiesByRole(parties, role)) for (const w of p.hcsWriters) set.add(w);
   return set;
+}
+
+/** The two parties an order or claim names, by EVM address (as ClaimFiled carries them). */
+export interface OrderParties {
+  platform: string;
+  shop: string;
+}
+
+/**
+ * The party at `address` when it has `role`, else undefined (unknown address, or a party with
+ * another role).
+ */
+export function partyWithRole(parties: Parties, role: PartyRole, address: string): Party | undefined {
+  const p = partyByAddress(parties, address);
+  return p !== undefined && p.role === role ? p : undefined;
+}
+
+/**
+ * Hedera accounts allowed to pay for one order's record of a kind: the hcsWriters of the order's
+ * own shop for packed (kind 4), of its own platform for every other kind. Another platform's or
+ * shop's writer never counts. Empty when the named address is not a party of that role.
+ */
+export function orderWritersFor(parties: Parties, kind: number, order: OrderParties): Set<string> {
+  const p = kind === 4 ? partyWithRole(parties, 'shop', order.shop) : partyWithRole(parties, 'platform', order.platform);
+  return new Set(p?.hcsWriters ?? []);
 }
 
 /** Hedera account ids by role; a role without an account is absent. */
