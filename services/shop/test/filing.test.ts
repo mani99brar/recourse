@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getAddress, type Address, type Hex } from 'viem';
+import { decodeFunctionData, erc20Abi, getAddress, keccak256, type Address, type Hex } from 'viem';
 import { claimIdOf, orderIdOf, type RecordRefs } from '@recourse/shared';
 import { Journal } from '@recourse/records';
 import type { ChainClients } from '../src/chain.js';
@@ -64,5 +64,73 @@ describe('claim filing, vault token', () => {
     const { filer: f } = filer(c.clients, MOCK);
     await expect(f.fileClaim({ orderNonce: NONCE, platform: PLATFORM, refs, basketUsdc: 2_000_000n, netLossUsdc: 2_000_000n })).rejects.toThrow();
     expect(c.reads).toEqual(expect.arrayContaining(['usdc', 'params', 'allowance']));
+  });
+});
+
+/**
+ * A chain where an approve from an earlier run is mined (success receipt), but the allowance it gave
+ * is gone (another claim's escrow used it, or the court fee rose). Records every signature; the
+ * fileClaim simulate stops the run.
+ */
+function chainWithSpentApprove() {
+  const claimId = claimIdOf(296n, CLAIMS, orderIdOf(PLATFORM, SHOP, NONCE));
+  const oldRaw: Hex = '0x01';
+  const oldHash = keccak256(oldRaw);
+  const signed: Hex[] = [];
+  let nonce = 5;
+  const publicClient = {
+    getChainId: async () => 296,
+    readContract: async ({ functionName }: { functionName: string }) => {
+      if (functionName === 'claimIdFor') return claimId;
+      if (functionName === 'getClaim') return { status: 0 };
+      if (functionName === 'usdc') return MOCK;
+      if (functionName === 'params') return { courtFeeUsdc: 1_000_000n };
+      if (functionName === 'allowance') return 0n;
+      throw new Error(`unexpected read ${functionName}`);
+    },
+    getTransactionReceipt: async ({ hash }: { hash: Hex }) => {
+      if (hash === oldHash) return { status: 'success', transactionHash: oldHash, blockNumber: 10n, logs: [] };
+      throw new Error('no receipt');
+    },
+    estimateGas: async () => 50_000n,
+    getTransactionCount: async () => nonce,
+    getGasPrice: async () => 1n,
+    sendRawTransaction: async () => '0x',
+    waitForTransactionReceipt: async ({ hash }: { hash: Hex }) => {
+      nonce += 1;
+      return { status: 'success', transactionHash: hash, blockNumber: 11n, logs: [] };
+    },
+    simulateContract: async () => {
+      throw new Error('stop at the fileClaim simulate');
+    },
+  };
+  const walletClient = {
+    signTransaction: async (tx: { data: Hex }) => {
+      signed.push(tx.data);
+      return `0x02${signed.length.toString(16).padStart(2, '0')}` as Hex;
+    },
+  };
+  const clients = { publicClient, walletClient, account: { address: SHOP }, chain: undefined, hedera: false } as unknown as ChainClients;
+  const history: FilingJournalRow[] = [
+    { type: 'signed', at: '2026-11-01T00:00:00.000Z', claimId, orderId: orderIdOf(PLATFORM, SHOP, NONCE), step: 'approve', txHash: oldHash, nonce: 4, raw: oldRaw },
+    { type: 'mined', at: '2026-11-01T00:00:05.000Z', claimId, step: 'approve', txHash: oldHash, status: 'success', blockNumber: '10' },
+  ];
+  return { clients, signed, history };
+}
+
+describe('claim filing, court fee allowance', () => {
+  it('approves again when an earlier mined approve no longer covers the fee', async () => {
+    const c = chainWithSpentApprove();
+    const journal = Journal.open<FilingJournalRow>(join(mkdtempSync(join(tmpdir(), 'filing-')), 'claims.jsonl'));
+    journals.push(journal);
+    for (const row of c.history) journal.append(row);
+    const f = new ClaimFiler({ clients: c.clients, claims: CLAIMS, vault: VAULT, usdc: MOCK, claimsAbi: [], journal });
+    await expect(f.fileClaim({ orderNonce: NONCE, platform: PLATFORM, refs, basketUsdc: 2_000_000n, netLossUsdc: 2_000_000n })).rejects.toThrow(
+      'stop at the fileClaim simulate',
+    );
+    expect(c.signed).toHaveLength(1);
+    const call = decodeFunctionData({ abi: erc20Abi, data: c.signed[0]! });
+    expect(call.functionName).toBe('approve');
+    expect(call.args).toEqual([VAULT, 1_000_000n]);
   });
 });

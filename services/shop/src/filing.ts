@@ -177,15 +177,13 @@ export class ClaimFiler {
       throw new FilingError('token_mismatch', `the vault holds ${getAddress(held)}, the deployment names ${getAddress(this.deps.usdc)}`);
     }
     const fee = await this.courtFee();
-    const allowance = await this.deps.clients.publicClient.readContract({
-      address: this.deps.usdc,
-      abi: erc20Abi,
-      functionName: 'allowance',
-      args: [this.shop, this.deps.vault],
-    });
-    if (allowance < fee) {
+    if ((await this.allowance()) < fee) {
       const pendingApprove = this.lastSigned(claimId, 'approve');
       let receipt = pendingApprove ? await this.settleSigned(pendingApprove) : null;
+      // An approve mined by an earlier run counts only while its allowance is still there: another
+      // claim's fee escrow may have used it, or the court fee may have risen since. approve sets the
+      // allowance (it does not add), so a second one is safe.
+      if (receipt?.status === 'success' && (await this.allowance()) < fee) receipt = null;
       if (receipt?.status !== 'success') {
         const signed = await this.sign(claimId, orderId, 'approve', {
           to: this.deps.usdc,
@@ -255,6 +253,16 @@ export class ClaimFiler {
     if (requestedAt !== 0n && block.timestamp >= requestedAt + params[1]) {
       throw new FilingError('exit_due', explainRevert({ name: 'ExitDue', args: [] }));
     }
+  }
+
+  /** The vault's allowance from the shop on the deployment token. */
+  private allowance(): Promise<bigint> {
+    return this.deps.clients.publicClient.readContract({
+      address: this.deps.usdc,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [this.shop, this.deps.vault],
+    });
   }
 
   private lastSigned(claimId: Hex, step: 'approve' | 'file') {
