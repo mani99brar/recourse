@@ -57,3 +57,32 @@ record), or the keeper no longer follows one of its own transactions (an intent 
    (the claim on Hashscan, the case and dispute on Arbitrum). If a removed line was an intent, look up that
    nonce among the key's transactions in the explorer.
 6. `ctl.sh keeper resume`.
+
+## Alerts not delivered (/health 503)
+
+Every alert is written to the journal and to the service log as an `alert <kind> ...` line. There are
+two ways it reaches a person:
+
+- **Without `ALERT_URL`** the log is the channel: `recourse-watch.timer` (ops/watch/watch.sh) forwards each
+  new `alert` line through `RECOURSE_NOTIFY_CMD`. The keeper logs "ALERT_URL is not set: alerts go to this
+  log only" once, and `/health` shows `alerts.delivery: "log only ..."`. If the watch timer is not
+  installed (`systemctl --user list-timers | grep recourse-watch`) or has no notifier, nobody is told.
+- **With `ALERT_URL`** the keeper posts each alert. When one has waited more than 10 minutes, `/health`
+  answers 503 and `problems` gives the HTTP status the endpoint answers (`HTTP 404` for a wrong path,
+  `HTTP 503` while it is down). The log says the same once per change ("alerts not delivered: ..."). The
+  URL itself is never printed.
+
+To mend: install the watch timer with a notifier, or set or correct `ALERT_URL` in the keeper's
+environment file and restart the keeper. Nothing is lost: alerts still waiting for `ALERT_URL` are read
+back from the journal and sent oldest first. To read them meanwhile:
+`grep '"t":"alert"' journal.jsonl | cut -c1-300` (those without a later `alertSent` record of the same
+`id` were never posted).
+
+## A Kleros dispute that cannot be read (expiry_race)
+
+Before expiring a claim on Hedera, or marking its case stale on Arbitrum, the keeper reads the Kleros
+dispute: a final ruling in its execution period still reaches Hedera through executeRuling. When that
+read fails, the keeper does not know, so neither call goes ahead; the alert says "could not be read" and
+the keeper tries again every tick. A read that keeps failing points at the Arbitrum RPC (see `rpc_down`
+and `lastError` in `/health`). If the dispute has no ruling and you want the claim to expire now,
+`ctl.sh keeper expire <claimId>` sends both calls without the read.

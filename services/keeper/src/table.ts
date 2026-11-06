@@ -214,6 +214,8 @@ export interface Timing {
   courtSlackS: number;
   /** One court round when the court's periods cannot be read (court 8 on Arbitrum Sepolia: 900 + 2700 + 1800 + 2700). */
   courtRoundFallbackS: number;
+  /** /health is unhealthy while an alert raised this long ago still waits to be sent. */
+  alertUndeliveredS: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -229,4 +231,5 @@ export const DEFAULT_TIMING: Timing = {
   intentStuckS: 300,
   courtSlackS: 3600,
   courtRoundFallbackS: 8100,
+  alertUndeliveredS: 600,
 };

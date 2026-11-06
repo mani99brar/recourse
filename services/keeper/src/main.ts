@@ -241,6 +241,7 @@ async function main(): Promise<void> {
         ...(i.lastError ? { lastError: i.lastError } : {}),
       })),
       sendCooldownUntil: { hedera: hSender.cooldownUntil || undefined, arbitrum: aSender.cooldownUntil || undefined },
+      alerts: keeper.alertBacklog(),
       ...keeper.health,
       cursors: { hedera: hReader.position, arbitrum: aReader.position },
     }) as Record<string, unknown>;

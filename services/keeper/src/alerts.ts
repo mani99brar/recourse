@@ -4,7 +4,7 @@
 
 import type { Hex } from 'viem';
 import type { JournalRecord } from './journal.js';
-import { PermanentError, postJson, type FetchLike } from './net.js';
+import { PermanentError, TransientError, postJson, type FetchLike } from './net.js';
 
 export const ALERT_KINDS = [
   // stalls
@@ -96,6 +96,27 @@ export interface AlerterOptions {
   log?: (line: string) => void;
 }
 
+/**
+ * Why a post failed, without the URL: ALERT_URL may carry a token in its path (a chat bot's
+ * webhook), and this text goes to the log, the journal and /health.
+ */
+function deliveryError(err: unknown): string {
+  if ((err instanceof TransientError || err instanceof PermanentError) && err.status !== undefined) return `HTTP ${err.status}`;
+  if (err instanceof TransientError) return err.message.startsWith('timeout') ? 'timeout' : 'network error';
+  return 'post failed';
+}
+
+/** Alerts that wait to be sent, for /health. */
+export interface AlertBacklog {
+  count: number;
+  /** Age of the oldest unsent alert in ms (the alerter's clock); absent when none waits. */
+  oldestAgeMs?: number;
+  /** Whether an endpoint (ALERT_URL) is configured at all. */
+  configured: boolean;
+  /** Why the last flush sent nothing, while the endpoint has taken nothing since. */
+  lastError?: string;
+}
+
 function dedupeKey(kind: string, claimId: string | undefined, subject?: string): string {
   return `${claimId ?? (subject ? `@${subject}` : '-')}|${kind}`;
 }
@@ -114,6 +135,9 @@ export class Alerter {
   private readonly last = new Map<string, Clock>();
   private readonly outbox = new Map<string, AlertRecord>();
   private counter = 0;
+  /** Why the last flush could not deliver, until the endpoint takes an alert again. */
+  private lastError?: string;
+  private toldUnset = false;
 
   constructor(private readonly o: AlerterOptions) {}
 
@@ -205,6 +229,29 @@ export class Alerter {
     return [...this.outbox.values()];
   }
 
+  /** Whether alerts can leave this process: false without ALERT_URL (journaled and logged only). */
+  get configured(): boolean {
+    return this.o.url !== undefined && this.o.url !== '';
+  }
+
+  /** What waits to be sent: how many, the oldest's age, and why (no URL, or the endpoint's answer). */
+  backlog(): AlertBacklog {
+    let oldest: number | undefined;
+    for (const r of this.outbox.values()) if (oldest === undefined || r.raisedAt < oldest) oldest = r.raisedAt;
+    return {
+      count: this.outbox.size,
+      ...(oldest !== undefined ? { oldestAgeMs: Math.max(0, this.now() - oldest) } : {}),
+      configured: this.configured,
+      ...(this.lastError !== undefined ? { lastError: this.lastError } : {}),
+    };
+  }
+
+  /** Logs a delivery failure when it is new, not on every flush. */
+  private failed(error: string): void {
+    if (this.lastError !== error) this.o.log?.(`alerts not delivered: the endpoint answers ${error}; ${this.outbox.size} waiting`);
+    this.lastError = error;
+  }
+
   /**
    * Sends what is waiting, oldest first. An endpoint that is down (network error, timeout, 429,
    * 5xx) stops the flush and everything stays queued in order. One the endpoint refuses for good
@@ -215,8 +262,15 @@ export class Alerter {
   async flush(): Promise<{ sent: number; failed: number; dropped?: number }> {
     let sent = 0;
     let failed = 0;
-    if (this.o.url === undefined || this.o.url === '') return { sent, failed: this.outbox.size };
+    if (this.o.url === undefined || this.o.url === '') {
+      if (this.outbox.size > 0 && !this.toldUnset) {
+        this.toldUnset = true;
+        this.o.log?.('ALERT_URL is not set: alerts go to this log only, as its "alert ..." lines');
+      }
+      return { sent, failed: this.outbox.size };
+    }
     const refused: { rec: AlertRecord; error: string }[] = [];
+    let down: string | undefined;
     for (const rec of [...this.outbox.values()]) {
       const body = {
         service: rec.service,
@@ -233,14 +287,20 @@ export class Alerter {
         this.o.append({ t: 'alertSent', id: rec.id });
         this.outbox.delete(rec.id);
         sent += 1;
+        this.lastError = undefined;
       } catch (err) {
         failed += 1;
         if (err instanceof PermanentError) {
-          refused.push({ rec, error: err.message });
+          refused.push({ rec, error: deliveryError(err) });
           continue; // this payload is refused, not the endpoint down: go on to the next
         }
+        down = deliveryError(err);
         break; // endpoint down: keep order, try again next flush
       }
+    }
+    if (sent === 0) {
+      const why = down ?? refused[0]?.error;
+      if (why !== undefined) this.failed(why);
     }
     let dropped = 0;
     if (sent > 0) {

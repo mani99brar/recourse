@@ -76,7 +76,7 @@ describe('alerts', () => {
     expect(r.posted).toEqual(['settle_failed', 'expire_failed']);
     expect(a.pending()).toEqual([]);
     const drop = r.journal.find((x) => x.t === 'alertSent' && x.dropped !== undefined)!;
-    expect(String(drop.dropped)).toContain('HTTP 400');
+    expect(String(drop.dropped)).toBe('HTTP 400'); // never the URL: it may carry a token in its path
     // A restart does not bring the dropped one back.
     const again = new Alerter({ service: 'keeper', url: 'http://alerts.invalid/hook', append: (x) => r.journal.push(x), fetch: r.fetch });
     again.load(r.journal);
@@ -98,5 +98,38 @@ describe('alerts', () => {
     expect(await b.flush()).toEqual({ sent: 0, failed: 1 });
     expect(down.posted).toEqual([]);
     expect(b.pending().map((x) => x.kind)).toEqual(['mirror_lag', 'settle_failed']);
+  });
+
+  it('reports its backlog: how many wait, the oldest age, and why', async () => {
+    let now = 1_000_000;
+    const lines: string[] = [];
+    const none = new Alerter({ service: 'keeper', append: () => undefined, now: () => now, log: (l) => lines.push(l) });
+    expect(none.backlog()).toEqual({ count: 0, configured: false });
+    none.raise({ kind: 'gas_low', subject: 'ops-hedera' });
+    now += 5000;
+    none.raise({ kind: 'link_low', subject: 'claims' });
+    await none.flush();
+    await none.flush();
+    expect(none.backlog()).toEqual({ count: 2, oldestAgeMs: 5000, configured: false });
+    expect(lines.filter((l) => l.startsWith('ALERT_URL is not set: alerts go to this log only'))).toHaveLength(1);
+
+    let status = 503;
+    const fetch = async () => new Response('', { status });
+    const told: string[] = [];
+    const a = new Alerter({ service: 'keeper', url: 'https://alerts.invalid/bot1:hidden/send', append: () => undefined, now: () => now, fetch, log: (l) => told.push(l) });
+    a.raise({ kind: 'gas_low', subject: 'ops-hedera' });
+    await a.flush();
+    await a.flush();
+    expect(a.backlog()).toEqual({ count: 1, oldestAgeMs: 0, configured: true, lastError: 'HTTP 503' });
+    status = 404; // a wrong path refuses everything
+    await a.flush();
+    expect(a.backlog().lastError).toBe('HTTP 404');
+    expect(told.filter((l) => l.startsWith('alerts not delivered'))).toEqual([
+      'alerts not delivered: the endpoint answers HTTP 503; 1 waiting',
+      'alerts not delivered: the endpoint answers HTTP 404; 1 waiting',
+    ]);
+    status = 200;
+    await a.flush();
+    expect(a.backlog()).toEqual({ count: 0, configured: true });
   });
 });

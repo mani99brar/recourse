@@ -284,8 +284,11 @@ export class Keeper {
   }
 
   /**
-   * Whether the keeper is doing its job: it ticked within `staleAfterS` and can read the contract
-   * params (without them every timed action waits). GET /health answers 503 when not.
+   * Whether the keeper is doing its job: it ticked within `staleAfterS`, can read the contract
+   * params (without them every timed action waits), and the alert endpoint takes its alerts
+   * (expiry_race, gas_low and the stalls need someone to act). GET /health answers 503 when not.
+   * Without ALERT_URL the log is the alert channel (ops/watch forwards its "alert" lines), so an
+   * unsent alert is no problem then; `alertBacklog()` still shows it.
    */
   status(staleAfterS: number): { ok: boolean; problems: string[] } {
     const problems: string[] = [];
@@ -293,7 +296,23 @@ export class Keeper {
     if (last === undefined) problems.push('no tick yet');
     else if (this.now() - last > staleAfterS) problems.push(`last tick ${this.now() - last} s ago`);
     if (this.health.paramsError !== undefined) problems.push(`params unreadable: ${this.health.paramsError}`);
+    const b = this.o.alerter.backlog();
+    if (b.configured && b.oldestAgeMs !== undefined && b.oldestAgeMs > this.timing.alertUndeliveredS * 1000) {
+      const why = b.lastError ? `the alert endpoint answers ${b.lastError}` : 'not sent yet';
+      problems.push(`${b.count} alert${b.count === 1 ? '' : 's'} not delivered, the oldest raised ${Math.floor(b.oldestAgeMs / 1000)} s ago (${why}); they wait in the journal`);
+    }
     return { ok: problems.length === 0, problems };
+  }
+
+  /** Alerts waiting to be posted, for /health: where they go, how many wait, and the oldest's age. */
+  alertBacklog(): { delivery: string; waiting: number; oldestAgeS?: number; lastError?: string } {
+    const b = this.o.alerter.backlog();
+    return {
+      delivery: b.configured ? 'ALERT_URL' : 'log only (ALERT_URL is not set)',
+      waiting: b.configured ? b.count : 0,
+      ...(b.configured && b.oldestAgeMs !== undefined ? { oldestAgeS: Math.floor(b.oldestAgeMs / 1000) } : {}),
+      ...(b.lastError !== undefined ? { lastError: b.lastError } : {}),
+    };
   }
 
   private maybeCompact(): void {

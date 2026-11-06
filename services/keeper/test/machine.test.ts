@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { BridgeMode, CIRCLE_VAULT_TOKEN, CaseState, ClaimStatus, ExecutionState, externalIdUint, vaultTokenOf } from '@recourse/shared';
 import { keccak256, toHex, type Hex } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
-import { Alerter } from '../src/alerts.js';
+import { Alerter, type AlerterOptions } from '../src/alerts.js';
 import { phaseOf } from '../src/claims.js';
 import { emptyControl, writeControl, type Control } from '../src/control.js';
 import type { EvidencePort } from '../src/evidence.js';
@@ -32,12 +32,12 @@ interface Rig {
   built: { claimId: Hex; attempt: number; externalId: bigint }[];
 }
 
-function rig(opts: { fake?: FakeChains; dir?: string; keeper?: Partial<KeeperOptions>; evidence?: EvidencePort } = {}): Rig {
+function rig(opts: { fake?: FakeChains; dir?: string; keeper?: Partial<KeeperOptions>; evidence?: EvidencePort; alerter?: Partial<AlerterOptions> } = {}): Rig {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), 'keeper-machine-'));
   if (!opts.dir) dirs.push(dir);
   const fake = opts.fake ?? new FakeChains();
   const journal = openJournal(dir);
-  const alerter = new Alerter({ service: 'keeper', append: (r) => journal.append(r), now: () => fake.t * 1000 });
+  const alerter = new Alerter({ service: 'keeper', append: (r) => journal.append(r), now: () => fake.t * 1000, ...opts.alerter });
   const built: Rig['built'] = [];
   const evidence: EvidencePort = opts.evidence ?? {
     async build(req) {
@@ -1270,6 +1270,52 @@ describe('health', () => {
     r.fake.paramsFail = false;
     await run(r, 15);
     expect(r.k.status(120).ok).toBe(true);
+  });
+
+  it('without ALERT_URL the log is the alert channel: an unsent alert does not make it unhealthy', async () => {
+    const r = rig(); // no ALERT_URL: ops/watch forwards the log's "alert" lines
+    r.fake.paramsFail = true;
+    await run(r, 15);
+    r.fake.paramsFail = false;
+    await run(r, 615, 15);
+    expect(r.alerter.pending().map((a) => a.kind)).toEqual(['params_unreadable']);
+    expect(r.k.status(120)).toEqual({ ok: true, problems: [] });
+    expect(r.k.alertBacklog()).toEqual({ delivery: 'log only (ALERT_URL is not set)', waiting: 0 });
+  });
+
+  it('is unhealthy once an alert has waited 10 minutes for the endpoint', async () => {
+    const r = rig({ alerter: { url: 'https://alerts.invalid/hook', fetch: async () => new Response('', { status: 404 }) } });
+    r.fake.paramsFail = true;
+    await run(r, 15);
+    r.fake.paramsFail = false;
+    await run(r, 600, 15);
+    expect(r.k.status(120)).toEqual({ ok: true, problems: [] }); // 600 s: not yet
+    await run(r, 15);
+    expect(r.k.status(120)).toEqual({
+      ok: false,
+      problems: ['1 alert not delivered, the oldest raised 615 s ago (the alert endpoint answers HTTP 404); they wait in the journal'],
+    });
+    expect(r.k.alertBacklog()).toEqual({ delivery: 'ALERT_URL', waiting: 1, oldestAgeS: 615, lastError: 'HTTP 404' });
+  });
+
+  it("names the endpoint's answer without its URL, and is healthy again once the endpoint takes the alerts", async () => {
+    let up = false;
+    const lines: string[] = [];
+    const fetch = async () => new Response(up ? 'ok' : 'down', { status: up ? 200 : 503 });
+    const r = rig({ alerter: { url: 'https://alerts.invalid/bot1234:hidden-path-part/send', fetch, log: (l) => lines.push(l) } });
+    r.fake.paramsFail = true;
+    await run(r, 15);
+    r.fake.paramsFail = false;
+    await run(r, 660, 60);
+    const s = r.k.status(120);
+    expect(s.ok).toBe(false);
+    expect(s.problems[0]).toContain('(the alert endpoint answers HTTP 503)');
+    expect(lines.filter((l) => l.startsWith('alerts not delivered'))).toHaveLength(1); // logged once, not every flush
+    expect(JSON.stringify([s, lines])).not.toContain('hidden-path-part');
+    up = true;
+    await run(r, 15);
+    expect(r.alerter.pending()).toEqual([]);
+    expect(r.k.status(120)).toEqual({ ok: true, problems: [] });
   });
 
   it('dates a claim error, so an old one reads as history', async () => {
