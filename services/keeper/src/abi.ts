@@ -8,6 +8,7 @@ export const claimsAbi = parseAbi([
   'struct RecordRefs { uint64 topicNum; uint64[6] seq; bytes32[6] hashes; }',
   'struct Claim { bytes32 orderId; address shop; address platform; RecordRefs refs; uint256 basketUsdc; uint256 netLossUsdc; uint64 filedAt; uint64 preCheckedAt; uint8 gap; uint8 answer; bytes32 packHash; address contestedBy; uint8 sendCount; uint64 lastSendAt; bytes32 lastMessageId; uint256 disputeId; uint8 ruling; uint8 attempts; uint8 status; }',
   'struct Params { uint64 contestWindow; uint64 claimTimeout; uint256 courtFeeUsdc; uint256 handlingBase; uint16 handlingBps; uint256 handlingCap; uint64 resendGap; uint8 maxSends; }',
+  'struct ClaimTerms { uint64 contestWindow; uint64 claimTimeout; uint256 handling; }',
   // events
   'event ClaimFiled(bytes32 indexed claimId, bytes32 orderId, address indexed shop, address indexed platform, RecordRefs refs, uint256 basketUsdc, uint256 netLossUsdc, uint64 filedAt)',
   'event PreCheckRecorded(bytes32 indexed claimId, uint8 gap, uint8 answer, bytes32 packHash)',
@@ -67,6 +68,7 @@ export const claimsAbi = parseAbi([
   // views
   'function getClaim(bytes32 claimId) view returns (Claim)',
   'function params() view returns (Params)',
+  'function claimTermsOf(bytes32 claimId) view returns (ClaimTerms)',
   'function quoteSend(bytes32 claimId) view returns (uint256 fee)',
   'function bridgeMode() view returns (uint8)',
   'function rulingRelayer() view returns (address)',
@@ -78,9 +80,11 @@ export const claimsAbi = parseAbi([
 
 export const vaultAbi = parseAbi([
   'function creditOf(address account) view returns (uint256)',
+  'function oldestOpenClaimOf(address platform) view returns (bytes32)',
   'event OutcomeApplied(bytes32 indexed claimId, address indexed platform, address indexed shop, uint256 paid, uint256 refund, uint256 toPool)',
   // errors: closeUncontested, settle and expireClaim call into the vault, so its reverts can
-  // surface on those calls. ExitDue only comes from escrowFee/fileClaim, which the keeper never sends.
+  // surface on those calls (EarlierClaimOpen on the first two while an earlier claim against the
+  // platform is open). ExitDue only comes from escrowFee/fileClaim, which the keeper never sends.
   'error AlreadyBound()',
   'error AmountZero()',
   'error AssociationFailed(int256 responseCode)',

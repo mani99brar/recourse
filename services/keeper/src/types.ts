@@ -33,6 +33,15 @@ export interface ClaimsParams {
   maxSends: number;
 }
 
+/**
+ * `claimTermsOf(claimId)`: the contest window and claim timeout a claim was filed under. The claims
+ * contract keeps them for the claim's whole life, whatever params() says later.
+ */
+export interface ClaimTerms {
+  contestWindow: number;
+  claimTimeout: number;
+}
+
 export interface CaseParams {
   caseDeadline: number;
   maxOpenCases: number;
@@ -133,6 +142,17 @@ export interface Chains {
 
   getClaim(claimId: Hex): Promise<Claim>;
   claimsParams(): Promise<ClaimsParams>;
+  /**
+   * The claim's own terms (`claimTermsOf`; zeros for an unknown claim), or null when the claims
+   * contract has none: one from before per-claim terms reverts the call and checks every claim
+   * against its live params(). Throws when it cannot be read.
+   */
+  claimTerms?(claimId: Hex): Promise<ClaimTerms | null>;
+  /**
+   * The vault's oldest open claim against `platform` (`oldestOpenClaimOf`; zero when none), the one
+   * a close or settle refused with EarlierClaimOpen waits on. Throws when it cannot be read.
+   */
+  oldestOpenClaimOf?(platform: Address): Promise<Hex>;
   bridgeMode(): Promise<BridgeMode>;
   caseOf(claimId: Hex): Promise<CaseView>;
   caseParams(): Promise<CaseParams>;
@@ -279,6 +299,16 @@ export interface KeeperClaim {
   staleAt?: number;
   /** The case's expiresAt as the case contract reported it in a NotExpired revert; wins over the local sum. */
   caseExpiresAt?: number;
+  /** The claim's own contest window and timeout (`claimTermsOf`), read once; absent where the contract has none. */
+  terms?: ClaimTerms;
+  /**
+   * Set while the vault refuses this claim's close or settle with EarlierClaimOpen: the earlier open
+   * claim against the same platform it waits on, since when, and the latest time anyone can end that
+   * claim (its own timeout after its pre-check, or after filing), once read.
+   */
+  payoutWait?: { earlier: Hex; since: number; endsBy?: number };
+  /** Set while openCase (attempt 1) or refile (attempt 2) waits on a short fee pool or a full case cap. */
+  openWait?: { why: 'FeePoolLow' | 'CapReached'; attempt: 1 | 2; since: number };
   terminal?: 'Settled' | 'Closed' | 'Expired';
   terminalAt?: number;
   /** Per call: tries so far and the time of the last one (s). */

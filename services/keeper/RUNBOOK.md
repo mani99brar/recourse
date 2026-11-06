@@ -16,8 +16,7 @@ revert on a message the router delivers, so the usual cause is gas: each message
 
 What the keeper does and does not do:
 
-- It does not execute a failed message by hand, and no setting makes it do so
-  (`KEEPER_AUTO_MANUAL_EXEC` is not read).
+- It does not execute a failed message by hand, and no setting makes it do so.
 - It resends an outbound message only while every copy is still Untouched, so a Failure stops resends.
   The claim expires on Hedera at preCheckedAt + claimTimeout unless the message is executed first.
 - A ruling message in Failure holds expiry back: the keeper raises expiry_race and does not call
@@ -37,6 +36,37 @@ Steps:
    message brings RulingReceived on Hedera and the keeper settles the claim.
 4. If a ruling message cannot be executed and you decide to let the claim expire instead,
    `ctl.sh keeper expire <claimId>` lets the keeper call expireClaim; the ruling is then ignored.
+
+## A payout waits for an earlier claim (payout_waiting)
+
+The deposit vault pays a platform's open claims in the order they were filed. When a claim's payout is
+more than it may draw while an earlier claim against the same platform is still open, `closeUncontested`
+or `settle` reverts `EarlierClaimOpen(oldestOpen)` and nothing changes. The keeper treats that as a wait,
+not a failure: the claim is not held, the tries are not counted and no `close_late`, `settle_late` or
+`settle_failed` goes out. It reads the vault's `oldestOpenClaimOf(platform)` every 2 minutes and sends
+again on the tick that sees the earlier claim end. The vault deployed before filing order never refuses
+a payout this way.
+
+Anyone can end the earlier claim by its own timeout at the latest (expire it, close it after its window,
+or settle its ruling), and the keeper does so itself. `payout_waiting` means that claim is still open 15
+minutes past its own timeout: `detail.earlierClaimId` names it, `endsBy` is that timeout and
+`waitingSince` is when this claim started waiting.
+
+1. `ctl.sh keeper status <claimId>` shows `payoutWait {earlier, since, endsBy}` for the waiting claim.
+2. `ctl.sh keeper status <earlier claim id>` shows why the earlier claim has not ended: an operator hold
+   (`keeper-ctl hold`), an automatic hold after failed calls (`autoHold`), a court ruling that holds
+   expiry back (`expiry_race`), or a send-pause window.
+3. Clear that cause, for example `ctl.sh keeper release <earlier claim id>` once its own alert is dealt
+   with. The waiting claim closes or settles on a tick after the earlier one ends; nothing needs doing
+   for it.
+
+## openCase or refile waits on the fee pool or the case cap (fee_pool_low, open_cases_near_cap)
+
+`openCase` waits while the fee pool is below the arbitration cost or every open-case slot is taken;
+`refile` waits on the fee pool. Each gives one alert per attempt; the keeper keeps trying every 2 minutes,
+the tries are not counted and the claim is not held. It stops once the case has less than one court round
+plus an hour left before `expiresAt`, says so with `claim_stale`, and the case goes stale at `expiresAt`.
+Fund the pool with `fundFeePool` under `ctl.sh keeper pause`, or wait for a case to free its slot.
 
 ## Journal lines that do not parse (journal_error)
 

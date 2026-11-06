@@ -35,6 +35,7 @@ export const ALERT_KINDS = [
   'evidence_too_large',
   'evidence_failed',
   'withdraw_due',
+  'payout_waiting',
   'kleros_nudged',
   'precheck_conflict',
   'precheck_stalled',

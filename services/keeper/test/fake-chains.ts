@@ -24,6 +24,7 @@ import type {
   Chain,
   ChainEvent,
   Chains,
+  ClaimTerms,
   ClaimsParams,
   DisputeInfo,
   KeeperCall,
@@ -81,6 +82,26 @@ export class FakeChains implements Chains {
   linkShort = false;
   readonly credit = new Map<string, bigint>();
   paramsFail = false;
+  /** Each claim's contest window and timeout, frozen at filing as claimTermsOf returns them. */
+  readonly terms = new Map<string, ClaimTerms>();
+  /** A claims contract from before per-claim terms: claimTermsOf reverts and every check uses the live params. */
+  claimTermsRevert = false;
+  /** claimTermsOf reads so far. */
+  claimTermsReads = 0;
+  /**
+   * A platform deposit too short for any claim but the oldest open one: the vault refuses the
+   * others' close and settle with EarlierClaimOpen(oldest), as the filing-order vault does.
+   */
+  depositShort = false;
+  /** The next this many oldestOpenClaimOf reads fail as a transport error would. */
+  oldestReadFails = 0;
+  /** oldestOpenClaimOf reads so far. */
+  oldestReads = 0;
+  /**
+   * The case contract from before openBy: openCase and refile go Stale from receivedAt (or ruledAt)
+   * + caseDeadline, or expiresAt. The current one goes Stale once caseDeadline reaches expiresAt.
+   */
+  oldCase = false;
   readonly calls: KeeperCall[] = [];
   /** Per-function override: return a result to replace the contract behaviour. */
   readonly overrides = new Map<string, (call: KeeperCall) => CallResult | undefined>();
@@ -129,6 +150,20 @@ export class FakeChains implements Chains {
     if (this.paramsFail) throw new Error('params() unreadable');
     return { ...this.claimsParamsV };
   }
+  async claimTerms(claimId: Hex): Promise<ClaimTerms | null> {
+    this.claimTermsReads += 1;
+    if (this.claimTermsRevert) return null;
+    return { ...(this.terms.get(claimId.toLowerCase()) ?? { contestWindow: 0, claimTimeout: 0 }) };
+  }
+  /** The first claim filed against the platform that is still open, as the vault's filing-order list has it. */
+  async oldestOpenClaimOf(platform: Address): Promise<Hex> {
+    this.oldestReads += 1;
+    if (this.oldestReadFails > 0) {
+      this.oldestReadFails -= 1;
+      throw new Error('HTTP request failed.\n\nStatus: 429');
+    }
+    return this.oldestOpen(platform);
+  }
   async bridgeMode(): Promise<BridgeMode> {
     return this.mode;
   }
@@ -147,6 +182,9 @@ export class FakeChains implements Chains {
   }
   /** Cases holding an open-case slot: Opened and RefilePending, as on the real contract. */
   async openCases(): Promise<number> {
+    return this.openSlots();
+  }
+  private openSlots(): number {
     return [...this.cases.values()].filter((c) => c.state === CaseState.Opened || c.state === CaseState.RefilePending).length;
   }
   async execState(destination: Chain, messageId: Hex): Promise<ExecutionState> {
@@ -226,14 +264,32 @@ export class FakeChains implements Chains {
 
   // ---------------------------------------------------------------- contract behaviour
 
+  private oldestOpen(platform: Address): Hex {
+    const open: readonly ClaimStatus[] = [ClaimStatus.Filed, ClaimStatus.PreChecked, ClaimStatus.Contested, ClaimStatus.AtCourt, ClaimStatus.Ruled];
+    for (const [id, c] of this.claims) {
+      if (c.platform.toLowerCase() === platform.toLowerCase() && open.includes(c.status)) return id as Hex;
+    }
+    return ZERO32;
+  }
+
+  /** What the vault does before a payout: refuse it while the deposit is short and an earlier claim is open. */
+  private payoutOrder(id: string, c: Claim): Revert | undefined {
+    if (!this.depositShort) return undefined;
+    const oldest = this.oldestOpen(c.platform);
+    return oldest !== id ? revert('EarlierClaimOpen', oldest) : undefined;
+  }
+
   private apply(call: KeeperCall): Revert | undefined {
     const id = typeof call.args[0] === 'string' ? (call.args[0] as Hex).toLowerCase() : '';
     const c = this.claims.get(id);
-    const p = this.claimsParamsV;
+    // The claim's own terms where the contract keeps them, else the live params.
+    const p = (!this.claimTermsRevert && this.terms.get(id)) || this.claimsParamsV;
     switch (call.fn) {
       case 'closeUncontested': {
         if (!c || c.status !== ClaimStatus.PreChecked) return revert('WrongStatus', c?.status);
         if (BigInt(this.t) <= c.preCheckedAt + BigInt(p.contestWindow)) return revert('WindowOpen');
+        const refused = this.payoutOrder(id, c);
+        if (refused) return refused;
         c.status = ClaimStatus.Closed;
         this.emitH('ClosedUncontested', { claimId: id, answer: c.answer, toShop: 0n });
         return;
@@ -254,8 +310,8 @@ export class FakeChains implements Chains {
       case 'resend': {
         if (!c || c.status !== ClaimStatus.AtCourt) return revert('WrongStatus', c?.status);
         if (this.mode === BridgeMode.None) return revert('WrongMode', this.mode);
-        if (BigInt(this.t) < c.lastSendAt + BigInt(p.resendGap)) return revert('ResendTooSoon');
-        if (c.sendCount >= p.maxSends) return revert('MaxSendsReached');
+        if (BigInt(this.t) < c.lastSendAt + BigInt(this.claimsParamsV.resendGap)) return revert('ResendTooSoon');
+        if (c.sendCount >= this.claimsParamsV.maxSends) return revert('MaxSendsReached');
         c.sendCount += 1;
         c.lastSendAt = BigInt(this.t);
         const messageId = this.msgId();
@@ -283,6 +339,8 @@ export class FakeChains implements Chains {
       }
       case 'settle': {
         if (!c || c.status !== ClaimStatus.Ruled) return revert('WrongStatus', c?.status);
+        const refused = this.payoutOrder(id, c);
+        if (refused) return refused;
         c.status = ClaimStatus.Settled;
         this.emitH('Settled', { claimId: id, outcome: c.ruling, toShop: 0n, toPool: 0n });
         return;
@@ -295,12 +353,17 @@ export class FakeChains implements Chains {
         const cv = this.cases.get(cid);
         const want = call.fn === 'openCase' ? CaseState.Received : CaseState.RefilePending;
         if (!cv || cv.state !== want) return revert('WrongState', cid, cv?.state ?? 0);
-        // At or after the case deadline or expiresAt: Stale, nothing spent, the call succeeds.
+        // No round left (the case deadline reaches expiresAt; on the old contract, also the case
+        // deadline after receivedAt or ruledAt): Stale, nothing spent, the call succeeds.
+        const t = BigInt(this.t);
+        const deadline = BigInt(this.caseParamsV.caseDeadline);
         const from = call.fn === 'openCase' ? cv.receivedAt : cv.ruledAt;
-        if (BigInt(this.t) >= from + BigInt(this.caseParamsV.caseDeadline) || BigInt(this.t) >= (cv.expiresAt ?? 0n)) {
+        const noRound = this.oldCase ? t >= from + deadline || t >= (cv.expiresAt ?? 0n) : t + deadline >= (cv.expiresAt ?? 0n);
+        if (noRound) {
           this.stale(cid as Hex);
           return;
         }
+        if (call.fn === 'openCase' && this.openSlots() >= this.caseParamsV.maxOpenCases) return revert('CapReached');
         if (this.feePoolV < this.costV) return revert('FeePoolLow', this.feePoolV, this.costV);
         const attempt = call.fn === 'openCase' ? 1 : 2;
         const disputeId = this.nextDispute++;
@@ -382,6 +445,7 @@ export class FakeChains implements Chains {
       attempts: 0,
       status: ClaimStatus.Filed,
     });
+    this.terms.set(id, { contestWindow: this.claimsParamsV.contestWindow, claimTimeout: this.claimsParamsV.claimTimeout });
     this.emitH('ClaimFiled', { claimId: id, orderId: keccak256(toHex(`order-${n}`)), shop: SHOP, platform: PLATFORM, refs, basketUsdc: 20_000_000n, netLossUsdc: 20_000_000n, filedAt: BigInt(this.t) });
     return id;
   }

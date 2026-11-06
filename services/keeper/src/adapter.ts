@@ -18,8 +18,8 @@ import { encodeFunctionData, type Abi, type Address, type Hex, type PublicClient
 import { caseAbi, claimsAbi, erc20Abi, vaultAbi } from './abi.js';
 import type { JournalRecord } from './journal.js';
 import type { BlockLogReader, EventSource, LogQuery } from './logs.js';
-import { decodeRevert } from './rpc.js';
-import type { Sender, SendOutcome } from './sender.js';
+import { classifyRpcError, decodeRevert } from './rpc.js';
+import { RevertError, type Sender, type SendOutcome } from './sender.js';
 import type {
   CallResult,
   CaseParams,
@@ -27,6 +27,7 @@ import type {
   ChainEvent,
   Chains,
   ClaimsParams,
+  ClaimTerms,
   DisputeInfo,
   KeeperCall,
   Levels,
@@ -199,6 +200,21 @@ export class LiveChains implements Chains {
   async claimsParams(): Promise<ClaimsParams> {
     const p = await this.o.hedera.client.readContract({ address: this.o.hedera.claims, abi: claimsAbi, functionName: 'params' });
     return { contestWindow: Number(p.contestWindow), claimTimeout: Number(p.claimTimeout), resendGap: Number(p.resendGap), maxSends: p.maxSends };
+  }
+
+  async claimTerms(claimId: Hex): Promise<ClaimTerms | null> {
+    try {
+      const t = await this.o.hedera.client.readContract({ address: this.o.hedera.claims, abi: claimsAbi, functionName: 'claimTermsOf', args: [claimId] });
+      return { contestWindow: Number(t.contestWindow), claimTimeout: Number(t.claimTimeout) };
+    } catch (err) {
+      // A revert: the deployed claims contract from before per-claim terms. Anything else: unread.
+      if (classifyRpcError(err) instanceof RevertError) return null;
+      throw err;
+    }
+  }
+
+  oldestOpenClaimOf(platform: Address): Promise<Hex> {
+    return this.o.hedera.client.readContract({ address: this.o.hedera.vault, abi: vaultAbi, functionName: 'oldestOpenClaimOf', args: [platform] });
   }
 
   async bridgeMode(): Promise<BridgeMode> {

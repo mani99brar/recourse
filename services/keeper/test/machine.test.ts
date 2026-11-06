@@ -194,6 +194,171 @@ describe('contest window', () => {
   });
 });
 
+describe("a claim's own terms", () => {
+  it('closes by the contest window the claim was filed under, whatever params() says later', async () => {
+    const r = rig();
+    const id = r.fake.file(1);
+    await r.k.tick();
+    r.fake.precheck(id);
+    const at = r.fake.t;
+    await r.k.tick();
+    r.fake.claimsParamsV.contestWindow = 3600; // a later setParams; the claim keeps its 600 s
+    r.fake.t = at + 601;
+    await r.k.tick();
+    expect(fns(r, id)).toEqual(['closeUncontested']);
+    await r.k.tick();
+    expect(phase(r, id)).toBe('Closed');
+    expect(r.k.book.claims.get(id)!.terms).toEqual({ contestWindow: 600, claimTimeout: 64_800 });
+  });
+
+  it('expires by the timeout the claim was filed under', async () => {
+    const r = rig();
+    const id = r.fake.file(1);
+    const filed = r.fake.t;
+    await r.k.tick();
+    r.fake.claimsParamsV.claimTimeout = 2 * 64_800;
+    r.fake.t = filed + 64_800 + 1;
+    await r.k.tick();
+    expect(fns(r, id)).toEqual(['expireClaim']);
+  });
+
+  it('uses the live params where claimTermsOf reverts (a contract from before it), and asks only once', async () => {
+    const fake = new FakeChains();
+    fake.claimTermsRevert = true;
+    const r = rig({ fake });
+    const id = r.fake.file(1);
+    await r.k.tick();
+    r.fake.precheck(id);
+    const at = r.fake.t;
+    await r.k.tick();
+    r.fake.claimsParamsV.contestWindow = 1200; // that contract checks its live params
+    r.fake.t = at + 601;
+    await r.k.tick();
+    expect(fns(r, id)).toEqual([]);
+    r.fake.t = at + 1201;
+    await r.k.tick();
+    expect(fns(r, id)).toEqual(['closeUncontested']);
+    r.fake.file(2);
+    await run(r, 120, 60);
+    expect(r.fake.claimTermsReads).toBe(1);
+    expect(r.k.book.claims.get(id)!.terms).toBeUndefined();
+  });
+});
+
+describe('payouts in filing order', () => {
+  /** A deposit too short for any claim but the oldest: claim 1 stays Filed, claim 2 is pre-checked. */
+  async function behindAnEarlierClaim(opts: { claimTimeout?: number } = {}): Promise<{ r: Rig; first: Hex; id: Hex }> {
+    const fake = new FakeChains();
+    fake.depositShort = true;
+    if (opts.claimTimeout !== undefined) fake.claimsParamsV.claimTimeout = opts.claimTimeout;
+    const r = rig({ fake });
+    const first = r.fake.file(1);
+    await run(r, 30);
+    const id = r.fake.file(2);
+    await run(r, 30);
+    r.fake.precheck(id);
+    return { r, first, id };
+  }
+
+  it('a close refused for an earlier open claim waits uncounted, then goes once that claim has ended', async () => {
+    const { r, first, id } = await behindAnEarlierClaim();
+    await run(r, 3 * 3600, 60);
+    const c = r.k.book.claims.get(id)!;
+    expect(c.payoutWait).toMatchObject({ earlier: first });
+    expect(fns(r, id).filter((f) => f === 'closeUncontested')).toHaveLength(1);
+    expect(c.tries.closeUncontested!.count).toBe(0);
+    expect(c.autoHold).toBeUndefined();
+    expect(kinds(r)).not.toContain('close_late');
+    expect(kinds(r)).not.toContain('payout_waiting');
+    expect(r.fake.oldestReads).toBeGreaterThan(50);
+    // The earlier claim is pre-checked and closed: the waiting one goes on the tick that sees it.
+    r.fake.precheck(first);
+    await run(r, 600, 60);
+    await run(r, 120, 60);
+    expect(phase(r, first)).toBe('Closed');
+    expect(phase(r, id)).toBe('Closed');
+    expect(r.k.book.claims.get(id)!.payoutWait).toBeUndefined();
+  });
+
+  it('goes again as soon as the vault no longer names the earlier claim, even before its event is read', async () => {
+    const { r, first, id } = await behindAnEarlierClaim();
+    await run(r, 1800, 60);
+    expect(fns(r, id).filter((f) => f === 'closeUncontested')).toHaveLength(1);
+    r.fake.claims.get(first)!.status = ClaimStatus.Expired; // no ClaimExpired event yet
+    await run(r, 180, 60);
+    expect(fns(r, id).filter((f) => f === 'closeUncontested')).toHaveLength(2);
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Closed);
+  });
+
+  it('an unreadable oldestOpenClaimOf only means the close is tried again', async () => {
+    const { r, id } = await behindAnEarlierClaim();
+    await run(r, 900, 60);
+    r.fake.oldestReadFails = 1_000;
+    await run(r, 1800, 60);
+    const c = r.k.book.claims.get(id)!;
+    expect(fns(r, id).filter((f) => f === 'closeUncontested').length).toBeGreaterThan(5);
+    expect(c.tries.closeUncontested!.count).toBe(0);
+    expect(c.autoHold).toBeUndefined();
+  });
+
+  it('raises payout_waiting once when the earlier claim outlasts its own timeout, and closes after it ends', async () => {
+    const { r, first, id } = await behindAnEarlierClaim({ claimTimeout: 7200 });
+    control(r, { holds: { [first]: Date.now() } }); // the operator keeps the earlier claim from expiring
+    const firstFiled = Number(r.fake.claims.get(first)!.filedAt);
+    await run(r, firstFiled + 7200 + 600 - r.fake.t, 60);
+    expect(kinds(r)).not.toContain('payout_waiting');
+    await run(r, 600, 60);
+    const waiting = r.alerter.pending().filter((a) => a.kind === 'payout_waiting');
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]).toMatchObject({ claimId: id, detail: { earlierClaimId: first, endsBy: String(firstFiled + 7200) } });
+    const section = /"([^"]+)" in services\/keeper\/RUNBOOK\.md/.exec(waiting[0]!.hint!)?.[1];
+    expect(runbook()).toContain(`## ${section} (payout_waiting)`);
+    expect(r.k.view(id)!.payoutWait).toMatchObject({ earlier: first, endsBy: firstFiled + 7200 });
+    await run(r, 3600, 60);
+    expect(r.alerter.pending().filter((a) => a.kind === 'payout_waiting')).toHaveLength(1);
+    control(r, {});
+    await run(r, 300, 60);
+    expect(phase(r, first)).toBe('Expired');
+    expect(phase(r, id)).toBe('Closed');
+  });
+
+  it('a settle refused for an earlier open claim waits too: no settle_failed, no hold', async () => {
+    const fake = new FakeChains();
+    fake.depositShort = true;
+    const r = rig({ fake });
+    const first = r.fake.file(1);
+    await run(r, 30);
+    const id = await toWatching(r, 2);
+    r.fake.rule(id, 1);
+    await run(r, 30);
+    r.fake.arrive(id);
+    await run(r, 3 * 3600, 60);
+    const c = r.k.book.claims.get(id)!;
+    expect(phase(r, id)).toBe('RuledHedera');
+    expect(fns(r, id).filter((f) => f === 'settle')).toHaveLength(1);
+    expect(c.tries.settle!.count).toBe(0);
+    expect(c.autoHold).toBeUndefined();
+    expect(kinds(r)).not.toContain('settle_failed');
+    expect(kinds(r)).not.toContain('settle_late');
+    r.fake.claims.get(first)!.status = ClaimStatus.Expired;
+    await run(r, 180, 60);
+    expect(phase(r, id)).toBe('Settled');
+  });
+
+  it('the oldest open claim is never refused', async () => {
+    const fake = new FakeChains();
+    fake.depositShort = true;
+    const r = rig({ fake });
+    const id = r.fake.file(1);
+    await run(r, 30);
+    r.fake.file(2);
+    r.fake.precheck(id);
+    await run(r, 700, 60);
+    expect(phase(r, id)).toBe('Closed');
+    expect(r.k.book.claims.get(id)!.payoutWait).toBeUndefined();
+  });
+});
+
 describe('outbound bridge', () => {
   it('resends an Untouched message after 60 min, up to maxSends, then alerts sends_exhausted', async () => {
     const r = rig();
@@ -315,15 +480,85 @@ describe('opening the case', () => {
     expect(r.k.book.claims.get(id)!.autoHold).toBeUndefined();
   });
 
-  it('opens without evidence when the case deadline is close and evidence is still transient', async () => {
+  it('opens without evidence after waiting evidenceWaitS for it while it is still transient', async () => {
     const r = rig({ evidence: { build: async () => ({ ok: false, kind: 'transient', message: 'gateway down' }) } });
     const id = await toCourt(r);
     r.fake.deliver(id);
-    await run(r, 2600, 60);
+    await run(r, 6200, 60);
     expect(fns(r, id)).not.toContain('openCase');
     await run(r, 200, 60);
     expect(fns(r, id)).toContain('openCase');
     expect(kinds(r)).toContain('evidence_failed');
+  });
+
+  it('opens without evidence sooner when openBy is close', async () => {
+    const fake = new FakeChains();
+    // expiresAt = filedAt + 8000 and openBy 3600 s before it: no evidence wait past filedAt + 3500.
+    fake.caseParamsV.claimTimeout = 8000;
+    fake.courtRoundV = 600;
+    const r = rig({ fake, keeper: { timing: { courtSlackS: 0 } }, evidence: { build: async () => ({ ok: false, kind: 'transient', message: 'gateway down' }) } });
+    const id = await toCourt(r);
+    r.fake.deliver(id);
+    const filedAt = Number(r.fake.claims.get(id)!.filedAt);
+    await run(r, filedAt + 3400 - r.fake.t, 60);
+    expect(fns(r, id)).not.toContain('openCase');
+    await run(r, 200, 60);
+    expect(fns(r, id)).toContain('openCase');
+  });
+
+  it('waits on a full case cap, alerts once, and opens when a slot frees', async () => {
+    const fake = new FakeChains();
+    fake.caseParamsV.maxOpenCases = 1;
+    const r = rig({ fake });
+    const first = await toWatching(r, 1);
+    const id = await toCourt(r, 2);
+    r.fake.deliver(id);
+    await run(r, 3700, 60);
+    expect(fns(r, id)).not.toContain('openCase');
+    const mine = (kind: string) => r.alerter.pending().filter((a) => a.kind === kind && a.claimId === id);
+    expect(mine('open_cases_near_cap')).toHaveLength(1);
+    expect(mine('open_late')).toHaveLength(0);
+    expect(r.k.view(id)!.openWait).toMatchObject({ why: 'CapReached', attempt: 1 });
+    r.fake.rule(first, 1); // the first case is ruled and gives up its slot
+    await run(r, 120, 60);
+    expect(fns(r, id)).toContain('openCase');
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Opened);
+    expect(r.k.book.claims.get(id)!.openWait).toBeUndefined();
+  });
+
+  it('CapReached from openCase is a wait: not counted, no hold, one alert', async () => {
+    const r = rig();
+    const id = await toCourt(r);
+    r.fake.overrides.set('openCase', () => ({ kind: 'reverted', error: 'CapReached' }));
+    r.fake.deliver(id);
+    await run(r, 3700, 60);
+    const c = r.k.book.claims.get(id)!;
+    expect(fns(r, id).filter((f) => f === 'openCase').length).toBeGreaterThan(20);
+    expect(c.tries.openCase!.count).toBe(0);
+    expect(c.autoHold).toBeUndefined();
+    expect(r.alerter.pending().filter((a) => a.kind === 'open_cases_near_cap' && a.claimId === id)).toHaveLength(1);
+    expect(kinds(r)).not.toContain('call_failed');
+    r.fake.overrides.delete('openCase');
+    await run(r, 180, 60);
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Opened);
+  });
+
+  it('FeePoolLow from refile is a wait, alerted once, and refiles once the pool is funded', async () => {
+    const r = rig();
+    const id = await toWatching(r);
+    r.fake.rule(id, 0);
+    await run(r, 30);
+    r.fake.feePoolV = 1n;
+    await run(r, 3700, 60);
+    const c = r.k.book.claims.get(id)!;
+    expect(c.tries.refile!.count).toBe(0);
+    expect(c.autoHold).toBeUndefined();
+    expect(r.alerter.pending().filter((a) => a.kind === 'fee_pool_low' && a.claimId === id)).toHaveLength(1);
+    expect(kinds(r)).not.toContain('call_failed');
+    expect(kinds(r)).not.toContain('refile_late');
+    r.fake.feePoolV = 10n ** 17n;
+    await run(r, 180, 60);
+    expect(r.fake.cases.get(id)!.attempts).toBe(2);
   });
 });
 
@@ -864,9 +1099,10 @@ describe('stale cases on Arbitrum', () => {
     expect(phase(r, id)).toBe('Stale');
   });
 
-  it('an openCase that lands at expiresAt goes Stale, spends nothing and is not a failure', async () => {
+  it('an openCase that lands at openBy goes Stale, spends nothing and is not a failure', async () => {
     const fake = new FakeChains();
     fake.caseParamsV.claimTimeout = 3000;
+    fake.caseParamsV.caseDeadline = 600;
     // A one-second court and no slack, so the round check lets the open through to the race.
     fake.courtRoundV = 1;
     // The keeper's clock trails the chain by a second: it still sees an open window.
@@ -875,10 +1111,12 @@ describe('stale cases on Arbitrum', () => {
     r.fake.feePoolV = 1n; // openCase waits on the fee pool
     r.fake.deliver(id);
     const exp = Number(r.fake.cases.get(id)!.expiresAt);
-    await run(r, exp - r.fake.t - 30, 60);
+    const openBy = exp - 600;
+    await run(r, openBy - r.fake.t - 30, 60);
     expect(fns(r, id)).not.toContain('openCase');
+    expect(r.alerter.pending().filter((a) => a.kind === 'fee_pool_low' && a.claimId === id)).toHaveLength(1);
     r.fake.feePoolV = 10n ** 17n;
-    r.fake.t = exp;
+    r.fake.t = openBy;
     await r.k.tick();
     expect(fns(r, id).filter((f) => f === 'openCase')).toHaveLength(1);
     expect(r.fake.cases.get(id)!.state).toBe(CaseState.Stale);
@@ -894,6 +1132,44 @@ describe('stale cases on Arbitrum', () => {
     r.fake.t = Number(r.fake.claims.get(id)!.preCheckedAt) + r.fake.claimsParamsV.claimTimeout + 2;
     await run(r, 60);
     expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Expired);
+  });
+
+  it('never sends openCase from openBy on', async () => {
+    const fake = new FakeChains();
+    fake.caseParamsV.claimTimeout = 3000;
+    fake.caseParamsV.caseDeadline = 600;
+    fake.courtRoundV = 1;
+    const r = rig({ fake, keeper: { timing: { courtSlackS: 0 } } });
+    const id = await toCourt(r);
+    r.fake.feePoolV = 1n;
+    r.fake.deliver(id);
+    const openBy = Number(r.fake.cases.get(id)!.expiresAt) - 600;
+    r.fake.t = openBy;
+    await r.k.tick();
+    r.fake.feePoolV = 10n ** 17n;
+    await run(r, 300, 60);
+    expect(fns(r, id)).not.toContain('openCase');
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Received);
+  });
+
+  it('on the case contract from before openBy, an open past receivedAt + caseDeadline only marks the case Stale', async () => {
+    const fake = new FakeChains();
+    fake.oldCase = true;
+    const r = rig({ fake });
+    const id = await toCourt(r);
+    r.fake.feePoolV = 1n;
+    r.fake.deliver(id);
+    await run(r, fake.caseParamsV.caseDeadline + 60, 60);
+    expect(fns(r, id)).not.toContain('openCase');
+    r.fake.feePoolV = 10n ** 17n;
+    await run(r, 120, 60);
+    expect(fns(r, id).filter((f) => f === 'openCase')).toHaveLength(1);
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Stale);
+    expect(r.fake.feePoolV).toBe(10n ** 17n);
+    await run(r, 30);
+    expect(phase(r, id)).toBe('Stale');
+    expect(r.k.book.claims.get(id)!.tries.openCase!.count).toBe(0);
+    expect(kinds(r)).not.toContain('call_failed');
   });
 
   it('does not open a case that cannot finish one court round before it expires, and says so once', async () => {

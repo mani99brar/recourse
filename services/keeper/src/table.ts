@@ -3,7 +3,8 @@
 // out. The machine reads these rows; the handlers only add the chain reads each call needs.
 // Across Sent to RefilePending (and after a Hedera expiry) the keeper also calls the case's
 // markStale once its expiresAt (filedAt + the case's claimTimeout) has passed, so an expired case
-// never keeps an open-case slot.
+// never keeps an open-case slot. Calls a contract takes only later (a full case cap, a short fee
+// pool, a payout an earlier claim against the platform may still need) wait and are never counted.
 
 import type { AlertKind } from './alerts.js';
 import type { Chain, Phase } from './types.js';
@@ -59,7 +60,7 @@ export const TABLE: readonly Row[] = [
     stalls: [{ kind: 'close_late', afterS: 600, fromWindowEnd: true }],
     retryEveryS: 120,
     expirable: false,
-    onTimeout: 'retry closeUncontested every 2 min',
+    onTimeout: 'retry closeUncontested every 2 min; EarlierClaimOpen waits, uncounted, until the earlier claim has ended (payout_waiting past its timeout)',
   },
   {
     phase: 'Contested',
@@ -92,7 +93,7 @@ export const TABLE: readonly Row[] = [
     stalls: [{ kind: 'open_late', afterS: 300 }],
     retryEveryS: 120,
     expirable: true,
-    onTimeout: 'retry every 2 min until caseDeadline or expiresAt; alert on a short fee pool or the case cap',
+    onTimeout: 'retry every 2 min until openBy (expiresAt - caseDeadline); a short fee pool or a full case cap waits, alerted once each',
   },
   {
     phase: 'Opened',
@@ -129,7 +130,7 @@ export const TABLE: readonly Row[] = [
     stalls: [{ kind: 'refile_late', afterS: 1200 }],
     retryEveryS: 120,
     expirable: true,
-    onTimeout: 'refile after the hold, then back to Opened for attempt 2',
+    onTimeout: 'refile after the hold, until openBy; a short fee pool waits, alerted once; then back to Opened for attempt 2',
   },
   {
     phase: 'RuledArb',
@@ -164,11 +165,11 @@ export const TABLE: readonly Row[] = [
     maxTries: 6,
     exhaustedAlert: 'settle_failed',
     expirable: false,
-    onTimeout: 'retry every 5 min, 6 times, then hold and alert settle_failed',
+    onTimeout: 'retry every 5 min, 6 times, then hold and alert settle_failed; EarlierClaimOpen waits as closeUncontested does, uncounted',
   },
   {
     phase: 'Stale',
-    enteredOn: 'ClaimStale (Arbitrum): openCase or refile past its deadline or expiresAt, or markStale',
+    enteredOn: 'ClaimStale (Arbitrum): openCase or refile from openBy on, a ruling at or after expiresAt, or markStale',
     call: null,
     expectedS: null,
     stalls: [{ kind: 'claim_stale', afterS: 0 }],
@@ -203,8 +204,14 @@ export interface Timing {
   relayLeadS: number;
   /** Funding checks interval. */
   levelsEveryS: number;
-  /** Open the case without built evidence once the case deadline is this close. */
+  /** Open the case (or refile) without built evidence once openBy is this close... */
   openWithoutEvidenceS: number;
+  /**
+   * ...or once it has waited this long for it since the case was received (or refused). 6,300 s is
+   * the wait the 2 h case deadline less openWithoutEvidenceS allowed before openBy moved to
+   * expiresAt - caseDeadline.
+   */
+  evidenceWaitS: number;
   /** Alert on a transaction of ours still open after this long (it blocks its key). */
   intentStuckS: number;
   /**
@@ -216,6 +223,13 @@ export interface Timing {
   courtRoundFallbackS: number;
   /** /health is unhealthy while an alert raised this long ago still waits to be sent. */
   alertUndeliveredS: number;
+  /** A close or settle waiting on an earlier claim reads the vault's oldest open claim this often. */
+  payoutCheckEveryS: number;
+  /**
+   * The wait raises payout_waiting once the earlier claim is still open this long after its own
+   * timeout: the keeper's own expireClaim (every 2 min) and the mirror's lag get that long first.
+   */
+  payoutWaitGraceS: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -228,8 +242,11 @@ export const DEFAULT_TIMING: Timing = {
   relayLeadS: 1800,
   levelsEveryS: 600,
   openWithoutEvidenceS: 900,
+  evidenceWaitS: 6300,
   intentStuckS: 300,
   courtSlackS: 3600,
   courtRoundFallbackS: 8100,
   alertUndeliveredS: 600,
+  payoutCheckEveryS: 120,
+  payoutWaitGraceS: 900,
 };

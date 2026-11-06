@@ -33,6 +33,7 @@ import type {
   ChainEvent,
   Chains,
   ClaimsParams,
+  ClaimTerms,
   CourtAttempt,
   DisputeInfo,
   KeeperCall,
@@ -48,6 +49,8 @@ const ZERO32 = `0x${'0'.repeat(64)}` as Hex;
 const STALEABLE: readonly CaseState[] = [CaseState.Received, CaseState.Opened, CaseState.RefilePending];
 /** Phases in which the Arbitrum case may be in one of those states. */
 const CASE_PHASES: readonly Phase[] = ['Sent', 'Delivered', 'Opened', 'Watching', 'RefilePending'];
+/** The court attempt that phase opens: openCase for 1, refile for 2. */
+const OPEN_ATTEMPT: Partial<Record<Phase, 1 | 2>> = { Delivered: 1, RefilePending: 2 };
 
 export interface KeeperOptions {
   chains: Chains;
@@ -157,6 +160,10 @@ export class Keeper {
   private claimsParams?: ClaimsParams;
   private caseParams?: CaseParams;
   private mode?: BridgeMode;
+  /** The claims contract has no claimTermsOf (one from before per-claim terms): live params() for every claim. */
+  private termsUnsupported = false;
+  /** When a payout waiting on an earlier claim last read the vault's oldest open claim (claim id to unix s). */
+  private readonly payoutChecked = new Map<string, number>();
   private lastLevelsAt = 0;
   private handledGlobal = 0;
 
@@ -471,13 +478,22 @@ export class Keeper {
    * Makes a call at most once per retry interval. Reverts count as failed tries; when the row's
    * limit is used up the claim is held and the row's alert goes out. A revert named in `benign`
    * is a timing race (the chain moved first, or its clock trails ours): it is logged, not counted.
+   * One named in `waits` means the contract takes the call only later (a full case cap, a short
+   * fee pool, an earlier claim's payout first): it is logged, not counted, and the caller waits.
    */
   private async tryCall(
     c: KeeperClaim,
     row: Row,
     call: KeeperCall,
     now: number,
-    opts: { retryEveryS?: number; maxTries?: number; exhausted?: AlertKind; key?: string; benign?: readonly string[] } = {},
+    opts: {
+      retryEveryS?: number;
+      maxTries?: number;
+      exhausted?: AlertKind;
+      key?: string;
+      benign?: readonly string[];
+      waits?: readonly string[];
+    } = {},
   ): Promise<CallResult | undefined> {
     const key = opts.key ?? call.fn;
     const t = c.tries[key];
@@ -488,9 +504,12 @@ export class Keeper {
     const r = await this.o.chains.send({ ...call, claimId: c.claimId });
     if (r.kind === 'busy') return r;
     const benign = r.kind === 'reverted' && r.error !== undefined && (opts.benign ?? []).includes(r.error);
-    c.tries[key] = { count: (t?.count ?? 0) + (r.kind === 'reverted' && !benign ? 1 : 0), lastAt: now };
+    const waits = r.kind === 'reverted' && r.error !== undefined && (opts.waits ?? []).includes(r.error);
+    c.tries[key] = { count: (t?.count ?? 0) + (r.kind === 'reverted' && !benign && !waits ? 1 : 0), lastAt: now };
     if (benign) {
       this.log(`claim ${c.claimId}: ${call.fn} reverted with ${r.error} (a timing race, not counted)`);
+    } else if (waits) {
+      this.log(`claim ${c.claimId}: ${call.fn} reverted with ${r.error}; it waits (not counted)`);
     } else if (r.kind === 'reverted') {
       c.lastError = `${call.fn} reverted${r.error ? ` with ${r.error}` : ''}${r.message ? `: ${r.message}` : ''}`;
       c.lastErrorAt = now;
@@ -510,11 +529,16 @@ export class Keeper {
   private stalls(c: KeeperClaim, row: Row, now: number): void {
     const m = milestoneOf(c);
     if (m === undefined) return;
+    // A payout waiting on an earlier claim is not late (payout_waiting covers it), and an open
+    // waiting on the fee pool or the case cap has had its one alert.
+    if (c.payoutWait !== undefined) return;
+    if (c.openWait !== undefined && c.openWait.attempt === OPEN_ATTEMPT[phaseOf(c)]) return;
     for (const s of row.stalls) {
       let base = m;
       if (s.fromWindowEnd) {
-        if (this.claimsParams === undefined || c.preCheckedAt === undefined) continue;
-        base = c.preCheckedAt + this.claimsParams.contestWindow;
+        const terms = this.claimsParams === undefined ? undefined : (c.terms ?? this.claimsParams);
+        if (terms === undefined || c.preCheckedAt === undefined) continue;
+        base = c.preCheckedAt + terms.contestWindow;
       }
       if (now < base + s.afterS) continue;
       const a = currentAttempt(c);
@@ -574,8 +598,9 @@ export class Keeper {
    * operator ran keeper-ctl expire. Returns true when the row's own call must not run.
    */
   private async expiry(c: KeeperClaim, now: number): Promise<boolean> {
-    if (this.claimsParams === undefined) return false;
-    const timeout = this.claimsParams.claimTimeout;
+    const terms = await this.termsOf(c);
+    if (terms === undefined) return false;
+    const timeout = terms.claimTimeout;
     // No claim expires before filedAt + claimTimeout, so skip the read until then.
     if (c.filedAt !== undefined && now <= c.filedAt + timeout) return false;
     const claim = await this.o.chains.getClaim(c.claimId);
@@ -692,6 +717,36 @@ export class Keeper {
   }
 
   /**
+   * The contest window and claim timeout the claims contract checks this claim against: its own
+   * terms (claimTermsOf), frozen at filing, read once and kept; or the live params() where the
+   * contract has no per-claim terms, as the status API's loadTerms does. Undefined while params()
+   * cannot be read or the contract does not know the claim yet: timed actions wait.
+   */
+  private async termsOf(c: KeeperClaim): Promise<ClaimTerms | undefined> {
+    if (this.claimsParams === undefined) return undefined;
+    if (c.terms !== undefined) return c.terms;
+    const t = await this.readTerms(c.claimId);
+    if (t === null) return this.claimsParams;
+    if (t !== undefined) {
+      c.terms = t;
+      this.book.save(c);
+    }
+    return t;
+  }
+
+  /** claimTermsOf for any claim: null where the contract has none, undefined for a claim it does not know. */
+  private async readTerms(claimId: Hex): Promise<ClaimTerms | null | undefined> {
+    if (this.termsUnsupported || this.o.chains.claimTerms === undefined) return null;
+    const t = await this.o.chains.claimTerms(claimId);
+    if (t === null) {
+      this.termsUnsupported = true;
+      this.log('the claims contract has no claimTermsOf: every claim is checked against the live params()');
+      return null;
+    }
+    return t.claimTimeout > 0 ? t : undefined;
+  }
+
+  /**
    * The case's expiresAt on Arbitrum: the payload's filedAt plus the case contract's own claim
    * timeout (or the value the contract reported in a NotExpired revert). From that second on the
    * case cannot open or refile and `markStale` succeeds.
@@ -740,10 +795,45 @@ export class Keeper {
     return true;
   }
 
-  /** Earlier of a case deadline (exclusive) and the case's expiresAt (also exclusive). */
-  private openBy(c: KeeperClaim, deadline: number): number {
+  /**
+   * The second from which openCase or refile only marks the case Stale: one court round
+   * (caseDeadline) before its expiresAt. The case contract before this rule went stale at
+   * receivedAt (or ruledAt) + caseDeadline as well; a call it takes that late only marks the case
+   * Stale too, and spends nothing, and tooLateForRound keeps the keeper from opening a round
+   * either contract could not finish.
+   */
+  private openBy(c: KeeperClaim): number | undefined {
     const exp = this.caseExpiresAt(c);
-    return exp !== undefined && exp < deadline ? exp : deadline;
+    if (exp === undefined || this.caseParams === undefined) return undefined;
+    return exp - this.caseParams.caseDeadline;
+  }
+
+  /**
+   * When an open or refile stops waiting for its evidence and goes without it: openWithoutEvidenceS
+   * before openBy, or evidenceWaitS after the case was received (or refused), whichever is first.
+   */
+  private evidenceBy(openBy: number, from: number): number {
+    return Math.min(openBy - this.timing.openWithoutEvidenceS, from + this.timing.evidenceWaitS);
+  }
+
+  /**
+   * A short fee pool or a full case cap: openCase (or refile) waits and tries again every retry
+   * interval until openBy. One alert per attempt and reason; the wait itself is never counted.
+   */
+  private openWaits(c: KeeperClaim, attempt: 1 | 2, why: 'FeePoolLow' | 'CapReached', what: string, openBy: number, now: number): void {
+    if (c.openWait?.why !== why || c.openWait.attempt !== attempt) {
+      c.openWait = { why, attempt, since: c.openWait?.attempt === attempt ? c.openWait.since : now };
+      this.book.save(c);
+    }
+    if (!this.once(c, `wait-${why}-${attempt}`)) return;
+    const fn = attempt === 1 ? 'openCase' : 'refile';
+    const until = `it tries again every 2 min while the case has a court round's time left (openBy ${openBy}, in ${openBy - now} s)`;
+    const detail = { attempt: String(attempt), openBy: String(openBy) };
+    if (why === 'FeePoolLow') {
+      this.alertClaim(c, 'fee_pool_low', `${what}; ${fn} waits for the pool: run fundFeePool under keeper-ctl pause. ${until}`, { detail });
+    } else {
+      this.alertClaim(c, 'open_cases_near_cap', `${what}; ${fn} waits for a case to free its slot. ${until}`, { detail });
+    }
   }
 
   /**
@@ -809,10 +899,103 @@ export class Keeper {
     const claim = await this.o.chains.getClaim(c.claimId);
     if (claim.status !== ClaimStatus.PreChecked) return;
     c.preCheckedAt = Number(claim.preCheckedAt);
+    const terms = await this.termsOf(c);
+    if (terms === undefined) return;
     // The contest is still open at the boundary second.
-    if (now <= c.preCheckedAt + this.claimsParams.contestWindow) return;
+    if (now <= c.preCheckedAt + terms.contestWindow) return;
     if (this.held(c)) return;
-    await this.tryCall(c, row, { chain: 'hedera', contract: 'claims', fn: 'closeUncontested', args: [c.claimId] }, now);
+    await this.payout(c, row, 'closeUncontested', now);
+  }
+
+  /**
+   * closeUncontested or settle. The vault pays a platform's open claims in filing order: while an
+   * earlier claim against the platform is open, a payout more than this claim may draw now reverts
+   * EarlierClaimOpen(oldest). That is a wait, never a failure: not counted, no hold, no stall
+   * alert; the call goes again once that claim has ended (see payoutGate). A vault without filing
+   * order never reverts so, and the call runs as it always has.
+   */
+  private async payout(c: KeeperClaim, row: Row, fn: 'closeUncontested' | 'settle', now: number): Promise<void> {
+    const gate = await this.payoutGate(c, fn, now);
+    if (gate === 'wait') return;
+    const r = await this.tryCall(c, row, { chain: 'hedera', contract: 'claims', fn, args: [c.claimId] }, now, {
+      waits: ['EarlierClaimOpen'],
+      // The earlier claim just ended: go now rather than at the next retry.
+      ...(gate === 'go' ? { retryEveryS: 0 } : {}),
+    });
+    if (r === undefined || r.kind === 'busy') return;
+    if (r.kind === 'reverted' && r.error === 'EarlierClaimOpen') {
+      const earlier = String(r.args?.[0] ?? ZERO32).toLowerCase() as Hex;
+      if (c.payoutWait?.earlier !== earlier) {
+        c.payoutWait = { earlier, since: c.payoutWait?.since ?? now };
+        this.log(`claim ${c.claimId}: ${fn} waits for the earlier claim ${earlier} against the same platform`);
+      }
+      this.payoutChecked.set(c.claimId, now);
+      this.book.save(c);
+    } else if (c.payoutWait !== undefined) {
+      c.payoutWait = undefined;
+      this.payoutChecked.delete(c.claimId);
+      this.book.save(c);
+    }
+  }
+
+  /**
+   * For a payout the vault refused with EarlierClaimOpen: 'wait' while the claim it named is still
+   * the platform's oldest open claim (read every payoutCheckEveryS), 'go' once it has ended, and
+   * undefined with no wait, or when the vault's view is missing or unreadable (the call then goes
+   * at its usual interval and the vault answers). Anyone can end that claim by its own timeout at
+   * the latest, so a wait that outlasts it by payoutWaitGraceS raises payout_waiting, once.
+   */
+  private async payoutGate(c: KeeperClaim, fn: string, now: number): Promise<'wait' | 'go' | undefined> {
+    const w = c.payoutWait;
+    if (w === undefined) return undefined;
+    const known = this.book.claims.get(w.earlier);
+    if (known !== undefined && isTerminal(known)) return 'go';
+    const last = this.payoutChecked.get(c.claimId);
+    if (last === undefined || now - last >= this.timing.payoutCheckEveryS) {
+      if (c.platform === undefined || this.o.chains.oldestOpenClaimOf === undefined) return undefined;
+      let oldest: Hex;
+      try {
+        oldest = await this.o.chains.oldestOpenClaimOf(c.platform);
+      } catch (err) {
+        this.log(`claim ${c.claimId}: oldestOpenClaimOf could not be read (${msg(err)}); ${fn} tries the vault itself`);
+        return undefined;
+      }
+      if (oldest.toLowerCase() !== w.earlier) return 'go';
+      this.payoutChecked.set(c.claimId, now);
+      const endsBy = await this.endsBy(w.earlier);
+      if (endsBy !== undefined && endsBy !== w.endsBy) {
+        w.endsBy = endsBy;
+        this.book.save(c);
+      }
+    }
+    if (w.endsBy !== undefined && now > w.endsBy + this.timing.payoutWaitGraceS && this.once(c, `payout-waiting-${w.earlier}`)) {
+      this.alertClaim(
+        c,
+        'payout_waiting',
+        `${fn} waits for the earlier claim ${w.earlier} against the same platform, still open ${now - w.endsBy} s after its own timeout; the vault pays a platform's claims in filing order. Follow "A payout waits for an earlier claim" in services/keeper/RUNBOOK.md; this one goes on when that claim ends`,
+        { detail: { earlierClaimId: w.earlier, endsBy: String(w.endsBy), waitingSince: String(w.since) } },
+      );
+    }
+    return 'wait';
+  }
+
+  /**
+   * The latest second by which anyone can end a claim: its claim timeout after its pre-check (or
+   * after filing, before one). Undefined while it cannot be told; the next check reads again.
+   */
+  private async endsBy(claimId: Hex): Promise<number | undefined> {
+    try {
+      const known = this.book.claims.get(claimId);
+      const t = known !== undefined ? await this.termsOf(known) : await this.readTerms(claimId);
+      const timeout = t === null ? this.claimsParams?.claimTimeout : t?.claimTimeout;
+      if (timeout === undefined) return undefined;
+      const e = await this.o.chains.getClaim(claimId);
+      const from = Number(e.preCheckedAt) > 0 ? Number(e.preCheckedAt) : Number(e.filedAt);
+      return from > 0 ? from + timeout : undefined;
+    } catch (err) {
+      this.log(`claim ${claimId}: its timeout could not be read (${msg(err)})`);
+      return undefined;
+    }
   }
 
   private async contested(c: KeeperClaim, row: Row, now: number): Promise<void> {
@@ -949,26 +1132,31 @@ export class Keeper {
     if (!c.received || this.caseParams === undefined || this.held(c)) return;
     const cv = await this.o.chains.caseOf(c.claimId);
     if (cv.state !== CaseState.Received) return;
-    const deadline = this.openBy(c, Number(cv.receivedAt) + this.caseParams.caseDeadline);
-    if (now >= deadline) return; // opening now would only mark it stale
+    const openBy = this.openBy(c);
+    if (openBy === undefined || now >= openBy) return; // opening now would only mark it stale
     if (await this.tooLateForRound(c, 1, 'openCase', now)) return;
     const ev = await this.ensureEvidence(c, 1, now);
-    if (ev === 'retry' && now < deadline - this.timing.openWithoutEvidenceS) return;
+    if (ev === 'retry' && now < this.evidenceBy(openBy, Number(cv.receivedAt))) return;
     const [pool, cost, open] = [await this.o.chains.feePool(), await this.o.chains.costNow(), await this.o.chains.openCases()];
-    if (pool < cost) {
-      this.alertClaim(c, 'fee_pool_low', `fee pool ${pool} wei is below the arbitration cost ${cost}; run fundFeePool under keeper-ctl pause`);
-      return;
-    }
+    if (pool < cost) return this.openWaits(c, 1, 'FeePoolLow', `fee pool ${pool} wei is below the arbitration cost ${cost}`, openBy, now);
     if (open >= this.caseParams.maxOpenCases) {
-      this.alertClaim(c, 'open_cases_near_cap', `${open} open cases, cap ${this.caseParams.maxOpenCases}; openCase waits`);
+      return this.openWaits(c, 1, 'CapReached', `${open} open cases, cap ${this.caseParams.maxOpenCases}`, openBy, now);
+    }
+    const r = await this.tryCall(c, row, { chain: 'arbitrum', contract: 'case', fn: 'openCase', args: [c.received.payload] }, now, {
+      waits: ['FeePoolLow', 'CapReached'],
+    });
+    if (r?.kind === 'reverted' && (r.error === 'FeePoolLow' || r.error === 'CapReached')) {
+      this.openWaits(c, 1, r.error, `openCase reverted ${r.error}`, openBy, now);
       return;
     }
-    const r = await this.tryCall(c, row, { chain: 'arbitrum', contract: 'case', fn: 'openCase', args: [c.received.payload] }, now);
-    if (r?.kind === 'reverted') {
-      if (r.error === 'FeePoolLow') this.alertClaim(c, 'fee_pool_low', 'openCase reverted FeePoolLow; fund the pool');
-      else if (r.error === 'CapReached') this.alertClaim(c, 'open_cases_near_cap', 'openCase reverted CapReached');
-      else this.alertClaim(c, 'call_failed', `openCase reverted with ${r.error ?? 'no reason'}`);
-    }
+    if (r !== undefined && r.kind !== 'busy') this.openWaitEnds(c);
+    if (r?.kind === 'reverted') this.alertClaim(c, 'call_failed', `openCase reverted with ${r.error ?? 'no reason'}`);
+  }
+
+  private openWaitEnds(c: KeeperClaim): void {
+    if (c.openWait === undefined) return;
+    c.openWait = undefined;
+    this.book.save(c);
   }
 
   private async opened(c: KeeperClaim, row: Row, now: number): Promise<void> {
@@ -1066,12 +1254,17 @@ export class Keeper {
     if (now < c.refileNeededAt + this.timing.refileHoldS || this.held(c)) return;
     const cv = await this.o.chains.caseOf(c.claimId);
     if (cv.state !== CaseState.RefilePending) return;
-    const deadline = this.openBy(c, Number(cv.ruledAt) + this.caseParams.caseDeadline);
-    if (now >= deadline) return; // refiling now would only mark it stale
+    const openBy = this.openBy(c);
+    if (openBy === undefined || now >= openBy) return; // refiling now would only mark it stale
     if (await this.tooLateForRound(c, 2, 'refile', now)) return;
     const ev = await this.ensureEvidence(c, 2, now);
-    if (ev === 'retry' && now < deadline - this.timing.openWithoutEvidenceS) return;
-    const r = await this.tryCall(c, row, { chain: 'arbitrum', contract: 'case', fn: 'refile', args: [c.received.payload] }, now);
+    if (ev === 'retry' && now < this.evidenceBy(openBy, Number(cv.ruledAt))) return;
+    const r = await this.tryCall(c, row, { chain: 'arbitrum', contract: 'case', fn: 'refile', args: [c.received.payload] }, now, { waits: ['FeePoolLow'] });
+    if (r?.kind === 'reverted' && r.error === 'FeePoolLow') {
+      this.openWaits(c, 2, 'FeePoolLow', 'refile reverted FeePoolLow', openBy, now);
+      return;
+    }
+    if (r !== undefined && r.kind !== 'busy') this.openWaitEnds(c);
     if (r?.kind === 'reverted') this.alertClaim(c, 'call_failed', `refile reverted with ${r.error ?? 'no reason'}`);
   }
 
@@ -1144,7 +1337,7 @@ export class Keeper {
   private async ruledHedera(c: KeeperClaim, row: Row, now: number): Promise<void> {
     const claim = await this.o.chains.getClaim(c.claimId);
     if (claim.status !== ClaimStatus.Ruled || this.held(c)) return;
-    await this.tryCall(c, row, { chain: 'hedera', contract: 'claims', fn: 'settle', args: [c.claimId] }, now);
+    await this.payout(c, row, 'settle', now);
   }
 
   private async terminal(c: KeeperClaim, now: number): Promise<void> {
@@ -1293,6 +1486,9 @@ export class Keeper {
       autoHold: c.autoHold,
       filedAt: c.filedAt,
       preCheckedAt: c.preCheckedAt,
+      terms: c.terms,
+      payoutWait: c.payoutWait,
+      openWait: c.openWait,
       outbound: c.outbound.map((m) => ({ ...m, link: this.links.ccipMessage(m.messageId) })),
       inbound: c.inbound.map((m) => ({ ...m, link: this.links.ccipMessage(m.messageId) })),
       received: c.received ? { messageId: c.received.messageId, at: c.received.at, payloadBytes: (c.received.payload.length - 2) / 2 } : undefined,
