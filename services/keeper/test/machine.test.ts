@@ -265,7 +265,8 @@ describe('payouts in filing order', () => {
     await run(r, 3 * 3600, 60);
     const c = r.k.book.claims.get(id)!;
     expect(c.payoutWait).toMatchObject({ earlier: first });
-    expect(fns(r, id).filter((f) => f === 'closeUncontested')).toHaveLength(1);
+    // Tried again at the row's 2 min meanwhile; each refusal is only the sender's simulation.
+    expect(fns(r, id).filter((f) => f === 'closeUncontested').length).toBeGreaterThan(50);
     expect(c.tries.closeUncontested!.count).toBe(0);
     expect(c.autoHold).toBeUndefined();
     expect(kinds(r)).not.toContain('close_late');
@@ -283,11 +284,22 @@ describe('payouts in filing order', () => {
   it('goes again as soon as the vault no longer names the earlier claim, even before its event is read', async () => {
     const { r, first, id } = await behindAnEarlierClaim();
     await run(r, 1800, 60);
-    expect(fns(r, id).filter((f) => f === 'closeUncontested')).toHaveLength(1);
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.PreChecked);
     r.fake.claims.get(first)!.status = ClaimStatus.Expired; // no ClaimExpired event yet
     await run(r, 180, 60);
-    expect(fns(r, id).filter((f) => f === 'closeUncontested')).toHaveLength(2);
     expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Closed);
+  });
+
+  it('goes as soon as the vault can pay it, while the earlier claim is still open', async () => {
+    const { r, first, id } = await behindAnEarlierClaim();
+    await run(r, 1800, 60);
+    expect(r.k.book.claims.get(id)!.payoutWait).toMatchObject({ earlier: first });
+    r.fake.depositShort = false; // the platform tops up: the vault now covers this payout too
+    await run(r, 180, 60);
+    expect(r.fake.claims.get(first)!.status).toBe(ClaimStatus.Filed);
+    expect(phase(r, id)).toBe('Closed');
+    expect(r.k.book.claims.get(id)!.payoutWait).toBeUndefined();
+    expect(kinds(r)).not.toContain('payout_waiting');
   });
 
   it('an unreadable oldestOpenClaimOf only means the close is tried again', async () => {
@@ -322,6 +334,23 @@ describe('payouts in filing order', () => {
     expect(phase(r, id)).toBe('Closed');
   });
 
+  it('times a pre-checked earlier claim by its contest window, not its timeout', async () => {
+    const { r, first, id } = await behindAnEarlierClaim();
+    control(r, { holds: { [first]: Date.now() } }); // the operator keeps the earlier claim from closing
+    r.fake.precheck(first);
+    const end = Number(r.fake.claims.get(first)!.preCheckedAt) + 600;
+    await run(r, end + 900 - r.fake.t, 60);
+    expect(kinds(r)).not.toContain('payout_waiting');
+    await run(r, 120, 60);
+    const waiting = r.alerter.pending().filter((a) => a.kind === 'payout_waiting');
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]).toMatchObject({ claimId: id, detail: { earlierClaimId: first, endsBy: String(end) } });
+    control(r, {});
+    await run(r, 300, 60);
+    expect(phase(r, first)).toBe('Closed');
+    expect(phase(r, id)).toBe('Closed');
+  });
+
   it('a settle refused for an earlier open claim waits too: no settle_failed, no hold', async () => {
     const fake = new FakeChains();
     fake.depositShort = true;
@@ -335,7 +364,7 @@ describe('payouts in filing order', () => {
     await run(r, 3 * 3600, 60);
     const c = r.k.book.claims.get(id)!;
     expect(phase(r, id)).toBe('RuledHedera');
-    expect(fns(r, id).filter((f) => f === 'settle')).toHaveLength(1);
+    expect(fns(r, id).filter((f) => f === 'settle').length).toBeGreaterThan(20);
     expect(c.tries.settle!.count).toBe(0);
     expect(c.autoHold).toBeUndefined();
     expect(kinds(r)).not.toContain('settle_failed');
@@ -504,6 +533,25 @@ describe('opening the case', () => {
     expect(fns(r, id)).not.toContain('openCase');
     await run(r, 200, 60);
     expect(fns(r, id)).toContain('openCase');
+  });
+
+  it('a late case at the deployed timing still opens without its evidence before the round no longer fits', async () => {
+    const fake = new FakeChains();
+    // caseDeadline 10,800 and the case's claimTimeout 57,600 with court 8's 8,100 s round: the
+    // keeper's last second is expiresAt - 11,700 = filedAt + 45,900, before openBy (+ 46,800).
+    fake.caseParamsV.caseDeadline = 10_800;
+    fake.caseParamsV.claimTimeout = 57_600;
+    const r = rig({ fake, evidence: { build: async () => ({ ok: false, kind: 'transient', message: 'gateway down' }) } });
+    const id = await toCourt(r);
+    const filedAt = Number(r.fake.claims.get(id)!.filedAt);
+    await run(r, filedAt + 40_000 - r.fake.t, 600);
+    r.fake.deliver(id);
+    await run(r, 4_900, 15);
+    expect(fns(r, id)).not.toContain('openCase');
+    await run(r, 1_500, 15);
+    expect(fns(r, id).filter((f) => f === 'openCase')).toHaveLength(1);
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Opened);
+    expect(kinds(r)).not.toContain('claim_stale');
   });
 
   it('waits on a full case cap, alerts once, and opens when a slot frees', async () => {

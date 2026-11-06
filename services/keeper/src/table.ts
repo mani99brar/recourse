@@ -60,7 +60,7 @@ export const TABLE: readonly Row[] = [
     stalls: [{ kind: 'close_late', afterS: 600, fromWindowEnd: true }],
     retryEveryS: 120,
     expirable: false,
-    onTimeout: 'retry closeUncontested every 2 min; EarlierClaimOpen waits, uncounted, until the earlier claim has ended (payout_waiting past its timeout)',
+    onTimeout: 'retry closeUncontested every 2 min; EarlierClaimOpen is a wait, uncounted, still tried every 2 min and at once when the earlier claim ends (payout_waiting once it outlasts its own end)',
   },
   {
     phase: 'Contested',
@@ -93,7 +93,7 @@ export const TABLE: readonly Row[] = [
     stalls: [{ kind: 'open_late', afterS: 300 }],
     retryEveryS: 120,
     expirable: true,
-    onTimeout: 'retry every 2 min until openBy (expiresAt - caseDeadline); a short fee pool or a full case cap waits, alerted once each',
+    onTimeout: 'retry every 2 min until the earlier of openBy (expiresAt - caseDeadline) and expiresAt - (court round + courtSlackS); a short fee pool or a full case cap waits, alerted once each',
   },
   {
     phase: 'Opened',
@@ -130,7 +130,7 @@ export const TABLE: readonly Row[] = [
     stalls: [{ kind: 'refile_late', afterS: 1200 }],
     retryEveryS: 120,
     expirable: true,
-    onTimeout: 'refile after the hold, until openBy; a short fee pool waits, alerted once; then back to Opened for attempt 2',
+    onTimeout: 'refile after the hold, until the same last second as openCase; a short fee pool waits, alerted once; then back to Opened for attempt 2',
   },
   {
     phase: 'RuledArb',
@@ -204,7 +204,7 @@ export interface Timing {
   relayLeadS: number;
   /** Funding checks interval. */
   levelsEveryS: number;
-  /** Open the case (or refile) without built evidence once openBy is this close... */
+  /** Open the case (or refile) without built evidence once the keeper's last second to open is this close... */
   openWithoutEvidenceS: number;
   /**
    * ...or once it has waited this long for it since the case was received (or refused). 6,300 s is
@@ -223,11 +223,15 @@ export interface Timing {
   courtRoundFallbackS: number;
   /** /health is unhealthy while an alert raised this long ago still waits to be sent. */
   alertUndeliveredS: number;
-  /** A close or settle waiting on an earlier claim reads the vault's oldest open claim this often. */
+  /**
+   * A close or settle waiting on an earlier claim reads the vault's oldest open claim this often,
+   * and goes at once when it has changed; it is also tried at its row's interval meanwhile.
+   */
   payoutCheckEveryS: number;
   /**
-   * The wait raises payout_waiting once the earlier claim is still open this long after its own
-   * timeout: the keeper's own expireClaim (every 2 min) and the mirror's lag get that long first.
+   * The wait raises payout_waiting once the earlier claim is still open this long after anyone
+   * could have ended it (its timeout, its contest window, or its ruling): the keeper's own call
+   * on it (every 2 min) and the mirror's lag get that long first.
    */
   payoutWaitGraceS: number;
 }

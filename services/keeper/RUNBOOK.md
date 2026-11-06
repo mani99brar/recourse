@@ -43,14 +43,18 @@ The deposit vault pays a platform's open claims in the order they were filed. Wh
 more than it may draw while an earlier claim against the same platform is still open, `closeUncontested`
 or `settle` reverts `EarlierClaimOpen(oldestOpen)` and nothing changes. The keeper treats that as a wait,
 not a failure: the claim is not held, the tries are not counted and no `close_late`, `settle_late` or
-`settle_failed` goes out. It reads the vault's `oldestOpenClaimOf(platform)` every 2 minutes and sends
-again on the tick that sees the earlier claim end. The vault deployed before filing order never refuses
-a payout this way.
+`settle_failed` goes out. The call is still tried at its usual interval (2 minutes for a close, 5 for a
+settle), since a top-up or another claim ending can let the vault pay it sooner; a refusal is only the
+sender's simulation and costs no gas. The keeper also reads the vault's `oldestOpenClaimOf(platform)`
+every 2 minutes and sends at once on the tick that sees the earlier claim end. The vault deployed before
+filing order never refuses a payout this way.
 
-Anyone can end the earlier claim by its own timeout at the latest (expire it, close it after its window,
-or settle its ruling), and the keeper does so itself. `payout_waiting` means that claim is still open 15
-minutes past its own timeout: `detail.earlierClaimId` names it, `endsBy` is that timeout and
-`waitingSince` is when this claim started waiting.
+Anyone can end the earlier claim by a known second, and the keeper does so itself: a Filed claim expires
+its timeout after filing, a Contested or AtCourt one its timeout after the pre-check, a PreChecked one
+closes once its contest window has passed, and a Ruled one can be settled at once. `payout_waiting` means
+that claim is still open 15 minutes past that second: `detail.earlierClaimId` names it, `endsBy` is that
+second (for a Ruled claim, its RulingReceived, or when this claim started waiting if the keeper has not
+seen it) and `waitingSince` is when this claim started waiting.
 
 1. `ctl.sh keeper status <claimId>` shows `payoutWait {earlier, since, endsBy}` for the waiting claim.
 2. `ctl.sh keeper status <earlier claim id>` shows why the earlier claim has not ended: an operator hold
@@ -65,7 +69,11 @@ minutes past its own timeout: `detail.earlierClaimId` names it, `endsBy` is that
 `openCase` waits while the fee pool is below the arbitration cost or every open-case slot is taken;
 `refile` waits on the fee pool. Each gives one alert per attempt; the keeper keeps trying every 2 minutes,
 the tries are not counted and the claim is not held. It stops once the case has less than one court round
-plus an hour left before `expiresAt`, says so with `claim_stale`, and the case goes stale at `expiresAt`.
+plus an hour left before `expiresAt` (the alert's `detail.lastOpen` is that second; with court 8 it is
+`expiresAt` − 11,700 s, before the contract's own `openBy` = `expiresAt` − `caseDeadline`), says so with
+`claim_stale`, and the case goes stale at `expiresAt`. Evidence that is still building is waited for up to
+6,300 s after the case arrived (or was refused), and never past 15 minutes before that second; the case
+then opens without it.
 Fund the pool with `fundFeePool` under `ctl.sh keeper pause`, or wait for a case to free its slot.
 
 ## Journal lines that do not parse (journal_error)
