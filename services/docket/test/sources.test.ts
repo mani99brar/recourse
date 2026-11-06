@@ -63,16 +63,63 @@ describe('mirror log source', () => {
     const { fetch, urls } = mirror({
       '/api/v1/contracts/0xclaims/results/logs?order=asc&limit=100': { logs: [log(a, '1800000000.000000001', '0xaa')], links: { next: '/api/v1/contracts/0xclaims/results/logs?order=asc&limit=100&timestamp=gt:1800000000.000000001&page=2' } },
       '/api/v1/contracts/0xclaims/results/logs?order=asc&limit=100&timestamp=gt:1800000000.000000001&page=2': { logs: [log(b, '1800000005.500000000', '0xbb')], links: { next: null } },
-      '/api/v1/contracts/0xclaims/results/logs?order=asc&limit=100&timestamp=gt:1800000005.500000000': { logs: [log(b, '1800000005.500000000', '0xbb')], links: { next: null } },
+      '/api/v1/contracts/0xclaims/results/logs?order=asc&limit=100&timestamp=gte:1800000005.500000000': { logs: [log(b, '1800000005.500000000', '0xbb')], links: { next: null } },
     });
     const src = new MirrorLogSource({ baseUrl: 'https://mirror.test/', contract: '0xclaims', name: 'hedera-claims', fetch });
     const first = await src.poll(undefined);
     expect(first.events.map((e) => e.name === 'RulingReceived' && e.claimId)).toEqual([cid(1), cid(2)]);
-    expect(first.cursor).toBe('1800000005.500000000');
+    expect(first.cursor).toBe('1800000005.500000000#0');
     const second = await src.poll(first.cursor);
     expect(second.events).toHaveLength(0); // the repeated log is at the cursor
-    expect(second.cursor).toBe('1800000005.500000000');
+    expect(second.cursor).toBe('1800000005.500000000#0');
     expect(urls).toHaveLength(3);
+  });
+
+  describe('several logs of one transaction (one consensus timestamp)', () => {
+    const TS = '1800000009.000000007';
+    const applied = () => {
+      const topics = encodeEventTopics({ abi: vaultEventsAbi, eventName: 'OutcomeApplied', args: { claimId: cid(3), platform: PLATFORM, shop: SHOP } });
+      const data = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }], [1_000_000n, 0n, 0n]);
+      return { topics: topics as string[], data, index: 0, timestamp: TS, transaction_hash: '0xcc' };
+    };
+    const shortfall = () => {
+      const topics = encodeEventTopics({ abi: vaultEventsAbi, eventName: 'Shortfall', args: { claimId: cid(3), platform: PLATFORM } });
+      const data = encodeAbiParameters([{ type: 'uint256' }], [2_000_000n]);
+      return { topics: topics as string[], data, index: 1, timestamp: TS, transaction_hash: '0xcc' };
+    };
+    const names = (r: { events: { name: string }[] }) => r.events.map((e) => e.name);
+
+    it('reads every log of the transaction, not only the first', async () => {
+      const { fetch } = mirror({ '/api/v1/contracts/0xvault/results/logs?order=asc&limit=100': { logs: [applied(), shortfall()], links: { next: null } } });
+      const r = await new MirrorLogSource({ baseUrl: 'https://mirror.test', contract: '0xvault', name: 'hedera-vault', fetch }).poll(undefined);
+      expect(names(r)).toEqual(['OutcomeApplied', 'Shortfall']);
+      expect(r.events[1]).toMatchObject({ claimId: cid(3), amount: '2000000' });
+      expect(r.cursor).toBe(`${TS}#1`);
+    });
+
+    it('resumes inside the transaction when a poll stopped between its logs', async () => {
+      const { fetch, urls } = mirror({
+        '/api/v1/contracts/0xvault/results/logs?order=asc&limit=1': { logs: [applied()], links: { next: '/api/v1/contracts/0xvault/results/logs?order=asc&limit=1&page=2' } },
+        [`/api/v1/contracts/0xvault/results/logs?order=asc&limit=1&timestamp=gte:${TS}`]: { logs: [applied()], links: { next: '/api/v1/contracts/0xvault/results/logs?order=asc&limit=1&page=3' } },
+        '/api/v1/contracts/0xvault/results/logs?order=asc&limit=1&page=3': { logs: [shortfall()], links: { next: null } },
+      });
+      const src = new MirrorLogSource({ baseUrl: 'https://mirror.test', contract: '0xvault', name: 'hedera-vault', fetch, pageLimit: 1, maxPages: 1 });
+      const first = await src.poll(undefined);
+      expect(names(first)).toEqual(['OutcomeApplied']);
+      expect(first.cursor).toBe(`${TS}#0`);
+      const second = await new MirrorLogSource({ baseUrl: 'https://mirror.test', contract: '0xvault', name: 'hedera-vault', fetch, pageLimit: 1, maxPages: 5 }).poll(first.cursor);
+      expect(names(second)).toEqual(['Shortfall']);
+      expect(second.cursor).toBe(`${TS}#1`);
+      expect(urls[1]).toContain(`timestamp=gte:${TS}`);
+    });
+
+    it('reads a bare timestamp cursor (older journals, the deploy start) from that timestamp again', async () => {
+      const { fetch } = mirror({ [`/api/v1/contracts/0xvault/results/logs?order=asc&limit=100&timestamp=gte:${TS}`]: { logs: [applied(), shortfall()], links: { next: null } } });
+      const src = new MirrorLogSource({ baseUrl: 'https://mirror.test', contract: '0xvault', name: 'hedera-vault', fetch });
+      const r = await src.poll(TS);
+      expect(names(r)).toEqual(['OutcomeApplied', 'Shortfall']);
+      expect(r.cursor).toBe(`${TS}#1`);
+    });
   });
 
   it('reports a mirror error instead of advancing', async () => {

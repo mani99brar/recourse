@@ -1,5 +1,5 @@
-// Where events come from. The mirror-node source reads contract logs by consensus-timestamp
-// cursor; the Arbitrum source reads `CaseOpened` in block chunks of at most 1,000. Neither reads
+// Where events come from. The mirror-node source reads contract logs by a (consensus timestamp,
+// log index) cursor; the Arbitrum source reads `CaseOpened` in block chunks of at most 1,000. Neither reads
 // Arkiv: the chain logs are the source of truth.
 
 import { decodeDocketLog, type Chain, type DocketEvent } from './events.js';
@@ -32,7 +32,10 @@ interface MirrorLog {
 
 export interface PollResult {
   events: DocketEvent[];
-  /** Consensus timestamp of the last log read, `seconds.nanos`; unchanged when nothing new. */
+  /**
+   * Where the next poll resumes; unchanged when nothing new. For the mirror source it is the last
+   * log read, `seconds.nanos#index`.
+   */
   cursor: string | undefined;
 }
 
@@ -41,6 +44,27 @@ function compareTs(a: string, b: string): number {
   const [bs = '0', bn = '0'] = b.split('.');
   if (as !== bs) return Number(as) - Number(bs);
   return Number(an.padEnd(9, '0')) - Number(bn.padEnd(9, '0'));
+}
+
+interface LogPosition {
+  timestamp: string;
+  index: number;
+}
+
+/**
+ * Reads a mirror cursor. A bare timestamp (the deploy start, or a cursor journaled before the
+ * cursor named the log index) names no log at that timestamp as read, so the poll reads that
+ * timestamp again; the docket drops the logs it has already seen.
+ */
+function parseCursor(cursor: string): LogPosition {
+  const [timestamp = cursor, index] = cursor.split('#');
+  return { timestamp, index: index === undefined ? -1 : Number(index) };
+}
+
+/** All logs of one transaction share its consensus timestamp, so a log's place is (timestamp, index). */
+function isAfter(log: LogPosition, at: LogPosition): boolean {
+  const byTs = compareTs(log.timestamp, at.timestamp);
+  return byTs > 0 || (byTs === 0 && log.index > at.index);
 }
 
 export class MirrorLogSource {
@@ -58,23 +82,25 @@ export class MirrorLogSource {
     const maxPages = this.opts.maxPages ?? 20;
     const events: DocketEvent[] = [];
     cursor = cursor ?? this.opts.initialCursor;
-    let last = cursor;
-    let next: string | null = `/api/v1/contracts/${this.opts.contract}/results/logs?order=asc&limit=${limit}${cursor ? `&timestamp=gt:${cursor}` : ''}`;
+    let last = cursor === undefined ? undefined : parseCursor(cursor);
+    // From the cursor's timestamp inclusive: the rest of a transaction cut off by a page or poll
+    // boundary carries the same timestamp.
+    let next: string | null = `/api/v1/contracts/${this.opts.contract}/results/logs?order=asc&limit=${limit}${last ? `&timestamp=gte:${last.timestamp}` : ''}`;
     for (let page = 0; next !== null && page < maxPages; page++) {
       const res: Response = await this.fetcher(`${root}${next}`);
       if (!res.ok) throw new Error(`mirror node answered ${res.status}`);
       const body = (await res.json()) as { logs?: MirrorLog[]; links?: { next?: string | null } };
       const logs = body.logs ?? [];
       for (const log of logs) {
-        if (last !== undefined && compareTs(log.timestamp, last) <= 0) continue;
+        if (last !== undefined && !isAfter(log, last)) continue;
         const ev = decodeDocketLog('hedera', { tx: log.transaction_hash, index: log.index, ts: Math.floor(Number(log.timestamp.split('.')[0])) }, log, this.opts.abi);
         if (ev !== null) events.push(ev);
-        last = log.timestamp;
+        last = { timestamp: log.timestamp, index: log.index };
       }
       next = body.links?.next ?? null;
       if (logs.length === 0) break;
     }
-    return { events, cursor: last };
+    return { events, cursor: last === undefined || last.index < 0 ? cursor : `${last.timestamp}#${last.index}` };
   }
 }
 
