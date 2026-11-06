@@ -1,8 +1,9 @@
 import { cidOfHash } from '@recourse/records';
-import { canonicalBytes, claimIdOf, encodeClaimToCourt, externalIdUint, orderIdOf, recordHash, type CanonicalValue } from '@recourse/shared';
+import { addressBook, canonicalBytes, claimIdOf, encodeClaimToCourt, externalIdUint, orderIdOf, recordHash, type CanonicalValue } from '@recourse/shared';
 import { decodeFunctionData, keccak256, type Address, type Hex } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CLAIMS_ABI, EVIDENCE_ABI, TOKEN_ABI, type ContractLabel } from '../src/abi/deployed.js';
+import { signingProblems, type BuiltAction, type IntendedCall } from '../../agent/src/status-api.js';
+import { CLAIMS_ABI, EVIDENCE_ABI, TOKEN_ABI, VAULT_ABI, type ContractLabel } from '../src/abi/deployed.js';
 import { createApp } from '../src/app.js';
 import { FILE_CLAIM_BUDGET } from '../src/v1/build.js';
 import type { Config } from '../src/config.js';
@@ -700,5 +701,60 @@ describe('every contract error in the revert map', () => {
     } finally {
       console.error = quiet;
     }
+  });
+});
+
+// ------------------------------------------------------------------ what the commands check
+
+describe('the agent and shop commands take these answers as the calls they mean', () => {
+  /** The commands' own check (services/agent/src/status-api.ts), at the answer's chain time. */
+  const problems = (a: BuiltAction, calls: IntendedCall[]) =>
+    signingProblems(a, { action: a.action, from: a.from, chainId: a.chainId, claimId: a.claimId, calls }, Number(a.builtAt));
+  const onClaims = (functionName: string, claimId: Hex): IntendedCall => ({ contract: 'RecourseClaims', to: CLAIMS, abi: CLAIMS_ABI, functionName, args: [claimId] });
+
+  it('contest, closeUncontested, expireClaim and withdrawCredit', async () => {
+    const r0 = await rig();
+    r0.chain.state.claim = chainClaim({ orderId: r0.b.orderId, status: 2, answer: 1, preCheckedAt: SEQ_SECONDS });
+    const contest = (await r0.post('contest', { from: PLATFORM, claimId: r0.b.claimId })).body as BuiltAction;
+    expect(problems(contest, [onClaims('contest', r0.b.claimId)])).toEqual([]);
+    expect(problems(contest, [onClaims('contest', h32(0xdead))]).join()).toContain('other arguments (claimId)');
+    expect(problems(contest, [{ ...onClaims('contest', r0.b.claimId), to: VAULT }]).join()).toContain(`not RecourseClaims at ${VAULT}`);
+
+    r0.chain.state.credit = 68_000_000n;
+    const withdraw = (await r0.post('withdrawCredit', { from: SHOP })).body as BuiltAction;
+    expect(problems(withdraw, [{ contract: 'DepositVault', to: VAULT, abi: VAULT_ABI, functionName: 'withdrawCredit', args: [] }])).toEqual([]);
+
+    const lapsed = await rig({ stage: 'window_lapsed', now: SEQ_SECONDS + 601n });
+    lapsed.chain.state.claim = chainClaim({ orderId: lapsed.b.orderId, status: 2, preCheckedAt: SEQ_SECONDS });
+    const close = (await lapsed.post('closeUncontested', { from: SHOP2, claimId: lapsed.b.claimId })).body as BuiltAction;
+    expect(problems(close, [onClaims('closeUncontested', lapsed.b.claimId)])).toEqual([]);
+    expect(problems(close, [onClaims('expireClaim', lapsed.b.claimId)]).join()).toContain('its data calls closeUncontested');
+
+    const filedAt = 1_700_000_000n;
+    const old = await rig({ stage: 'filed', now: filedAt + 14_401n, chain: { escrow: 3_000_000n } });
+    old.chain.state.claim = chainClaim({ orderId: old.b.orderId, status: 1, filedAt });
+    const expire = (await old.post('expireClaim', { from: SHOP, claimId: old.b.claimId })).body as BuiltAction;
+    expect(problems(expire, [onClaims('expireClaim', old.b.claimId)])).toEqual([]);
+  });
+
+  it('fileClaim after an approve of exactly the court fee, with the shop\'s own refs, basket and net loss', async () => {
+    const r0 = await filing();
+    const a = (await r0.post('fileClaim', { from: SHOP, platform: PLATFORM, orderNonce: N, basketUsdc: '25000000', netLossUsdc: '20000000' })).body as BuiltAction;
+    const refs = { topicNum: 4000n, seq: [10n, 11n, 12n, 13n, 14n, 15n], hashes: r0.t.hashes };
+    const approve = (amount: bigint): IntendedCall => ({ contract: 'VaultToken', to: TOKEN, abi: TOKEN_ABI, functionName: 'approve', args: [VAULT, amount] });
+    const file = (r: typeof refs): IntendedCall => ({ contract: 'RecourseClaims', to: CLAIMS, abi: CLAIMS_ABI, functionName: 'fileClaim', args: [N, PLATFORM, r, 25_000_000n, 20_000_000n] });
+    expect(problems(a, [approve(3_000_000n), file(refs)])).toEqual([]);
+    expect(problems(a, [approve(1n), file(refs)]).join()).toContain('other arguments (amount)');
+    expect(problems(a, [approve(3_000_000n), file({ ...refs, seq: [10n, 11n, 12n, 13n, 14n, 16n] })]).join()).toContain('other arguments (refs)');
+  });
+
+  it('submitEvidence with the external id of the attempt and the evidence text', async () => {
+    const r0 = await rig({ stage: 'at_court', chain: { period: 0 } });
+    r0.chain.state.kase = caseNow({ state: 2, attempts: 1, disputeIds: [901n, 0n] });
+    const a = (await r0.post('submitEvidence', { from: SHOP, claimId: r0.b.claimId, name: 'Delivery photo', description: 'As it arrived.' })).body as BuiltAction;
+    const text = JSON.stringify({ name: 'Delivery photo', description: 'As it arrived.' });
+    const call = (attempt: number): IntendedCall => ({ contract: 'EvidenceModule', to: addressBook.arbitrum.evidenceModule, abi: EVIDENCE_ABI, functionName: 'submitEvidence', args: [externalIdUint(ARB_ID, CASE, r0.b.claimId, attempt), text] });
+    expect(problems(a, [call(1)])).toEqual([]);
+    expect(problems(a, [call(2)]).join()).toContain('other arguments (_externalDisputeID)');
   });
 });

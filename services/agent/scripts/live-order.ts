@@ -1,12 +1,14 @@
 // One whole order on Hedera testnet, the live counterpart of local-demo, built from the same pieces:
 //
 //   agent checkout: asked, shown, approval -> x402 payment (USDC, or HBAR when PRICE_ASSET=hbar) -> ordered
-//   shop: packed      buyer: arrived, complaint to the shop      shop: fileClaim on RecourseClaims
+//   shop: packed      buyer: arrived, complaint to the shop      shop: fileClaim through the status API
 //
 // Dry run by default: checks the accounts, the records topic, the keys, the claims deployment and
 // the court fee, and shows the approval text and how the spend limits decide it; nothing is
 // journaled, written or paid. `--send` runs it for real, step by step; a rerun with `--order <id>`
-// carries on where it stopped (every step is journaled and idempotent). The court fee is the vault's
+// carries on where it stopped (every step is journaled and idempotent). The claim is built by the
+// status API's POST /v1/actions/fileClaim (STATUS_API_URL, default http://127.0.0.1:8787), checked
+// against what the shop files, and signed here with SHOP_KEY_FILE, as file-claim does. The court fee is the vault's
 // token from the shop in either mode: the USDC deployments/hedera.json records, Circle's (checked on
 // the mirror node; also while there is no record yet) or the testnet mock (checked by balanceOf over
 // HEDERA_RPC_URL_1). The shop's vault token is checked only when the run goes on to the claim; with
@@ -22,7 +24,7 @@
 
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { erc20Abi, getAddress, type Hex } from 'viem';
+import { getAddress, type Hex } from 'viem';
 import { CIRCLE_VAULT_TOKEN, addressBook, claimIdOf, hederaAccountIdOf, partyByRole, priceAssetOf, type Attrs, type VaultToken } from '@recourse/shared';
 import { loadSigner } from '@recourse/shared/node';
 import {
@@ -43,11 +45,12 @@ import {
 } from '@recourse/records';
 import type { RunningShop } from '../../shop/src/boot.js';
 import { basketPrice, itemBySku } from '../../shop/src/catalog.js';
-import { DeploymentMissingError, balanceReader, chainClients, loadAbi, publicClientFor, readHederaDeployment } from '../../shop/src/chain.js';
+import { DeploymentMissingError, balanceReader, publicClientFor, readHederaDeployment } from '../../shop/src/chain.js';
 import { claimInputFor } from '../../shop/src/claim-input.js';
-import { ClaimFiler, type FilingJournalRow } from '../../shop/src/filing.js';
+import type { FilingJournalRow } from '../../shop/src/filing.js';
 import type { ShopJournalRow } from '../../shop/src/orders.js';
 import { packOrder } from '../../shop/src/pack.js';
+import { courtFeeOf, fileClaimRun, openHedera, type HederaSide } from '../src/act.js';
 import type { AgentRow } from '../src/buy.js';
 import { hashscanLink, loadBuyer, withOrdersLock } from '../src/cli.js';
 import { openAgent, ordersJournalPath, partiesOrNull } from '../src/setup.js';
@@ -145,7 +148,18 @@ async function main(): Promise<number> {
     const shopAccount = loadSigner('SHOP_KEY_FILE', env);
     if (getAddress(shopParty.evmAddress) !== shopAccount.address) throw new Error('SHOP_KEY_FILE is not the party map\'s shop');
     const buyerAccount = upTo('report') ? loadBuyer(env, parties) : null;
-    const clients = deployment ? chainClients({ rpcUrl: rpcUrl!, chainId: deployment.chainId, account: shopAccount }) : null;
+    // The claim goes through the status API, which must serve this checkout's contracts.
+    let api: HederaSide | null = null;
+    if (deployment) {
+      try {
+        api = await openHedera(env, shopAccount);
+        const u = `µ${deployment.token.symbol}`;
+        console.log(`claims ${deployment.claims}: court fee ${courtFeeOf(api.params)} ${u} of ${deployment.token.label} ${deployment.usdc}, from the status API at ${api.client.base}`);
+      } catch (error) {
+        console.log(`status API: ${error instanceof Error ? error.message : String(error)}`);
+        if (send) return 2;
+      }
+    }
     if (checks.some((c) => !c.ok) || !topic) {
       if (send) {
         console.error('live-order: a check failed; nothing sent');
@@ -156,18 +170,6 @@ async function main(): Promise<number> {
 
     return await withFileLock(join(shopState, 'claims.jsonl.lock'), () => withOrdersLock(async () => {
       const claimsJournal = Journal.open<FilingJournalRow>(join(shopState, 'claims.jsonl'));
-      const filer =
-        deployment && clients
-          ? new ClaimFiler({ clients, claims: deployment.claims, vault: deployment.vault, usdc: deployment.usdc, claimsAbi: loadAbi('RecourseClaims', env), vaultAbi: loadAbi('DepositVault', env), journal: claimsJournal, log })
-          : null;
-      if (filer && deployment && clients) {
-        const [fee, balance] = await Promise.all([
-          filer.courtFee(),
-          clients.publicClient.readContract({ address: deployment.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [shopAccount.address] }),
-        ]);
-        const u = `µ${deployment.token.symbol}`;
-        console.log(`claims ${deployment.claims}: court fee ${fee} ${u}; the shop holds ${balance} ${u} of ${deployment.token.label} ${deployment.usdc}${balance < fee ? ' (NOT ENOUGH)' : ''}`);
-      }
       const agent = await openAgent(env, log, shop ? { shop: { x402Base: `${shop.url}/x402/`, apiBase: shop.url, payTo: hederaAccountIdOf(shopParty), shopAddress: getAddress(shopParty.evmAddress), source: 'in-process shop' } } : {});
       try {
         const { buyer } = agent;
@@ -224,15 +226,15 @@ async function main(): Promise<number> {
           });
           console.log(`arrived: seq ${report.seq}, cid ${report.cid}; shop ${report.shopAccepted ? 'took the complaint' : `refused it: ${report.shopError}`}`);
           if (!report.shopAccepted) return 1;
-          if (!upTo('claim') || !filer) return 0;
+          if (!upTo('claim') || !api) return 0;
 
-          // 4. The shop's claim.
+          // 4. The shop's claim, built by the status API and signed here.
           const reader = new TopicReader(mirrorFromEnv(env), topicId);
           const ipfs = ipfsOptionsFromEnv(env);
           const input = await claimInputFor({ rows: shopJournal.read().rows, reader, parties, orderId, fetchDoc: (cid, hash) => fetchDocument(cid, hash, ipfs) });
-          const filed = await filer.fileClaim(input);
-          console.log(`claim ${filed.claimId}${filed.txHash ? `: https://hashscan.io/testnet/transaction/${filed.txHash}` : ' (already filed)'}`);
-          return 0;
+          const filed = await fileClaimRun(api, input, { send: true, journal: claimsJournal });
+          console.log(`claim ${filed.claimId}${filed.done ? ' (already filed)' : filed.hashes.length > 0 ? `: https://hashscan.io/testnet/transaction/${filed.hashes.at(-1)}` : ''}`);
+          return filed.code;
         } finally {
           shopJournal.close();
         }

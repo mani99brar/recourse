@@ -1,4 +1,6 @@
-// Filing a claim on RecourseClaims from the shop's account.
+// Filing a claim on RecourseClaims from the shop's account, straight to the chain. Local runs and
+// tests only (local-demo, the anvil tests): the shop's file-claim command and live-order file through
+// the status API's POST /v1/actions/fileClaim, as the web app does.
 //
 // Never twice: the claim id is known before anything is sent (it is derived from the platform, the
 // shop and the order nonce), every transaction is signed first and journaled with its raw bytes,

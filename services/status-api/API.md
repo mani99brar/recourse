@@ -14,6 +14,7 @@ The machine-readable description is [`openapi.json`](openapi.json) (OpenAPI 3.1)
 | Anyone, through the web app's origin | `/api` | `GET /api/v1/claims/0x…` |
 | On the host | `http://127.0.0.1:8787` | `GET /v1/claims/0x…` |
 | The shop (x402 orders) | the shop's origin (`http://127.0.0.1:8720` on the host, its tunnel publicly) | `POST /x402/orders/{sku}/{quantity}` |
+| The agent's and the shop's commands | `STATUS_API_URL` (default `http://127.0.0.1:8787`) | `contest`, `withdraw-credit`, `claim-action`, `file-claim`, `live-order` |
 
 `ops/units/web-server.mjs` forwards `/api/<path>` to the status API as `/<path>`, with a per-client
 allowance (5 requests a second, bursts of 100). The shop's routes are in the same OpenAPI file, with their
@@ -58,7 +59,9 @@ answer is the same shape for every action:
 ```
 
 To act: show `preview`; sign and send `transactions` in order from your own wallet, each after the one before
-it has mined; then read `readBack` until it shows the change. Checks and gas estimates run against the latest
+it has mined; then read `readBack` until it shows the change. The web app and the commands check first that
+each transaction's data decodes to the call it shows (the commands also to the contract, function and
+arguments they mean, on the chain and signer they mean), and sign nothing otherwise. Checks and gas estimates run against the latest
 block as `from`. A call the contract would refuse is answered with an error, never with a transaction.
 `simulated` is false only when a transaction depends on an earlier one in the list (fileClaim after approve).
 
@@ -92,7 +95,8 @@ API then does the same and says so in a note.
   `basketUsdc` from the ordered record document (its amount and asset, as micro-USDC); the court fee,
   `handlingOf(basket)`, and whether an approve is needed. A `basketUsdc` you send must equal the derived one.
 - It refuses before building: `no_ordered_record`, `ordered_unreadable`, `no_packed_record` (unless
-  `allowUnpacked`), `net_loss_above_basket`, `claim_exists`, `exit_due`, `insufficient_balance`.
+  `allowUnpacked`), `net_loss_above_basket`, `claim_exists`, `exit_due`, `insufficient_balance`; an `orderId`
+  that the nonce, platform and `from` do not hash to is `order_id_mismatch`, with `details.derivedOrderId`.
   `input.expectedFinding` is the shared fault rule on the referenced records; the pre-check service records the real finding.
 
 ## Errors

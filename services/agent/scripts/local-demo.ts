@@ -6,7 +6,9 @@
 // What is real and what is simulated:
 // - Claims, the deposit vault and the USDC mock run on a local anvil, deployed by the repo's local
 //   deploy script; the claim is a real transaction there, from anvil's development account 4 (the
-//   shop), against the platform (account 3).
+//   shop), against the platform (account 3). It is filed straight to the chain with ClaimFiler, not
+//   through the status API the file-claim command uses: no status API runs over this local chain
+//   and its simulated topic (a local-run and test-only path).
 // - The records topic is an in-memory HCS stand-in (simulated). With --serve it is also served as
 //   a mirror node REST API, so other services on this host can read it.
 // - The x402 payment is signed by the agent like a live one, then checked and "settled" by a

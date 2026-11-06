@@ -1,8 +1,10 @@
 // The contest and withdraw-credit commands against the real contracts on a local anvil, run as
-// separate processes the way an operator runs them, signing from throwaway keystores of anvil's
-// development keys (test funds only). Slow (deploys once); run under the suite lock.
+// separate processes the way an operator runs them: each asks a status API (the real one, in this
+// process, over the local chain) to build the call, checks it, signs from a throwaway keystore of
+// one of anvil's development keys (test funds only) and sends it to the chain. Slow (deploys once);
+// run under the suite lock.
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createCipheriv, randomBytes, scryptSync } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,6 +19,7 @@ import { CallRefused, readClaim, readClaimParams, readCredit, simulateCall, type
 import { ClaimFiler, type FilingJournalRow } from '../../shop/src/filing.js';
 import { devAccount, startLocalChain, type LocalChain } from '../../shop/src/local-chain.js';
 import { withErrorsOf } from '../../shop/src/reverts.js';
+import { startLocalApi, type LocalApi } from './local-api.js';
 
 const PORT = 8579;
 const FILE = 'lane04.local.json';
@@ -61,22 +64,31 @@ let shop: ChainClients;
 let platformClients: ChainClients;
 let signerClients: ChainClients;
 let platform: Address;
+let api: LocalApi;
 
-function cli(name: 'contest' | 'withdraw-credit', args: string[], envOverride: Record<string, string> = {}) {
-  const run = spawnSync(TSX, [join('scripts', `${name}.ts`), ...args], {
+/** Runs a command as its own process; not spawnSync, so the status API in this process can answer it. */
+function cli(name: 'contest' | 'withdraw-credit', args: string[], envOverride: Record<string, string> = {}): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn(TSX, [join('scripts', `${name}.ts`), ...args, '--wait', '0'], {
     cwd: AGENT_DIR,
     env: {
       ...process.env,
       HEDERA_LOCAL_FILE: FILE,
       HEDERA_RPC_URL_1: chain.rpcUrl,
+      STATUS_API_URL: api.url,
       PLATFORM_KEY_FILE: join(keyDir, 'platform.json'),
       SHOP_KEY_FILE: join(keyDir, 'shop.json'),
       ...envOverride,
     },
-    encoding: 'utf8',
     timeout: 120_000,
   });
-  return { status: run.status, stdout: run.stdout, stderr: run.stderr };
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (b: Buffer) => (stdout += b.toString('utf8')));
+  child.stderr.on('data', (b: Buffer) => (stderr += b.toString('utf8')));
+  return new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (status) => resolve({ status, stdout, stderr }));
+  });
 }
 
 async function fileAndPreCheck(answer: number): Promise<{ claimId: Hex; orderId: Hex }> {
@@ -137,10 +149,12 @@ beforeAll(async () => {
   keyDir = mkdtempSync(join(tmpdir(), 'lane04-keys-'));
   writeKeystore(join(keyDir, 'platform.json'), devAccount(3).getHdKey().privateKey!, 'platform-test');
   writeKeystore(join(keyDir, 'shop.json'), devAccount(4).getHdKey().privateKey!, 'shop-test');
+  api = await startLocalApi(chain.rpcUrl, deploymentFile);
 }, 900_000);
 
 afterAll(async () => {
   try {
+    await api?.close();
     await chain?.stop();
   } finally {
     if (keyDir) rmSync(keyDir, { recursive: true, force: true });
@@ -151,84 +165,86 @@ afterAll(async () => {
 describe('contest and withdraw-credit on the local contracts', () => {
   let lapsed: { claimId: Hex; orderId: Hex };
 
-  it('lets only the losing side contest, moves no USDC, and shows the claim before and after', async () => {
+  it('lets only the losing side contest, through the status API, and moves no USDC', async () => {
     const { claimId } = await fileAndPreCheck(Answer.Platform);
     lapsed = await fileAndPreCheck(Answer.Platform);
 
-    const wrongSide = cli('contest', ['--claim', claimId, '--as', 'shop']);
+    const wrongSide = await cli('contest', ['--claim', claimId, '--as', 'shop']);
     expect(wrongSide.status).toBe(2);
-    expect(wrongSide.stderr).toContain('the pre-check went against the platform, so the shop is not the losing side');
+    expect(wrongSide.stderr).toContain('contest: not_contester: Only the platform may contest this finding.');
 
-    const wrongKey = cli('contest', ['--claim', claimId, '--as', 'platform'], { PLATFORM_KEY_FILE: join(keyDir, 'shop.json') });
+    const wrongKey = await cli('contest', ['--claim', claimId, '--as', 'platform'], { PLATFORM_KEY_FILE: join(keyDir, 'shop.json') });
     expect(wrongKey.status).toBe(2);
-    expect(wrongKey.stderr).toContain(`but this claim's platform is ${platform}`);
+    expect(wrongKey.stderr).toContain(`not_contester`);
+    expect(wrongKey.stderr).toContain(`contester ${platform}`);
 
-    const dry = cli('contest', ['--claim', claimId, '--as', 'platform']);
+    const dry = await cli('contest', ['--claim', claimId, '--as', 'platform']);
     expect(dry.status, dry.stderr).toBe(0);
-    expect(dry.stdout).toContain('status PreChecked');
-    expect(dry.stdout).toContain('losing side: platform');
+    expect(dry.stdout).toContain(`contest on local chain 31337, signed by ${platform}`);
+    expect(dry.stdout).toContain('Contest the pre-check finding against the platform');
     const fee = PARAMS.preLock.courtFeeUsdc; // DeployLocal applies the preLock set
-    expect(dry.stdout).toContain(`court fee ${fee} µUSDC; escrow open, ${fee} µUSDC from the shop`);
-    expect(dry.stdout).toContain('no expiry while PreChecked');
+    expect(dry.stdout).toContain(`courtFee:`);
+    expect(dry.stdout).toContain(`(${fee} base units)`);
+    expect(dry.stdout).toContain(`step 1 of 1: RecourseClaims.contest at ${contracts.claims}`);
     expect(dry.stdout).toContain('dry run');
     expect((await readClaim(shop.publicClient, contracts, claimId)).status).toBe(ClaimStatus.PreChecked);
 
     // By order id too: the command derives the claim id from the deployment.
-    const byOrder = cli('contest', ['--order', lapsed.orderId, '--as', 'platform']);
+    const byOrder = await cli('contest', ['--order', lapsed.orderId, '--as', 'platform']);
     expect(byOrder.status, byOrder.stderr).toBe(0);
     expect(byOrder.stdout).toContain(`claim ${lapsed.claimId}`);
 
     const usdcBefore = await usdcOf(platform);
-    const sent = cli('contest', ['--claim', claimId, '--as', 'platform', '--send']);
+    const sent = await cli('contest', ['--claim', claimId, '--as', 'platform', '--send']);
     expect(sent.status, sent.stderr).toBe(0);
-    expect(sent.stdout).toMatch(/before: claim 0x[0-9a-f]{64}, status PreChecked/);
-    expect(sent.stdout).toMatch(/contested in 0x[0-9a-f]{64}/);
-    expect(sent.stdout).toMatch(/after: claim 0x[0-9a-f]{64}, status Contested/);
-    expect(sent.stdout).toContain(`contested by ${platform}`);
-    expect(sent.stdout).toContain('64800 s after the pre-check');
+    expect(sent.stdout).toMatch(/step 1: signed 0x[0-9a-f]{64} \(nonce \d+\); sending/);
+    expect(sent.stdout).toMatch(/step 1: mined in block \d+/);
+    expect(sent.stdout).toMatch(/sent 0x[0-9a-f]{64}/);
     const claim = await readClaim(shop.publicClient, contracts, claimId);
     expect(claim.status).toBe(ClaimStatus.Contested);
     expect(claim.contestedBy).toBe(platform);
     expect(await usdcOf(platform)).toBe(usdcBefore);
 
-    const again = cli('contest', ['--claim', claimId, '--as', 'platform', '--send']);
+    const again = await cli('contest', ['--claim', claimId, '--as', 'platform', '--send']);
     expect(again.status).toBe(2);
-    expect(again.stderr).toContain('the claim is Contested; only a PreChecked claim can be contested');
+    expect(again.stderr).toContain('wrong_status: The claim is Contested, which does not allow this call.');
   }, 300_000);
 
   it('refuses once the contest window has closed', async () => {
     const params = await readClaimParams(shop.publicClient, contracts);
     await passTime(params.contestWindow + 1n);
-    const late = cli('contest', ['--claim', lapsed.claimId, '--as', 'platform', '--send']);
+    const late = await cli('contest', ['--claim', lapsed.claimId, '--as', 'platform', '--send']);
     expect(late.status).toBe(2);
-    expect(late.stderr).toContain('the contest window closed at');
+    expect(late.stderr).toContain('window_closed: The contest window closed at');
     expect((await readClaim(shop.publicClient, contracts, lapsed.claimId)).status).toBe(ClaimStatus.PreChecked);
   }, 120_000);
 
-  it('withdraws the shop credit and prints it before and after', async () => {
-    const none = cli('withdraw-credit', ['--as', 'shop']);
+  it('withdraws the shop credit through the status API', async () => {
+    const none = await cli('withdraw-credit', ['--as', 'shop']);
     expect(none.status).toBe(2);
-    expect(none.stderr).toContain('no credit');
+    expect(none.stderr).toContain('withdraw-credit: no_credit: The signer has no credit in the deposit vault.');
 
     await write(signerClients, contracts.claims, contracts.claimsAbi, 'closeUncontested', [lapsed.claimId]);
     const credit = await readCredit(shop.publicClient, contracts, shop.account.address);
     expect(credit).toBeGreaterThan(BigInt(PARAMS.preLock.courtFeeUsdc)); // more than the refunded fee
 
-    const dry = cli('withdraw-credit', ['--as', 'shop']);
+    const dry = await cli('withdraw-credit', ['--as', 'shop']);
     expect(dry.status, dry.stderr).toBe(0);
-    expect(dry.stdout).toContain(`before: credit ${credit} µUSDC`);
-    expect(dry.stdout).toContain(`dry run: would withdraw ${credit} µUSDC`);
+    expect(dry.stdout).toContain(`withdrawCredit on local chain 31337, signed by ${shop.account.address}`);
+    expect(dry.stdout).toMatch(new RegExp(`credit: .* \\(${credit} base units\\), arrives in the account`));
+    expect(dry.stdout).toContain(`step 1 of 1: DepositVault.withdrawCredit at ${contracts.vault}`);
+    expect(dry.stdout).toContain('dry run');
 
     const usdcBefore = await usdcOf(shop.account.address);
-    const sent = cli('withdraw-credit', ['--as', 'shop', '--send']);
+    const sent = await cli('withdraw-credit', ['--as', 'shop', '--send']);
     expect(sent.status, sent.stderr).toBe(0);
-    expect(sent.stdout).toContain(`before: credit ${credit} µUSDC`);
-    expect(sent.stdout).toContain(`after: credit 0 µUSDC, USDC balance ${usdcBefore + credit} µUSDC (+${credit})`);
+    expect(sent.stdout).toMatch(/sent 0x[0-9a-f]{64}/);
     expect(await readCredit(shop.publicClient, contracts, shop.account.address)).toBe(0n);
     expect(await usdcOf(shop.account.address)).toBe(usdcBefore + credit);
 
-    const again = cli('withdraw-credit', ['--as', 'shop', '--send']);
+    const again = await cli('withdraw-credit', ['--as', 'shop', '--send']);
     expect(again.status).toBe(2);
+    expect(again.stderr).toContain('no_credit');
   }, 300_000);
 
   it('names ExitDue when filing against a platform whose exit is due', async () => {

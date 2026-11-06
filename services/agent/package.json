@@ -19,7 +19,8 @@
     "complain": "tsx scripts/complain.ts",
     "live-order": "tsx scripts/live-order.ts",
     "contest": "tsx scripts/contest.ts",
-    "withdraw-credit": "tsx scripts/withdraw-credit.ts"
+    "withdraw-credit": "tsx scripts/withdraw-credit.ts",
+    "claim-action": "tsx scripts/claim-action.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "2.85.0",

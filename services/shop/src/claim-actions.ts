@@ -1,6 +1,8 @@
 // A claim's later steps on Hedera, for the platform and the shop: contesting a pre-check inside the
 // contest window, and withdrawing credit from DepositVault. Reads, the checks the contracts make
 // (so a refusal reads well before anything is signed), a simulate that names any revert, and a send.
+// The contest and withdraw-credit commands build these calls through the status API instead; the
+// direct reads, checks and sends here are for tests only (the anvil tests read the chain with them).
 //
 // Contesting moves no USDC: the court fee is escrowed from the shop when the claim is filed.
 
