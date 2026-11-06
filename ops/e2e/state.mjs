@@ -6,7 +6,8 @@
 //                                       topic as deployments/*.json; exit 0 same, 3 different, 4 not readable
 //   node state.mjs claim <claimId>      the claim's statusKey, pre-check answer and contest window (JSON)
 //   node state.mjs order <orderId>      the claim id an order has, or null (JSON)
-//   node state.mjs party <role>         credit, deposit, required, inGoodStanding, and the vault token balance (JSON)
+//   node state.mjs party <role>         credit, deposit, required, inGoodStanding, topUpDeadline, and the vault
+//                                       token balance (JSON)
 //
 // The checkout is read with the status API's own loader (services/status-api/src/deployments.ts) and the
 // records package's topic loader; the API is STATUS_API_URL (default http://127.0.0.1:8787). Read-only.
@@ -100,7 +101,7 @@ async function party(role) {
   const out = { role, address, ok: r.ok, http: r.ok ? 200 : r.status };
   if (r.ok) {
     const p = r.json.party;
-    Object.assign(out, { credit: p.credit, balance: p.balance, required: p.required, inGoodStanding: p.inGoodStanding });
+    Object.assign(out, { credit: p.credit, balance: p.balance, required: p.required, inGoodStanding: p.inGoodStanding, topUpDeadline: p.topUpDeadline ?? null });
   }
   // The vault token in the party's own wallet, read from the chain (the API serves vault figures only).
   const d = await checkoutDeployments();
@@ -117,7 +118,11 @@ async function party(role) {
 }
 
 async function main() {
-  if (cmd === 'deployments') return console.log(JSON.stringify(await checkoutDeployments(), null, 2)), 0;
+  if (cmd === 'deployments') {
+    const d = await checkoutDeployments();
+    if (d.topicFrom === 'HCS_RECORDS_TOPIC_ID') d.recordsTopic = null;
+    return console.log(JSON.stringify(d, null, 2)), 0;
+  }
   if (cmd === 'preflight') return preflight();
   if (cmd === 'claim' && arg) return console.log(JSON.stringify(await claim(arg.toLowerCase()))), 0;
   if (cmd === 'order' && arg) return console.log(JSON.stringify(await order(arg.toLowerCase()))), 0;

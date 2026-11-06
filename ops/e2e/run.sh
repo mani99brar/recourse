@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # The whole test table in one command, against whatever deployments/*.json says.
-#   ops/e2e/run.sh [--send] [--restarts] [--suites] [--label <name>] [--only <groups>]
+#   ops/e2e/run.sh [--send] [--restarts] [--suites] [--label <name>] [--replace] [--only <groups>]
+# A label already in results/ is refused (its rows would mix with this run's); --replace moves the earlier
+# run's raw files into raw/prev-<time>/, where the table no longer reads them, and runs again under that label.
 # Groups, in the order they run (--only takes a comma list of them; the preflight always runs first):
 #   preflight  GET /v1/health and /v1/params on the status API name the contracts, chain ids and records
 #              topic of deployments/*.json (read with the repo's loaders). Different: the run stops there.
@@ -28,13 +30,14 @@ REPO=$(cd "$HERE/../.." && pwd)
 export RECOURSE_REPO=$REPO
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
-SEND=0 RESTARTS=0 SUITES=0 LABEL="" ONLY=""
+SEND=0 RESTARTS=0 SUITES=0 LABEL="" ONLY="" REPLACE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --send) SEND=1 ;;
     --restarts) RESTARTS=1 ;;
     --suites) SUITES=1 ;;
     --label) LABEL=${2:?--label needs a name}; shift ;;
+    --replace) REPLACE=1 ;;
     --only) ONLY=${2:?--only needs groups}; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "run.sh: unknown option $1" >&2; usage >&2; exit 2 ;;
@@ -46,6 +49,14 @@ LABEL=${LABEL:-$(date -u +%Y%m%dT%H%M%SZ)-$([ $SEND = 1 ] && echo send || echo d
 [[ "$LABEL" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "run.sh: --label: letters, digits, dot, dash, underscore" >&2; exit 2; }
 OUT=$HERE/results/$LABEL
 RAW=$OUT/raw
+if [ -e "$OUT" ]; then
+  [ $REPLACE = 1 ] || { echo "run.sh: results/$LABEL already holds a run; give another --label, or --replace to run again under it" >&2; exit 2; }
+  if [ -d "$RAW" ]; then
+    prev=$RAW/prev-$(date -u +%Y%m%dT%H%M%SZ)
+    mkdir -p "$prev"
+    find "$RAW" -mindepth 1 -maxdepth 1 ! -name 'prev-*' -exec mv -t "$prev" {} +
+  fi
+fi
 export E2E_RAW_DIR=$RAW
 mkdir -p "$RAW"
 RUNLOG=$RAW/run.jsonl
@@ -81,7 +92,8 @@ stop() {
   finish || true
   exit 1
 }
-last_line() { grep -v '^\s*$' "$1" | tail -1 | cut -c1-300; }
+# last_line <file>: its last non-blank line for a note, a URL cut to its host as lib.mjs safeText does.
+last_line() { { grep -v '^\s*$' "$1" || true; } | tail -1 | sed -E "s#\\b(https?|wss?)://([^/[:space:]\"'?\#]+)[^[:space:]\"']*#\\1://\\2/…#g" | cut -c1-300; }
 
 # mem_ok <MB>: waits up to E2E_MEM_WAITS times 10 minutes for that much available memory.
 mem_ok() {
@@ -130,13 +142,13 @@ api_group() { # api_group <test name> [api-agent args]
   fi
 }
 
-ui_group() { # ui_group <name> [ui-wallet args]: one browser run under the lock
+ui_group() { # ui_group <name> [ui-wallet args]: one browser run under the lock; its rows in raw/<name>.jsonl
   local name=$1 rc=0; shift
   if ! mem_ok 1200; then
     row "UI (browser)${*:+ $*}" blocked "not run: ${MEM_SEEN} MB available, a browser needs 1200"
     return 1
   fi
-  flock -w 1800 "$LOCK" node "$HERE/ui-wallet.mjs" "$@" >"$RAW/$name.out" 2>"$RAW/$name.err" || rc=$?
+  flock -w 1800 "$LOCK" node "$HERE/ui-wallet.mjs" "$@" --out "$RAW/$name.jsonl" >"$RAW/$name.out" 2>"$RAW/$name.err" || rc=$?
   if grep -q '^ui-wallet: ' "$RAW/$name.err"; then
     row "ui-wallet.mjs${*:+ $*}" fail "ui-wallet stopped early" "$(grep '^ui-wallet: ' "$RAW/$name.err" | tail -1 | cut -c1-300)"
     return 1
@@ -150,11 +162,15 @@ agent_cli() { # agent_cli <out file> <script> [args]: an existing CLI of service
   local out=$1; shift
   (cd "$REPO" && pnpm --silent --filter @recourse/agent "$@") >"$out" 2>&1
 }
-sent_hashes() { grep -oE '^sent 0x[0-9a-fA-F]{64}' "$1" | awk '{print $2}' | paste -sd' ' -; }
+# Under set -e and pipefail a grep that matches nothing inside x=$(...) would end the run with no row, so
+# these helpers, and each x=$(grep ...) below, end in `|| true` and leave the empty case to the guard after it.
+sent_hashes() { { grep -oE '^sent 0x[0-9a-fA-F]{64}' "$1" || true; } | awk '{print $2}' | paste -sd' ' -; }
+# last_match <regex> <field> <file>: that awk field of the last match of the regex, or nothing.
+last_match() { { grep -oE "$1" "$3" || true; } | awk -v f="$2" '{print $f}' | tail -1; }
 
-# claim_json <claimId>; party_json <role>: the API's view (and the wallet's vault token balance).
-claim_json() { node "$HERE/state.mjs" claim "$1"; }
-party_json() { node "$HERE/state.mjs" party "$1"; }
+# claim_json <claimId>; party_json <role>: the API's view (and the wallet's vault token balance), or nothing.
+claim_json() { node "$HERE/state.mjs" claim "$1" || true; }
+party_json() { node "$HERE/state.mjs" party "$1" || true; }
 
 # closes <claimId> <tag>: the pre-check finding against the agent company, the contest window from the API,
 # then the keeper's closeUncontested, each read from the API.
@@ -197,14 +213,14 @@ credit_out() {
 }
 
 send_group() {
-  local out order claim pay hashes before b_order b_claim p need
+  local out order claim pay hashes before b_order b_claim p need bal
   # (a) An order paid by x402 with the staged agent-company mistake; live-order files the claim (shop signs).
   out=$RAW/live-order-a.out
   agent_cli "$out" live-order --send --sku tee-navy-m --fault ordered-size=L || stop "x402 order A (live-order)" "live-order exit $?: $(last_line "$out")"
   grep -q '^waiting for the buyer' "$out" && stop "x402 order A (live-order)" "the spend limits asked for the buyer's approval: $(grep '^waiting for the buyer' "$out")"
-  order=$(grep -oE '^order 0x[0-9a-fA-F]{64}' "$out" | awk '{print $2}' | tail -1)
-  pay=$(grep -oE '^payment [^ :]+' "$out" | awk '{print $2}' | tail -1)
-  claim=$(grep -oE '^claim 0x[0-9a-fA-F]{64}' "$out" | awk '{print $2}' | tail -1)
+  order=$(last_match '^order 0x[0-9a-fA-F]{64}' 2 "$out")
+  pay=$(last_match '^payment [^ :]+' 2 "$out")
+  claim=$(last_match '^claim 0x[0-9a-fA-F]{64}' 2 "$out")
   [ -n "$order" ] && [ -n "$pay" ] || stop "x402 order A (live-order)" "no order id or payment in live-order's output: $(last_line "$out")"
   row "x402 order A + payment (agent, staged fault ordered-size=L)" pass "order $order" "" "$pay"
   [ -n "$claim" ] || stop "fileClaim A (live-order, shop)" "no claim id in live-order's output: $(last_line "$out")"
@@ -213,18 +229,19 @@ send_group() {
   # (d) The UI's fileClaim on a second order B, paid the same way and filed in the web app by the shop.
   out=$RAW/live-order-b.out
   agent_cli "$out" live-order --send --sku tee-navy-m --fault ordered-size=L --through report || stop "x402 order B (live-order)" "live-order exit $?: $(last_line "$out")"
-  b_order=$(grep -oE '^order 0x[0-9a-fA-F]{64}' "$out" | awk '{print $2}' | tail -1)
-  pay=$(grep -oE '^payment [^ :]+' "$out" | awk '{print $2}' | tail -1)
+  b_order=$(last_match '^order 0x[0-9a-fA-F]{64}' 2 "$out")
+  pay=$(last_match '^payment [^ :]+' 2 "$out")
   [ -n "$b_order" ] && [ -n "$pay" ] || stop "x402 order B (live-order)" "no order id or payment in live-order's output: $(last_line "$out")"
   row "x402 order B + payment (agent, staged fault ordered-size=L)" pass "order $b_order, records through the buyer's report" "" "$pay"
-  ui_group ui-send-file --send --as shop --flows file --order "$b_order" || stop "UI fileClaim B (shop, injected wallet)" "ui-wallet did not file it: $(last_line "$RAW/ui-send-file.err")"
-  b_claim=$(node "$HERE/state.mjs" order "$b_order" | jq -r '.claimId // empty')
+  ui_group ui-send-file --send --as shop --flows file --order "$b_order" \
+    || stop "UI fileClaim B (shop, injected wallet)" "ui-wallet did not file it: $(last_line "$RAW/ui-send-file.err")"
+  b_claim=$({ node "$HERE/state.mjs" order "$b_order" || true; } | jq -r '.claimId // empty')
   [ -n "$b_claim" ] || stop "UI fileClaim B (shop, injected wallet)" "the API shows no claim for order $b_order"
 
   # (b) Claim A: the finding, the window, the keeper's close, then the shop's withdraw-credit and a read-back.
   closes "$claim" A
   before=$(party_json shop)
-  [ "$(jq -r '.credit // "0"' <<<"$before")" != 0 ] || stop "withdraw-credit (shop)" "the shop has no credit after claim A closed"
+  [[ "$(jq -r '.credit // empty' <<<"${before:-null}")" =~ ^[1-9][0-9]*$ ]] || stop "withdraw-credit (shop)" "the shop has no credit after claim A closed (or its party could not be read)"
   out=$RAW/withdraw-credit.out
   agent_cli "$out" withdraw-credit --as shop --send || stop "withdraw-credit (shop)" "withdraw-credit exit $?: $(last_line "$out")" "$(sent_hashes "$out")"
   hashes=$(sent_hashes "$out")
@@ -235,40 +252,72 @@ send_group() {
   # (d) Claim B the same way, and its credit withdrawn in the web app.
   closes "$b_claim" B
   before=$(party_json shop)
-  ui_group ui-send-withdraw --send --as shop --flows withdraw || stop "UI withdrawCredit (shop, injected wallet)" "ui-wallet did not withdraw: $(last_line "$RAW/ui-send-withdraw.err")"
-  hashes=$(jq -r 'select(.txHash != null) | .txHash' "$RAW"/ui-wallet-*.jsonl 2>/dev/null | tail -1)
+  ui_group ui-send-withdraw --send --as shop --flows withdraw \
+    || stop "UI withdrawCredit (shop, injected wallet)" "ui-wallet did not withdraw: $(last_line "$RAW/ui-send-withdraw.err")"
+  # This run's own file only: an earlier ui-wallet run of the same label holds claim B's fileClaim hashes.
+  hashes=$({ jq -r 'select(.txHash != null) | .txHash' "$RAW/ui-send-withdraw.jsonl" 2>/dev/null || true; } | tail -1)
+  [ -n "$hashes" ] || stop "UI withdrawCredit (shop, injected wallet)" "ui-wallet recorded no withdrawCredit transaction: $(last_line "$RAW/ui-send-withdraw.err")"
   credit_out UI "$before" "$hashes"
   row "UI contest, evidence, next step (send)" blocked "not sent by this round: a contest takes the claim to court (the court case itself), evidence needs a case, and the keeper takes the next step"
 
   # (c) The payouts came out of the agent company's deposit: top it up with the wiring order's step 4.1 tool.
+  # The test is the deposit against required, not inGoodStanding: a vault with a top-up window keeps a party
+  # in good standing for that window after a payout takes its deposit below required.
   p=$(party_json platform)
   [ "$(jq -r .ok <<<"$p")" = true ] || stop "agent company deposit" "the platform's standing could not be read from the API"
-  need=$(jq -r '.required // empty' <<<"$p")
-  [ -n "$need" ] || stop "agent company deposit" "the API gives no required deposit"
-  if [ "$(jq -r .inGoodStanding <<<"$p")" = true ]; then
-    row "agent company deposit after the payouts" pass "deposit $(jq -r .balance <<<"$p") of required $need: still in good standing, no top-up needed"
+  need=$(jq -r '.required // empty' <<<"$p"); bal=$(jq -r '.balance // empty' <<<"$p")
+  [[ "$need" =~ ^[0-9]+$ && "$bal" =~ ^[0-9]+$ ]] || stop "agent company deposit" "the API gives no deposit or required deposit (balance ${bal:-none}, required ${need:-none})"
+  if [ "$(python3 -c "print(int($bal >= $need))")" = 1 ]; then
+    row "agent company deposit after the payouts" pass "deposit $bal of required $need: not below it, no top-up needed (inGoodStanding $(jq -r .inGoodStanding <<<"$p"))"
     return 0
   fi
+  row "agent company deposit after the payouts" pass "deposit $bal below required $need (inGoodStanding $(jq -r .inGoodStanding <<<"$p"), top-up deadline $(jq -r '.topUpDeadline // "none"' <<<"$p")): a top-up is due"
   out=$RAW/deposit.out
   bash "$REPO/ops/wire/07-deposit.sh" "$need" --send >"$out" 2>&1 \
     || stop "top-up (07-deposit.sh, platform)" "07-deposit.sh exit $?: $(last_line "$out") (in mock mode the platform's mUSDC is minted by the deployer: hedera.sh mint platform)"
-  hashes=$(grep -oE 'DepositPosted [0-9]+ in 0x[0-9a-fA-F]{64}' "$out" | awk '{print $4}' | tail -1)
-  row "top-up (07-deposit.sh $need, platform)" pass "approve + postDeposit up to the required deposit" "" "$hashes"
+  hashes=$(last_match 'DepositPosted [0-9]+ in 0x[0-9a-fA-F]{64}' 4 "$out")
+  if [ -n "$hashes" ]; then
+    row "top-up (07-deposit.sh $need, platform)" pass "approve + postDeposit up to the required deposit" "" "$hashes"
+  elif grep -q 'nothing to deposit' "$out"; then
+    row "top-up (07-deposit.sh $need, platform)" blocked "nothing sent: the chain's depositOf is already at the target while the API read $bal (the read-back says which is right)"
+  else
+    stop "top-up (07-deposit.sh $need, platform)" "no DepositPosted in its output: $(last_line "$out")"
+  fi
+  # Read back through the API: the deposit at required, in good standing, and no top-up clock running.
   local i ok=""
   for ((i = 0; i < 60; i++)); do
     p=$(party_json platform)
-    if [ "$(jq -r .inGoodStanding <<<"$p")" = true ]; then ok=1; break; fi
+    if [ "$(jq -r '(.balance // "") as $b | (.required // "") as $r
+          | ($b | test("^[0-9]+$")) and ($r | test("^[0-9]+$")) and ($b | tonumber) >= ($r | tonumber)
+            and .inGoodStanding == true and ((.topUpDeadline // "0") == "0")' <<<"${p:-null}" 2>/dev/null)" = true ]; then ok=1; break; fi
     sleep 3
   done
-  [ -n "$ok" ] || stop "agent company standing read back" "inGoodStanding is not true 180 s after the top-up (deposit $(jq -r .balance <<<"$p"), required $need)" "$hashes"
-  row "agent company standing read back" pass "inGoodStanding true: deposit $(jq -r .balance <<<"$p"), required $need" "" "$hashes"
+  [ -n "$ok" ] || stop "agent company deposit read back" "180 s after the top-up the API reads deposit $(jq -r .balance <<<"${p:-null}"), required $(jq -r .required <<<"${p:-null}"), inGoodStanding $(jq -r .inGoodStanding <<<"${p:-null}"), top-up deadline $(jq -r .topUpDeadline <<<"${p:-null}")" "$hashes"
+  row "agent company deposit read back" pass "deposit $(jq -r .balance <<<"$p") of required $(jq -r .required <<<"$p"), inGoodStanding true, no top-up deadline" "" "$hashes"
 }
 
 # ---- --restarts: one service at a time, least state first, keeper last ----
 
+# quiet_or_stop <svc>: the plan's "before any restart" (ops-checks.sh plan, step 0): no claim within 10
+# minutes of its deadline, no contest window open, no x402 order being paid. What cannot be read stops the
+# run, asking for the check by hand. An action in flight in the UI or another agent is not seen from here.
+quiet_or_stop() {
+  local svc=$1 claims kh near
+  claims=$(curl -s -m 30 "$STATUS_API/v1/claims" || true)
+  jq -e '.claims | type == "array"' <<<"${claims:-null}" >/dev/null 2>&1 \
+    || stop "restart $svc" "GET /v1/claims did not answer, so the claim deadlines are not known: check them by hand (ops-checks.sh plan) before this restart"
+  near=$(jq -r --argjson now "$(date +%s)" '[.claims[] | select(.deadline != null and (.deadline | tonumber) < $now + 600) | .claimId[0:10]] | join(" ")' <<<"$claims")
+  [ -z "$near" ] || stop "restart $svc" "a claim is within 10 minutes of its deadline ($near): not restarted"
+  kh=$(curl -s -m 10 http://127.0.0.1:8706/health || true)
+  [ "$(jq -r '.windowsActive | if type == "array" then length else "unread" end' <<<"${kh:-null}" 2>/dev/null || true)" = 0 ] \
+    || stop "restart $svc" "a contest window is open, or the keeper did not answer: not restarted"
+  if pgrep -f 'scripts/live-order' >/dev/null; then stop "restart $svc" "live-order is running (an x402 order may be being paid): not restarted"; fi
+}
+
 restarts_group() {
   local svc res kh
   for svc in web intake docket status-api precheck shop keeper; do
+    quiet_or_stop "$svc"
     if [ "$svc" = keeper ]; then
       kh=$(curl -s -m 10 http://127.0.0.1:8706/health || true)
       [ "$(jq -r '.openIntents | length' <<<"$kh" 2>/dev/null)" = 0 ] || stop "restart keeper" "the keeper has an open intent (or did not answer): not restarted"
@@ -277,7 +326,7 @@ restarts_group() {
       [ "$(curl -s -m 10 http://127.0.0.1:8705/health | jq -r '.queue // 0' 2>/dev/null)" = 0 ] || stop "restart precheck" "a claim is waiting for its finding: not restarted"
     fi
     bash "$REPO/ops/units/ctl.sh" restart "$svc" >>"$RAW/restarts.out" 2>&1 || stop "restart $svc" "ctl.sh restart $svc failed: $(last_line "$RAW/restarts.out")"
-    res=$(bash "$HERE/ops-checks.sh" after "$svc" --wait-s 90 2>>"$RAW/restarts.out" | grep '^{' | tail -1 | jq -r .result)
+    res=$({ bash "$HERE/ops-checks.sh" after "$svc" --wait-s 90 2>>"$RAW/restarts.out" || true; } | { grep '^{' || true; } | tail -1 | jq -r .result 2>/dev/null || true)
     [ "$res" = pass ] || stop "restart $svc" "$svc did not come back as it should (ops-checks.sh after: ${res:-no row})"
   done
 }
@@ -293,7 +342,7 @@ suites_group() {
     mem_ok 800 || { row "pnpm test $name" blocked "not run: ${MEM_SEEN} MB available, 800 needed"; continue; }
     rc=0
     (cd "$REPO" && flock -w 1800 "$LOCK" pnpm --filter "$name" test) >"$out" 2>&1 || rc=$?
-    line=$(grep -E '^ +Tests +' "$out" | tail -1 | sed 's/^ *//')
+    line=$({ grep -E '^ +Tests +' "$out" || true; } | tail -1 | sed 's/^ *//')
     row "pnpm test $name" "$([ "$rc" = 0 ] && echo pass || echo fail)" "${line:-no vitest summary} (exit $rc)"
   done
   out=$RAW/suite-forge.out
@@ -301,9 +350,14 @@ suites_group() {
   rc=0
   (cd "$REPO/contracts" && FOUNDRY_OUT=${FOUNDRY_OUT:-$RAW/forge/out} FOUNDRY_CACHE_PATH=${FOUNDRY_CACHE_PATH:-$RAW/forge/cache} \
     flock -w 1800 "$LOCK" forge test --no-match-contract Probe) >"$out" 2>&1 || rc=$?
-  line=$(grep -E '^Ran [0-9]+ test suites' "$out" | tail -1)
-  passed=$(grep -oE '[0-9]+ tests passed' <<<"$line" | awk '{print $1}'); failed=$(grep -oE '[0-9]+ failed' <<<"$line" | awk '{print $1}')
-  skipped=$(grep -oE '[0-9]+ skipped' <<<"$line" | awk '{print $1}')
+  line=$({ grep -E '^Ran [0-9]+ test suites' "$out" || true; } | tail -1)
+  if [ -z "$line" ]; then
+    # No summary: forge did not get as far as running the tests (a compile error, say).
+    row "forge test --no-match-contract Probe" fail "no test summary (exit $rc)" "$(last_line "$out")"
+    return 0
+  fi
+  passed=$(last_match '[0-9]+ tests passed' 1 <(printf '%s\n' "$line")); failed=$(last_match '[0-9]+ failed' 1 <(printf '%s\n' "$line"))
+  skipped=$(last_match '[0-9]+ skipped' 1 <(printf '%s\n' "$line"))
   row "forge test --no-match-contract Probe" "$([ "$rc" = 0 ] && echo pass || echo fail)" "${passed:-?} passed, ${failed:-?} failed, ${skipped:-?} skipped (exit $rc)"
 }
 
