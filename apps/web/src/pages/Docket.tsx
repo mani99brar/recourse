@@ -8,7 +8,8 @@ import type { Address } from 'viem';
 
 interface ParamsBody extends Fresh {
   schemeWallet: string | null;
-  docket: { rateConfig: { publishThreshold?: number } | null } | null;
+  /** `store`: where the docket service writes ('arkiv', or 'local' on its own host); null when unknown. */
+  docket: { rateConfig: { publishThreshold?: number } | null; store?: string | null } | null;
 }
 interface Party {
   evmAddress: string;
@@ -20,7 +21,8 @@ const KIND_WORDS: Record<string, string> = {
   claim_accuracy: 'Share of shop claims upheld',
 };
 
-export function RateTable({ rates }: { rates: RateResult[] }) {
+/** `countsRead` false: the monthly counts could not be read, so the uncontested figures are unknown, not 0. */
+export function RateTable({ rates, countsRead = true }: { rates: RateResult[]; countsRead?: boolean }) {
   if (rates.length === 0) return <p className="muted">No ruled cases yet.</p>;
   return (
     <div className="table-wrap">
@@ -51,7 +53,7 @@ export function RateTable({ rates }: { rates: RateResult[] }) {
               </td>
               <td>{r.units}</td>
               <td>
-                {r.closedUncontested} <span className="muted small">counted beside, not inside, the rate</span>
+                {countsRead ? r.closedUncontested : 'not read'} <span className="muted small">counted beside, not inside, the rate</span>
                 {r.unresolved > 0 && <span className="muted small"> · {r.unresolved} unresolved</span>}
               </td>
             </tr>
@@ -62,17 +64,27 @@ export function RateTable({ rates }: { rates: RateResult[] }) {
   );
 }
 
+/** The docket service keeps its entries on its own host: nothing below has reached Arkiv. */
+export function LocalStoreNote() {
+  return (
+    <div className="banner" role="status">
+      <p>The docket service is keeping its entries in a store on its own host for now, not on Arkiv. Nothing has been published to Arkiv yet, so the rates below, read from Arkiv, are empty even where cases have been ruled.</p>
+    </div>
+  );
+}
+
 export function DocketPage() {
   const params = usePoll<ParamsBody>('/params', 60000);
   const writer = params.data?.schemeWallet ?? null;
   const threshold = params.data?.docket?.rateConfig?.publishThreshold ?? 20;
-  const [state, setState] = useState<{ rates: RateResult[] | null; rows: number; error: string | null }>({ rates: null, rows: 0, error: null });
+  const store = params.data?.docket?.store ?? null;
+  const [state, setState] = useState<{ rates: RateResult[] | null; rows: number; countsRead: boolean; error: string | null }>({ rates: null, rows: 0, countsRead: true, error: null });
   useEffect(() => {
     if (!writer) return;
     let live = true;
     readDocket(writer as Address, import.meta.env?.VITE_ARKIV_PUBLIC_RPC_URL as string | undefined, threshold)
-      .then((d) => live && setState({ rates: d.rates, rows: d.rows.length, error: null }))
-      .catch(() => live && setState({ rates: null, rows: 0, error: 'The public docket could not be read from Arkiv right now. The public endpoint is rate limited; try again in a minute.' }));
+      .then((d) => live && setState({ rates: d.rates, rows: d.rows.length, countsRead: d.countsRead, error: null }))
+      .catch(() => live && setState({ rates: null, rows: 0, countsRead: true, error: 'The public docket could not be read from Arkiv right now. The public endpoint is rate limited; try again in a minute.' }));
     return () => {
       live = false;
     };
@@ -90,11 +102,12 @@ export function DocketPage() {
         </p>
         <p className="muted small">Read live from Arkiv in your browser, from entities written by {writer ? short(writer) : 'the docket writer'}.</p>
       </Card>
+      {store === 'local' && <LocalStoreNote />}
       <Card title="Rates">
         {!writer && !params.error && <Loading what="writer address" />}
         {state.error && <p className="error">{state.error}</p>}
         {writer && !state.rates && !state.error && <Loading what="docket from Arkiv" />}
-        {state.rates && <RateTable rates={state.rates} />}
+        {state.rates && <RateTable rates={state.rates} countsRead={state.countsRead} />}
         {state.rates && <p className="muted small">Read {state.rows} ruled case{state.rows === 1 ? '' : 's'} from Arkiv just now.</p>}
       </Card>
     </>

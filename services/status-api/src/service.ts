@@ -690,7 +690,9 @@ export class StatusService {
       feePool: facts?.case.feePool ?? null,
       policyURI: facts?.case.policyURI ?? null,
       schemeWallet: scheme?.evmAddress ?? null,
-      docket: docket ? { rateConfig: (docket as { rateConfig?: unknown }).rateConfig ?? null } : null,
+      // `store` says where the docket writes ('arkiv', or 'local' on its own host, when the public
+      // docket page, which reads Arkiv, has nothing to show).
+      docket: docket ? { rateConfig: (docket as { rateConfig?: unknown }).rateConfig ?? null, store: typeof (docket as { store?: unknown }).store === 'string' ? (docket as { store: string }).store : null } : null,
       disclosedPowers: DISCLOSED_POWERS,
     };
   }

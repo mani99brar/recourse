@@ -144,6 +144,19 @@ describe('http api', () => {
     expect(await h.svc.configLock()).toMatchObject({ allLocked: null, notice: expect.stringMatching(/could not be read/) });
   });
 
+  it("passes the docket's store through /params, so the docket page can say nothing is on Arkiv", async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'settled', 1);
+    const store = new Store();
+    ingest(store, sim);
+    const fetchDocket = async (url: string) =>
+      url.endsWith('/health')
+        ? { ok: true, status: 200, json: async () => ({ ok: true, store: 'local', rateConfig: { publishThreshold: 20 } }), arrayBuffer: async () => new ArrayBuffer(0) }
+        : { ok: false, status: 503, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) };
+    const h = harness({ store, now: Number(b.now), fetch: fetchDocket });
+    expect((await h.svc.paramsResponse()).docket).toEqual({ rateConfig: { publishThreshold: 20 }, store: 'local' });
+  });
+
   it('reports unreachable docket and precheck without failing the page', async () => {
     const { url, b } = await boot();
     const d = (await (await fetch(`${url}/claims/${b.claimId}`)).json()) as any;

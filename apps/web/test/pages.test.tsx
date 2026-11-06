@@ -9,8 +9,10 @@ import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_
 import { CaseView, type CaseDetail } from '../src/pages/Case.js';
 import { Finding, chainNote, standingWords } from '../src/pages/File.js';
 import { ClaimList } from '../src/pages/Party.js';
-import { RateTable } from '../src/pages/Docket.js';
+import { LocalStoreNote, RateTable } from '../src/pages/Docket.js';
+import { uncontestedFrom } from '../src/lib/arkiv.js';
 import { REASON_KEYS } from '@recourse/shared';
+import { faultRates } from '@recourse/docket';
 
 function detail(statusKey: CaseDetail['statusKey'], over: Partial<CaseDetail> = {}): CaseDetail {
   return {
@@ -93,6 +95,23 @@ describe('pages render', () => {
     expect(renderToString(<Banner fresh={{ degraded: ['hedera'] }} />)).toContain('running late');
     expect(renderToString(<Banner error={new ApiFailure(0, 'unreachable')} />)).toContain('cannot be reached');
     expect(renderToString(<Banner error={new ApiFailure(503, 'rebuilding')} />)).toContain('rebuilding');
+  });
+  it('the docket counts uncontested closures from the monthly counts, and says when they were not read', () => {
+    const P = '0x' + 'AA'.repeat(20);
+    const S = '0x' + 'BB'.repeat(20);
+    const counts = uncontestedFrom([
+      { platform: { value: P }, shop: { value: S }, closedUncontested: { value: 2 } },
+      { platform: { value: P }, shop: { value: S }, closedUncontested: { value: 1 } },
+      { platform: { value: P }, shop: { value: S }, closedUncontested: { value: 0 } },
+    ]);
+    expect(counts).toEqual({ platform: { [P.toLowerCase()]: 3 }, shop: { [S.toLowerCase()]: 3 } });
+    const rates = faultRates([], { closedUncontested: counts });
+    expect(rates.find((r) => r.role === 'platform')!.closedUncontested).toBe(3);
+    const html = renderToString(<RateTable rates={rates} />);
+    expect(html).toContain('>3<!-- --> <span');
+    const unread = renderToString(<RateTable rates={faultRates([{ platform: P, shop: S, outcome: 1, unresolved: false, inclusionBps: 10000 }])} countsRead={false} />);
+    expect(unread).toContain('not read');
+    expect(renderToString(<LocalStoreNote />)).toContain('not on Arkiv');
   });
   it('renders every route shell and an empty docket', () => {
     for (const h of ['#/', '#/docket', '#/file', '#/claim/0x12', '#/party/0x12']) expect(renderToString(<Shell hash={h} />)).toContain('Recourse');
