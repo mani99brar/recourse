@@ -162,7 +162,7 @@ header.top nav a[aria-current='page']::after {
   gap: 10px 48px;
   justify-content: space-between;
   align-items: baseline;
-  max-width: var(--measure);
+  max-width: calc(var(--measure) - var(--pad) * 2);
   margin: 0 auto;
 }
 .foot .key {
