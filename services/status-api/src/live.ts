@@ -403,10 +403,14 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
     store.live.set(id, live);
   }
   // A failed read keeps the value read before, so the chain is reported (degraded `live`) until a
-  // refresh reads it without a failure.
+  // refresh reads it without a failure, or until no claim needs it read any more (the claims it
+  // failed on have finished and are read through).
   for (const chain of ['hedera', 'arbitrum'] as const) {
-    if (!tried[chain]) continue;
     const lr = store.liveReads[chain];
+    if (!tried[chain]) {
+      lr.failing = false;
+      continue;
+    }
     const first = errors[chain][0];
     if (first === undefined) {
       lr.failing = false;
