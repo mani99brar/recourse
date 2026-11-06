@@ -5,16 +5,18 @@ systemd user units for the Recourse services on this host. They are installed an
 | Unit | Service | Port | Health | MemoryMax |
 |---|---|---|---|---|
 | `recourse-keeper` | `services/keeper` | 8706 | `GET /health` | 192M |
-| `recourse-precheck` | `services/precheck` | 8705 | `GET /health` | 160M |
+| `recourse-precheck` | `services/precheck` | 8705 | `GET /health` | 192M |
 | `recourse-shop` | `services/shop` | 8720 | `GET /health` | 192M |
 | `recourse-status-api` | `services/status-api` | 8787 | `GET /health` | 160M |
-| `recourse-docket` | `services/docket` | 8707 | `GET /health` | 128M |
+| `recourse-docket` | `services/docket` | 8707 | `GET /health` | 160M |
 | `recourse-intake` | `services/intake` | 8716 | `GET /health` | 160M |
 | `recourse-web` | `ops/units/web-server.mjs` | 8788 | `GET /health` | 48M |
 | `recourse-tunnel-web` | `cloudflared` quick tunnel to 8788 | 8789 (metrics) | `GET /ready` | 96M |
 | `recourse-tunnel-shop` | `cloudflared` quick tunnel to 8720 | 8721 (metrics) | `GET /ready` | 96M |
 
-The limits add up to 1040M without the tunnels (1232M with them); the host has about 1.5 GB free and no swap, so start only what a step needs and watch `ctl.sh status`. Startup compiles TypeScript through tsx, which peaks well above the steady state: on 6 Nov intake settled at 99 MB and was OOM-killed in a loop under a 96M cap, and the shop sat at 117 MB under 128M. The keeper is the last unit to stop and the first to start.
+The limits add up to 1104M without the tunnels (1296M with them), well under 2 GB on this 7.9 GB host, which has no swap and runs other workloads beside these; start only what a step needs and watch `ctl.sh status`. Startup compiles TypeScript through tsx, which peaks well above the steady state: on 6 Nov intake settled at 99 MB and was OOM-killed in a loop under a 96M cap, and the shop sat at 117 MB under 128M. Each cap sits above the highest peak seen on 6 Nov (`systemctl --user show recourse-<x> -p MemoryPeak`, and the `memory peak` the journal prints when a unit stops): keeper 148M, precheck 142M, shop 141M, docket 123M, status-api 108M, intake 102M, web 20M, tunnels 42M and 33M. The docket (123M under 128M) and the pre-check (142M under 160M) were raised to 160M and 192M. The keeper is the last unit to stop and the first to start.
+
+**Host OOM kills.** A cap only stops one unit from growing; it does not protect a unit when the whole host runs short. On 6 Nov the kernel's OOM killer took the keeper and the docket twice each (the keeper at a 137.8M peak, well under its 192M cap) and the shop and the pre-check three times each, while other workloads filled the host; each came back 5 s later through `Restart=on-failure`. User units start at `oom_score_adj` 200 and interactive sessions at 0, so the kernel picks these services first. Every unit sets `OOMScoreAdjust=100`, the lowest a user unit can have: the user manager itself runs at 100, and a lower value (0, -100) is raised to 100 without a warning (tested with `systemd-run --user --wait --pipe -p OOMScoreAdjust=<n> cat /proc/self/oom_score_adj`). That halves the extra score these services carry (200 to 100 points; one point is about 8 MB of resident memory on this host), so other user units at 200 go first, but these services still go before an interactive session of the same size. Going lower needs root: system units, or a drop-in that lowers `OOMScoreAdjust=100` in `user@.service`. `node --test ops/units/units-env.test.mjs` checks the restart policy, the caps and their sum, and that systemd here gives 100.
 
 Every service binds `127.0.0.1`, `intake` and `docket` included (`ss -ltn` lists each port above on loopback only). Only two things are reachable from outside, each through its Cloudflare quick tunnel: the web server (8788, which forwards `/api` to the status API on 8787) and the shop (8720). The host firewall (`ufw`) is not enabled, so a process started by hand that binds all interfaces is public: `ctl.sh status` ends with a `stray` line for any process of this checkout that listens on a port from outside the units; stop such a process once you have checked what it is.
 
@@ -24,10 +26,10 @@ How a unit runs:
 - `EnvironmentFile=%h/.config/recourse/recourse.env` (shared, holds keyed URLs and key file paths) then the optional `%h/.config/recourse/<service>.env`. The unit sets its own port and state directory as defaults; the env files win if they set the same names. The web server is the exception: it reads no shared file, only the optional `web.env` (see [What a unit can see](#what-a-unit-can-see)).
 - `UnsetEnvironment=` then removes every key path, secret and keyed URL the service does not read. It is applied after all the env files, so a name it lists cannot be brought back from `<service>.env`; edit the unit instead.
 - State: the keeper, pre-check, status API, docket and intake keep theirs in `~/.local/state/recourse/<service>` (the unit's `<SERVICE>_STATE_DIR`). The documents of the local content store (`IPFS_PIN_API_URL=file://`) are in `~/.local/state/recourse/ipfs`. The shop's and the agent's are different, see [Shop and agent state](#shop-and-agent-state).
-- `Restart=on-failure`, `RestartSec=5`, `TimeoutStopSec=15`, `StartLimitIntervalSec=0`. Output goes to the user journal.
+- `Restart=on-failure`, `RestartSec=5`, `TimeoutStopSec=15`, `StartLimitIntervalSec=0` (no limit on restarts), `OOMScoreAdjust=100`. Output goes to the user journal.
 - `NODE_OPTIONS=--max-old-space-size` is set a little below each `MemoryMax`.
 - The static server serves `apps/web/dist` (build it first with the web package's build) and forwards `/api/*` to the status API with the prefix removed, so the web app's default `/api` base works with no extra proxy. Any path that is not a file serves `index.html`.
-- There is no unit for the buying agent. Orders are placed and approved from the command line; `services/agent/src/main.ts` (`pnpm --filter @recourse/agent start`) serves its read-only approvals API on `127.0.0.1:$AGENT_PORT` (default 8722) when run by hand.
+- There is no unit for the buying agent, and none is needed: it is a command-line tool that runs one order (or one approval, complaint or contest) and exits, so there is nothing long-running to restart or cap. `services/agent/src/main.ts` (`pnpm --filter @recourse/agent start`) serves its read-only approvals API on `127.0.0.1:$AGENT_PORT` (default 8722) when run by hand.
 
 ## Install (writes unit files only)
 

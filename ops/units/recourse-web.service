@@ -20,6 +20,10 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
 MemoryMax=48M
+# Under host memory pressure the kernel kills user units (default oom_score_adj 200) before interactive
+# sessions (0). 100 is the lowest a user unit can ask for: the user manager runs at 100, and a lower value
+# is raised to 100 without a warning (tested with systemd-run --user on 6 Nov).
+OOMScoreAdjust=100
 NoNewPrivileges=true
 
 [Install]

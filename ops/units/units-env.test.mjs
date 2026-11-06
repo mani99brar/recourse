@@ -136,3 +136,39 @@ test('no unit relies on mount-namespace sandboxing this host cannot set up', () 
     assert.equal(hit, undefined, `recourse-${name}: ${hit}`);
   }
 });
+
+// Restart and memory policy. Every long-running unit comes back on its own after a crash or an OOM kill
+// (on-failure, a short RestartSec, no start limit), has a MemoryMax, and asks for OOMScoreAdjust=100.
+// The caps together stay well under 2 GB on this 7.9 GB host, which runs other workloads beside these.
+const LONG_RUNNING = Object.keys(NEEDS).filter((n) => n !== 'watch');
+const sizeM = (v) => {
+  const m = /^(\d+)([KMG])$/.exec(v);
+  assert.ok(m, `MemoryMax=${v} is not a K/M/G size`);
+  return Number(m[1]) * { K: 1 / 1024, M: 1, G: 1024 }[m[2]];
+};
+
+test('every long-running unit restarts on failure, has a memory cap and OOMScoreAdjust=100', () => {
+  let total = 0;
+  for (const name of LONG_RUNNING.filter((n) => units.includes(n))) {
+    const text = readFileSync(join(unitsDir, `recourse-${name}.service`), 'utf8');
+    const one = (key) => {
+      const vals = text.split('\n').map((l) => l.trim()).filter((l) => l.startsWith(`${key}=`));
+      assert.equal(vals.length, 1, `recourse-${name}: ${key}= appears ${vals.length} times`);
+      return vals[0].slice(key.length + 1);
+    };
+    assert.match(one('Restart'), /^(on-failure|always)$/, `recourse-${name}: Restart`);
+    assert.ok(Number(one('RestartSec')) <= 10, `recourse-${name}: RestartSec`);
+    assert.equal(one('StartLimitIntervalSec'), '0', `recourse-${name}: StartLimitIntervalSec`);
+    assert.equal(one('OOMScoreAdjust'), '100', `recourse-${name}: OOMScoreAdjust`);
+    total += sizeM(one('MemoryMax'));
+  }
+  assert.ok(total < 1536, `the MemoryMax caps add up to ${total}M`);
+});
+
+// A user unit cannot go below its manager's oom_score_adj (100 here): a lower value is raised to it
+// without a warning, so a unit file asking for less would claim a protection it does not get.
+test('systemd on this host gives a user unit the OOMScoreAdjust it asks for', { skip: !systemdRunWorks() && 'no systemd-run --user here' }, () => {
+  const r = spawnSync('systemd-run', ['--user', '--wait', '--pipe', '-q', '-p', 'OOMScoreAdjust=100', '/bin/cat', '/proc/self/oom_score_adj'], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), '100');
+});
