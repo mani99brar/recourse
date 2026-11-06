@@ -10,13 +10,13 @@ WorkingDirectory=@REPO@/services/shop
 EnvironmentFile=%h/.config/recourse/recourse.env
 EnvironmentFile=-%h/.config/recourse/shop.env
 Environment=SHOP_PORT=8720
-Environment=NODE_OPTIONS=--max-old-space-size=96
+Environment=NODE_OPTIONS=--max-old-space-size=144
 ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/shop
 ExecStart=@NODE@ --import tsx src/main.ts
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
-MemoryMax=128M
+MemoryMax=192M
 NoNewPrivileges=true
 
 [Install]

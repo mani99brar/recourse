@@ -11,13 +11,13 @@ EnvironmentFile=%h/.config/recourse/recourse.env
 EnvironmentFile=-%h/.config/recourse/intake.env
 Environment=INTAKE_PORT=8716
 Environment=INTAKE_STATE_DIR=%h/.local/state/recourse/intake
-Environment=NODE_OPTIONS=--max-old-space-size=64
+Environment=NODE_OPTIONS=--max-old-space-size=112
 ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/intake
 ExecStart=@NODE@ --import tsx src/main.ts
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=15
-MemoryMax=96M
+MemoryMax=160M
 NoNewPrivileges=true
 
 [Install]

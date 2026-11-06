@@ -5,16 +5,16 @@ systemd user units for the Recourse services on this host. Nothing here is insta
 | Unit | Service | Port | Health | MemoryMax |
 |---|---|---|---|---|
 | `recourse-keeper` | `services/keeper` | 8706 | `GET /health` | 192M |
-| `recourse-precheck` | `services/precheck` | 8705 | `GET /health` | 128M |
-| `recourse-shop` | `services/shop` | 8720 | `GET /health` | 128M |
+| `recourse-precheck` | `services/precheck` | 8705 | `GET /health` | 160M |
+| `recourse-shop` | `services/shop` | 8720 | `GET /health` | 192M |
 | `recourse-status-api` | `services/status-api` | 8787 | `GET /health` | 160M |
 | `recourse-docket` | `services/docket` | 8707 | `GET /health` | 128M |
-| `recourse-intake` | `services/intake` | 8716 | `GET /health` | 96M |
+| `recourse-intake` | `services/intake` | 8716 | `GET /health` | 160M |
 | `recourse-web` | `ops/units/web-server.mjs` | 8788 | `GET /health` | 48M |
 | `recourse-tunnel-web` | `cloudflared` quick tunnel to 8788 | 8789 (metrics) | `GET /ready` | 96M |
 | `recourse-tunnel-shop` | `cloudflared` quick tunnel to 8720 | 8721 (metrics) | `GET /ready` | 96M |
 
-The limits add up to 880M without the tunnels; the host has about 1.2 GB free and no swap, so start only what a step needs and watch `ctl.sh status`. The keeper is the last unit to stop and the first to start. Every service binds loopback except `intake` and `docket`, which listen on all interfaces because their code names no host; keep their ports closed at the firewall.
+The limits add up to 1040M without the tunnels (1232M with them); the host has about 1.5 GB free and no swap, so start only what a step needs and watch `ctl.sh status`. Startup compiles TypeScript through tsx, which peaks well above the steady state: on 6 Nov intake settled at 99 MB and was OOM-killed in a loop under a 96M cap, and the shop sat at 117 MB under 128M. The keeper is the last unit to stop and the first to start. Every service binds loopback except `intake` and `docket`, which listen on all interfaces because their code names no host; keep their ports closed at the firewall.
 
 How a unit runs:
 
