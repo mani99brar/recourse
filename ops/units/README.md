@@ -53,7 +53,8 @@ bash ops/units/ctl.sh start keeper precheck # only these
 bash ops/units/ctl.sh stop                  # reverse order, keeper last; the tunnels keep running
 bash ops/units/ctl.sh restart status-api
 bash ops/units/ctl.sh status                # active state and memory per unit, then any stray listener of this checkout
-bash ops/units/ctl.sh health                # GET /health on each local port
+bash ops/units/ctl.sh health                # per service: unit, restarts, HTTP code, up/down, its error fields; then strays
+bash ops/units/ctl.sh health --json         # the same as one JSON object (what the watch reads)
 bash ops/units/ctl.sh logs keeper 200       # last 200 journal lines
 bash ops/units/ctl.sh keeper status         # keeper-ctl: claims by phase, balances, pauses
 
@@ -64,6 +65,8 @@ curl -s http://127.0.0.1:8706/health
 systemctl --user show 'recourse-*' -p MemoryCurrent -p Id
 journalctl --user --disk-usage
 ```
+
+`ctl.sh health` reads each service's health endpoint on its local port (`/health`, or cloudflared's `/ready` on a tunnel's metrics port) and prints one row per service: the unit's state (`not-installed` when there is no unit file), its restart count since it was last started by hand (`NRestarts`: an OOM kill or a crash adds one), the HTTP code (`000`: nothing answered), `up` when the unit is active and the endpoint answers 200 (the keeper answers 503 when its last tick is stale or it cannot read the contract params) and `down` otherwise, and the error fields the service itself reports. Those are, by service: keeper `problems`, `paramsError`, `lastError` and each open intent's `lastError`; precheck `errors` (sources failing now; `ok` is false while there are any) and `lastError` (the latest one, kept after it clears); shop `lastError` and `facilitator.consecutiveFailures`; status-api `degraded` (sources behind or failing), `rebuilding` and `sources.<hedera|arbitrum|hcs>.lastError`; docket `failedWrites`; intake `llmStatus` when it is not `ok` or `disabled`; a tunnel `readyConnections` when it is 0. Error text goes through `ops/watch/redact.jq` first: a URL keeps only its scheme and host, and hex runs of 64 digits or more, JWTs and long mixed tokens are replaced, so a keyed RPC URL inside an error is never printed. `--json` prints `{at, services: [{service, unit, restarts, result, port, path, http, up, ok, errors}], strays: [...]}` and nothing else from the health bodies. The exit code is 0 either way; read `up`.
 
 Enable at login (optional, after the first clean start): `systemctl --user enable recourse-keeper` and so on.
 
