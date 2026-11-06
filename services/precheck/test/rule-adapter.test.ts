@@ -84,7 +84,7 @@ describe('rule adapter, from chain data to the shared rule', () => {
     const result = runRule(proof.slots, orderId);
     const doc = buildResultDoc({ claimId: proofClaim(orderId, refsFor(added)).claimId, orderId, slots: proof.slots, result });
     const json = JSON.parse(new TextDecoder().decode(doc.bytes)) as Record<string, unknown>;
-    expect(json).toMatchObject({ v: '1', ruleVersion: '1', gap: '3', answer: '2', reasonKey: 'gap3_ordered_vs_packed', result: { gap: '3', answer: '2', step: '4' } });
+    expect(json).toMatchObject({ v: '1', ruleVersion: '2', gap: '3', answer: '2', reasonKey: 'gap3_ordered_vs_packed', result: { gap: '3', answer: '2', step: '4' } });
     expect(typeof json.reasonText).toBe('string');
     expect(doc.bytes.length).toBeGreaterThan(0);
   });

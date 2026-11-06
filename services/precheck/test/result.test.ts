@@ -33,7 +33,7 @@ describe('result document', () => {
     expect(json.records[2]).toEqual({ kind: '2', outcome: 'absent' });
     expect(json.records[3]).toMatchObject({ refsSeq: '2', refsHash: hash, refsReason: 'hash_mismatch_hcs' });
     expect(json.records[5]).toEqual({ kind: '5', outcome: 'rejected', reason: 'topic_mismatch', seq: '9' });
-    expect(json).toMatchObject({ v: '1', ruleVersion: '1', gap: '255', answer: '0', reasonKey: 'not_enough_record', result: { gap: '255', answer: '0' } });
+    expect(json).toMatchObject({ v: '1', ruleVersion: '2', gap: '255', answer: '0', reasonKey: 'not_enough_record', result: { gap: '255', answer: '0' } });
   });
 
   it('is the same bytes every time and hashes to the packHash', () => {

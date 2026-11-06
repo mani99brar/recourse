@@ -1,5 +1,5 @@
 {
-  "ruleVersion": "1",
+  "ruleVersion": "2",
   "attributes": ["brand", "size", "colour", "quantity", "price", "merchant"],
   "rows": [
     {

@@ -164,7 +164,7 @@ describe('buildEvidence', () => {
         v: '1',
         claimId,
         orderId,
-        ruleVersion: '1',
+        ruleVersion: '2',
         records: docs.map((d, k) => ({
           kind: String(k),
           outcome: 'held',

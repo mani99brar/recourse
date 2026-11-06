@@ -16,7 +16,12 @@ import {
   type RecordKind,
 } from './records.js';
 
-export const RULE_VERSION = '1';
+/**
+ * Written into every pre-check document. 2: the change slot clears only the attributes it names
+ * (1 read it as empty or not). Records that flag every departing attribute, as the renderer
+ * writes them, get the same result under both.
+ */
+export const RULE_VERSION = '2';
 
 export type Attrs = Partial<Record<Attribute, string>>;
 
