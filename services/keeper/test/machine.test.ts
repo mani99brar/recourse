@@ -266,16 +266,46 @@ describe('opening the case', () => {
     expect(fns(r, id)).toContain('openCase');
   });
 
-  it('holds the claim and alerts when evidence cannot be built', async () => {
+  it('alerts once and opens the case without evidence when the evidence can never be built', async () => {
+    let builds = 0;
     const r = rig({
-      evidence: { build: async () => ({ ok: false, kind: 'too_large', message: 'evidence is 17000 bytes' }) },
+      evidence: {
+        build: async () => {
+          builds++;
+          return { ok: false, kind: 'too_large', message: 'evidence is 17000 bytes' };
+        },
+      },
     });
     const id = await toCourt(r);
     r.fake.deliver(id);
     await run(r, 300);
     expect(kinds(r)).toContain('evidence_too_large');
-    expect(fns(r, id)).not.toContain('openCase');
-    expect(r.k.book.claims.get(id)!.autoHold).toBeDefined();
+    expect(fns(r, id)).toContain('openCase');
+    expect(r.k.book.claims.get(id)!.autoHold).toBeUndefined();
+    r.fake.draw(id);
+    await run(r, 600, 60);
+    expect(fns(r, id)).not.toContain('submitEvidence');
+    expect(builds).toBe(1);
+    expect(kinds(r).filter((k) => k === 'evidence_too_large')).toHaveLength(1);
+  });
+
+  it('refiles without evidence when the second attempt\'s evidence can never be built', async () => {
+    const r = rig({
+      evidence: {
+        build: async (req) =>
+          req.attempt === 1
+            ? { ok: true, text: 'evidence one', sha256: keccak256(toHex('evidence one')) }
+            : { ok: false, kind: 'input', message: 'pre-check slot 2 is held without cid and hash' },
+      },
+    });
+    const id = await toWatching(r);
+    r.fake.rule(id, 0);
+    await run(r, 30);
+    expect(phase(r, id)).toBe('RefilePending');
+    await run(r, 900, 60);
+    expect(fns(r, id)).toContain('refile');
+    expect(kinds(r)).toContain('evidence_failed');
+    expect(r.k.book.claims.get(id)!.autoHold).toBeUndefined();
   });
 
   it('opens without evidence when the case deadline is close and evidence is still transient', async () => {

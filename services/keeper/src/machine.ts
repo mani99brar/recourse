@@ -780,10 +780,14 @@ export class Keeper {
     if (r?.kind === 'reverted') this.alertClaim(c, 'one_leg_manual', `relayClaim reverted with ${r.error ?? 'no reason'}; relay it by hand`);
   }
 
-  /** Evidence for an attempt, built once and kept. */
-  private async ensureEvidence(c: KeeperClaim, attempt: 1 | 2, now: number): Promise<'ok' | 'retry' | 'blocked'> {
+  /**
+   * Evidence for an attempt, built once and kept. 'none' when it can never be built: the documents
+   * are fixed by packHash on chain, so a rebuild fails the same way, and the case goes to court
+   * without our evidence rather than not at all. Callers check the hold themselves.
+   */
+  private async ensureEvidence(c: KeeperClaim, attempt: 1 | 2, now: number): Promise<'ok' | 'retry' | 'none'> {
     if (c.evidence?.[String(attempt)] && this.book.evidenceText(c.claimId, attempt) !== undefined) return 'ok';
-    if (c.autoHold) return 'blocked';
+    if (c.done.includes(`evidence-failed-${attempt}`)) return 'none';
     if (!c.received) return 'retry';
     const t = c.tries[`evidence${attempt}`];
     if (t && now - t.lastAt < 60) return 'retry';
@@ -801,9 +805,14 @@ export class Keeper {
       return 'retry';
     }
     const kind: AlertKind = r.kind === 'hash_mismatch' ? 'evidence_hash_mismatch' : r.kind === 'too_large' ? 'evidence_too_large' : 'evidence_failed';
-    this.hold(c, `evidence ${attempt}: ${r.message}`);
-    this.alertClaim(c, kind, `${r.message}; claim held. Fix the documents, then keeper-ctl release ${c.claimId}`);
-    return 'blocked';
+    c.done.push(`evidence-failed-${attempt}`);
+    this.book.save(c);
+    this.alertClaim(
+      c,
+      kind,
+      `${r.message}; the documents are fixed on chain, so the keeper does not retry. The case goes to court without our evidence for attempt ${attempt}; post it by hand on the court page if it can be written`,
+    );
+    return 'none';
   }
 
   private async delivered(c: KeeperClaim, row: Row, now: number): Promise<void> {
@@ -813,7 +822,6 @@ export class Keeper {
     const deadline = this.openBy(c, Number(cv.receivedAt) + this.caseParams.caseDeadline);
     if (now >= deadline) return; // opening now would only mark it stale
     const ev = await this.ensureEvidence(c, 1, now);
-    if (ev === 'blocked') return;
     if (ev === 'retry' && now < deadline - this.timing.openWithoutEvidenceS) return;
     const [pool, cost, open] = [await this.o.chains.feePool(), await this.o.chains.costNow(), await this.o.chains.openCases()];
     if (pool < cost) {
@@ -929,7 +937,6 @@ export class Keeper {
     const deadline = this.openBy(c, Number(cv.ruledAt) + this.caseParams.caseDeadline);
     if (now >= deadline) return; // refiling now would only mark it stale
     const ev = await this.ensureEvidence(c, 2, now);
-    if (ev === 'blocked') return;
     if (ev === 'retry' && now < deadline - this.timing.openWithoutEvidenceS) return;
     const r = await this.tryCall(c, row, { chain: 'arbitrum', contract: 'case', fn: 'refile', args: [c.received.payload] }, now);
     if (r?.kind === 'reverted') this.alertClaim(c, 'call_failed', `refile reverted with ${r.error ?? 'no reason'}`);
