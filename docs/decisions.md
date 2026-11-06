@@ -8,8 +8,8 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 |---|---|
 | Where code runs | Everything (code, tests, deploys, services) runs on one Linux host. The deployer key lives there too. |
 | Keys | One Foundry v3 keystore per role in `$KEYSTORE_DIR` (outside the repo, 0700), password in `<file>.pass` (0600). Roles: deployer, ops-hedera, ops-arb, precheck-signer, platform, agent, shop, scheme, buyer, facilitator. Never in argv, logs or git. |
-| Secret scan | `ops/scan/scan.sh` runs as a pre-push hook. |
-| Commits | `ops/scripts/commit.sh` stages named paths only, so parallel work in one tree never mixes. |
+| Secret scan | `ops/scan/scan.sh` runs as a pre-push hook over every line the pushed commits add (so a key committed and removed again is still caught) and the paths they add; by hand it scans the tracked files. Published test vectors are allowed by line hash in `ops/scan/allow.txt`. |
+| Commits | `ops/scripts/commit.sh` commits the named paths only (anything else staged stays out), so parallel work in one tree never mixes; it pushes the current branch to its own name and fails if the push fails. |
 | Repo visibility | Private until the operator makes it public. |
 | Node | v24. |
 | x402 | `@x402/*` 2.28.0 with `@hiero-ledger/sdk` 2.85.0. |

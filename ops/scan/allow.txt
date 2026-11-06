@@ -1,0 +1,5 @@
+# Lines the secret scan lets through: "<path> <sha256 of the whole line>", one per line. Only published test
+# vectors belong here, never a real key. A changed line no longer matches its hash and is flagged again.
+# Hash a line with: printf '%s' "$(sed -n <n>p <path>)" | sha256sum
+# The Web3 Secret Storage definition's known-answer private key (password "testpassword").
+packages/shared/test/node.test.ts 995267628b9fa7f62983d62dcb9bc42444b2e1aa0a06d8a92c6305008aab18a1

@@ -12,7 +12,7 @@ The code, tests, scripts and documentation in this repository were written by Cl
 | Operations agent | Claude Sonnet 5.5; Claude Opus 5.5 from 6 Nov | Wrote the funding, wiring, service-unit and check scripts under `ops/`, the root `README.md` and this file. From 6 Nov an Opus 5.5 session ran the testnet deploys, funding moves and service bring-up, and wrote the fixes those runs needed |
 | Other area agents | Claude (Anthropic) coding agents; the model is named in the area's note when one exists | Wrote the Arbitrum contract, the services, the web app, the court package, the records package and the Arkiv notes |
 
-Each agent ran with a fixed list of folders it may edit and committed only through `ops/scripts/commit.sh`, which stages named paths, so one area's commits do not carry another's files.
+Each agent ran with a fixed list of folders it may edit and committed only through `ops/scripts/commit.sh`, which commits only the paths it is given, so one area's commits do not carry another's files.
 
 ## What people did
 
