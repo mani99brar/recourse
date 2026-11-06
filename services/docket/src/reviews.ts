@@ -3,8 +3,10 @@
 // operates no agent, which the registry requires of a reviewer.
 //
 // A review never touches the case write status: a revert or a timeout marks that side failed and
-// the docket carries on. Each (claim, side) is sent at most once; before a restart can resend, the
-// registry's own `NewFeedback` log is checked for it.
+// the docket carries on. Each side goes to the agent id of the case's own platform or shop, by
+// address. Each (claim, side) is sent at most once; before a retry or a restart can resend, the
+// receipt of the transaction it last sent and the registry's own `NewFeedback` logs since its
+// first try are checked for it.
 
 import type { Journal, Logger } from '@recourse/records';
 import { erc8004ReputationAbi } from '@recourse/shared';
@@ -36,22 +38,31 @@ export function feedbackCalldata(a: FeedbackArgs): Hex {
 
 export type SimResult = { ok: true } | { ok: false; reason: string };
 
-/** The chain reads and the one write the writer needs. */
+/** The chain reads and the one write the writer needs. Each throws when the request itself fails. */
 export interface ReviewChain {
-  /** The address that owns the agent id, or null when the id is not registered. */
+  /** The address that owns the agent id, or null when the id is not registered (the call reverts). */
   ownerOf(agentId: bigint): Promise<Address | null>;
   /** An `eth_call` of `giveFeedback` from `from`; a revert comes back as a reason, not a throw. */
   simulate(from: Address, args: FeedbackArgs): Promise<SimResult>;
-  /** Sends from the scheme wallet and waits for the receipt. Throws on revert or timeout. */
-  send(args: FeedbackArgs): Promise<{ txHash: string }>;
-  /** A `NewFeedback` from the scheme wallet for this agent and hash, if one is on chain. */
-  existing(agentId: bigint, feedbackHash: Hex): Promise<{ txHash: string } | null>;
+  /**
+   * Sends from the scheme wallet and waits for the receipt. `onSent` gets the hash as soon as the
+   * node takes the transaction, before the wait. Throws on revert or timeout.
+   */
+  send(args: FeedbackArgs, onSent?: (txHash: string) => void): Promise<{ txHash: string }>;
+  /** How a sent transaction ended, or null when the node does not know it (still pending, or dropped). */
+  receipt(txHash: string): Promise<'success' | 'reverted' | null>;
+  /**
+   * A `NewFeedback` from the scheme wallet for this agent and hash, if one is on chain, looking at
+   * logs from `since` (unix seconds). Throws when it cannot read every log since then.
+   */
+  existing(agentId: bigint, feedbackHash: Hex, since: number): Promise<{ txHash: string } | null>;
   readonly schemeAddress: Address;
 }
 
+/** ERC-8004 agent ids by EVM address (lowercase), per side. */
 export interface ReviewTargets {
-  platform?: bigint;
-  shop?: bigint;
+  platform: ReadonlyMap<string, bigint>;
+  shop: ReadonlyMap<string, bigint>;
 }
 
 export interface ReviewConfig {
@@ -64,6 +75,8 @@ export interface ReviewConfig {
 
 type ReviewRow =
   | { t: 'r'; claimId: Hex; side: Side; phase: 'intent'; at: number }
+  /** The node took the transaction; whether it landed is not known yet. */
+  | { t: 'r'; claimId: Hex; side: Side; phase: 'broadcast'; tx: string; at: number }
   | { t: 'r'; claimId: Hex; side: Side; phase: 'sent'; tx: string; at: number }
   | { t: 'r'; claimId: Hex; side: Side; phase: 'skipped'; reason: string; at: number }
   | { t: 'r'; claimId: Hex; side: Side; phase: 'failed'; error: string; retryAt: number; at: number };
@@ -74,6 +87,10 @@ export type { ReviewRow };
 interface SideState {
   intent: boolean;
   tx: string | null;
+  /** The last transaction sent whose end is not recorded. */
+  broadcast: string | null;
+  /** Time of the first intent: no review can have been sent before it. */
+  since: number | null;
   skipped: boolean;
   attempts: number;
   retryAt: number;
@@ -113,7 +130,7 @@ export class ReviewWriter implements ReviewPort {
   private stateOf(claimId: Hex, side: Side): SideState {
     let s = this.states.get(this.key(claimId, side));
     if (s === undefined) {
-      s = { intent: false, tx: null, skipped: false, attempts: 0, retryAt: 0 };
+      s = { intent: false, tx: null, broadcast: null, since: null, skipped: false, attempts: 0, retryAt: 0 };
       this.states.set(this.key(claimId, side), s);
     }
     return s;
@@ -121,10 +138,14 @@ export class ReviewWriter implements ReviewPort {
 
   private apply(row: ReviewRow): void {
     const s = this.stateOf(row.claimId, row.side);
-    if (row.phase === 'intent') s.intent = true;
+    if (row.phase === 'intent') {
+      s.intent = true;
+      s.since ??= row.at;
+    } else if (row.phase === 'broadcast') s.broadcast = row.tx;
     else if (row.phase === 'sent') {
       s.intent = false;
       s.tx = row.tx;
+      s.broadcast = null;
     } else if (row.phase === 'skipped') {
       s.intent = false;
       s.skipped = true;
@@ -155,10 +176,11 @@ export class ReviewWriter implements ReviewPort {
 
   /**
    * Before the first send: the agent's owner must be refused (the registry blocks self-feedback)
-   * and the scheme wallet must be accepted. Any other answer turns reviews off.
+   * and the scheme wallet must be accepted. Any other answer turns reviews off. A request that
+   * fails is no answer: the preflight runs again on the next pass.
    */
   async preflight(): Promise<boolean> {
-    const id = this.targets.platform ?? this.targets.shop;
+    const id = [...this.targets.platform.values(), ...this.targets.shop.values()][0];
     if (id === undefined) return this.disable('no agent ids configured');
     const probe: FeedbackArgs = {
       agentId: id, value: 0n, valueDecimals: 0, tag1: this.cfg.tag1, tag2: 'preflight', endpoint: '', feedbackURI: '', feedbackHash: keccak256(toHex('preflight')),
@@ -171,7 +193,8 @@ export class ReviewWriter implements ReviewPort {
       const asScheme = await this.chain.simulate(this.chain.schemeAddress, probe);
       if (!asScheme.ok) return this.disable(`registry refused the scheme wallet: ${asScheme.reason.slice(0, 80)}`);
     } catch (error) {
-      return this.disable(`preflight failed: ${error instanceof Error ? error.message.slice(0, 80) : 'error'}`);
+      this.log.warn('reviews_preflight_retry', { error: error instanceof Error ? error.message.slice(0, 160) : 'error' });
+      return false;
     }
     this.enabled = true;
     return true;
@@ -204,10 +227,11 @@ export class ReviewWriter implements ReviewPort {
     if (this.enabled === false) return;
 
     for (const { claimId, row, side } of due) {
-      const agentId = this.targets[side];
+      // Only the case's own platform and shop are reviewed, never another party's agent.
+      const agentId = this.targets[side].get(row[side].toLowerCase());
       if (agentId === undefined) {
-        this.log.warn('review_skipped', { claimId, side, reason: 'no agent id' });
-        this.write({ t: 'r', claimId, side, phase: 'skipped', reason: 'no agent id', at: this.now() });
+        this.log.warn('review_skipped', { claimId, side, reason: 'no agent id for the party' });
+        this.write({ t: 'r', claimId, side, phase: 'skipped', reason: 'no agent id for the party', at: this.now() });
         continue;
       }
       const s = this.stateOf(claimId, side);
@@ -229,16 +253,21 @@ export class ReviewWriter implements ReviewPort {
           feedbackURI: row.reasonCid ? `ipfs://${row.reasonCid}` : '',
           feedbackHash: doc.hash,
         };
-        // A previous run may have sent this one without recording it, or have been cut off mid-send.
-        if (s.intent || s.attempts > 0) {
-          const found = await this.chain.existing(agentId, doc.hash);
+        // A previous try may have landed without being recorded: a receipt wait that timed out, or
+        // a run cut off mid-send.
+        if (s.broadcast !== null && (await this.chain.receipt(s.broadcast)) === 'success') {
+          this.write({ t: 'r', claimId, side, phase: 'sent', tx: s.broadcast, at: this.now() });
+          continue;
+        }
+        if (s.since !== null) {
+          const found = await this.chain.existing(agentId, doc.hash, s.since);
           if (found !== null) {
             this.write({ t: 'r', claimId, side, phase: 'sent', tx: found.txHash, at: this.now() });
             continue;
           }
         }
         this.write({ t: 'r', claimId, side, phase: 'intent', at: this.now() });
-        const { txHash } = await this.chain.send(args);
+        const { txHash } = await this.chain.send(args, (tx) => this.write({ t: 'r', claimId, side, phase: 'broadcast', tx, at: this.now() }));
         this.write({ t: 'r', claimId, side, phase: 'sent', tx: txHash, at: this.now() });
       } catch (error) {
         const msg = error instanceof Error ? error.message.slice(0, 160) : 'error';

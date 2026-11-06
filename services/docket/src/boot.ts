@@ -64,7 +64,7 @@ export async function startDocket(env: Record<string, string | undefined> = proc
   app.get('/sources', (_req, res) => res.json({ sources: pollers.map((p) => p.name), lastError }));
   app.listen(cfg.port, '127.0.0.1', () => log.info('listening', { port: cfg.port, store: store.kind, sources: pollers.length }));
 
-  const tick = async (): Promise<void> => {
+  const tick = oneAtATime(async (): Promise<void> => {
     for (const p of pollers) {
       try {
         const r = await p.poll(docket.cursor(p.name));
@@ -81,10 +81,28 @@ export async function startDocket(env: Record<string, string | undefined> = proc
     } catch (error) {
       log.error('flush_failed', { error: error instanceof Error ? error.message : String(error) });
     }
-  };
+  });
   await tick();
   setInterval(() => void tick(), cfg.pollSeconds * 1000);
   if (store.kind === 'arkiv') void watchBalances(cfg, env, alert);
+}
+
+/**
+ * Wraps a pass so a call while the previous pass is still running does nothing. A pass can outlast
+ * the poll interval (a review send waits up to 60 s for its receipt), and two passes at once would
+ * both see the same unwritten case and write it twice.
+ */
+export function oneAtATime(pass: () => Promise<void>): () => Promise<void> {
+  let running = false;
+  return async () => {
+    if (running) return;
+    running = true;
+    try {
+      await pass();
+    } finally {
+      running = false;
+    }
+  };
 }
 
 function buildStore(cfg: DocketConfig): DocketStore {
@@ -164,14 +182,13 @@ function buildReviews(cfg: DocketConfig, env: Record<string, string | undefined>
   if (!cfg.reviewsEnabled) return cutReviews;
   try {
     const parties = readParties(env);
-    const idOf = (...roles: ('platform' | 'agent' | 'shop')[]): bigint | undefined => {
-      for (const role of roles) {
-        const p = parties.find((x) => x.role === role && x.agentId !== undefined);
-        if (p?.agentId !== undefined) return BigInt(p.agentId);
-      }
-      return undefined;
+    // Agent ids by address: a case's review goes to its own platform and shop only.
+    const idsOf = (...roles: ('platform' | 'agent' | 'shop')[]): Map<string, bigint> => {
+      const ids = new Map<string, bigint>();
+      for (const p of parties) if ((roles as string[]).includes(p.role) && p.agentId !== undefined) ids.set(p.evmAddress.toLowerCase(), BigInt(p.agentId));
+      return ids;
     };
-    const targets = { ...(idOf('platform', 'agent') !== undefined ? { platform: idOf('platform', 'agent')! } : {}), ...(idOf('shop') !== undefined ? { shop: idOf('shop')! } : {}) };
+    const targets = { platform: idsOf('platform', 'agent'), shop: idsOf('shop') };
     const chain = viemReviewChain({ account: loadSigner('SCHEME_KEY_FILE'), rpcUrl: env.HEDERA_RPC_URL_1 ?? '', mirrorUrl: cfg.mirrorUrl });
     const path = join(cfg.stateDir, 'reviews.jsonl');
     const history = readJournal<ReviewRow>(path).rows;

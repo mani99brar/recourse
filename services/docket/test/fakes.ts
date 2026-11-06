@@ -13,6 +13,10 @@ export class MemoryArkivIo implements ArkivIo {
   txStates = new Map<string, TxState>();
   /** When true a create lands on chain (entity exists) but the call throws, like a lost response. */
   loseResponse = false;
+  /** Throw this on the next query (or queries). */
+  failQueries: Error[] = [];
+  /** While set, every create waits for it, like a slow node. */
+  hold: Promise<void> | null = null;
   private n = 0;
 
   private nextFailure(): void {
@@ -21,6 +25,7 @@ export class MemoryArkivIo implements ArkivIo {
   }
 
   async create(schema: SchemaName, values: Record<string, PlainValue>): Promise<{ entityKey: string; txHash: string }> {
+    if (this.hold) await this.hold;
     this.nextFailure();
     this.n += 1;
     const entityKey = `0x${this.n.toString(16).padStart(64, '0')}`;
@@ -47,6 +52,8 @@ export class MemoryArkivIo implements ArkivIo {
 
   async query(schema: SchemaName, equals: readonly (readonly [string, PlainValue])[], offset: number, limit: number): Promise<ArkivEntity[]> {
     this.queries.push({ schema, equals, offset, limit });
+    const failure = this.failQueries.shift();
+    if (failure) throw failure;
     if (limit > 100) throw new Error('limit over 100');
     const rows: ArkivEntity[] = [];
     for (const [entityKey, e] of this.entities) {
