@@ -241,25 +241,35 @@ export class Buyer {
   }
 
   /**
-   * Micro-USDC committed today by orders that are paid or may still be paid, other than `except`.
-   * An HBAR amount counts at its micro-USDC equivalent.
+   * Micro-USDC of the UTC day's orders other than `except`, an HBAR amount at its micro-USDC
+   * equivalent. `paying`: what is spent or in flight (paid, or a signed payment that may still
+   * land), the check made just before a payment is signed. `deciding`: also every order that may
+   * still be paid (approved, or waiting for a buyer whose approval is open), so the cap leaves room
+   * for them before a new order is approved or put to a buyer.
    */
-  private spentToday(day: string, except: Hex): bigint {
+  private spentToday(day: string, except: Hex, mode: 'deciding' | 'paying'): bigint {
     let sum = 0n;
+    const now = this.now();
     for (const id of this.orders()) {
       if (id === except) continue;
       const d = this.last(id, 'draft');
-      if (d?.day !== day) continue;
-      const paidProbe = this.last(id, 'probed');
+      const probed = this.last(id, 'probed');
+      if (d?.day !== day || !probed) continue;
+      const amount = toMicroUsdcEquivalent(BigInt(probed.terms.amount), probed.terms.asset);
       // Money that moved counts even when the order ended afterwards (an offer mismatch).
-      if (paidProbe && this.last(id, 'paid')) {
-        sum += toMicroUsdcEquivalent(BigInt(paidProbe.terms.amount), paidProbe.terms.asset);
+      const rows = this.rowsOf(id);
+      const dead = new Set(rows.flatMap((r) => (r.type === 'pay_dead' ? [r.txId] : [])));
+      if (this.last(id, 'paid') || rows.some((r) => r.type === 'pay_signed' && !dead.has(r.txId))) {
+        sum += amount;
         continue;
       }
-      const end = this.rowsOf(id).find((r) => r.type === 'refused' || r.type === 'abandoned' || (r.type === 'approved' && r.decision !== 'approved'));
+      if (mode === 'paying') continue;
+      const end = rows.find((r) => r.type === 'refused' || r.type === 'abandoned' || (r.type === 'approved' && r.decision !== 'approved'));
       if (end) continue;
-      const probed = this.last(id, 'probed');
-      if (probed && this.last(id, 'approved')) sum += toMicroUsdcEquivalent(BigInt(probed.terms.amount), probed.terms.asset);
+      const approved = this.last(id, 'approved');
+      const waiting = this.last(id, 'awaiting_approval');
+      // An approval that ran out can no longer be paid on.
+      if (approved ? now <= approved.expiresAt : waiting !== undefined && now <= waiting.expiresAt) sum += amount;
     }
     return sum;
   }
@@ -313,7 +323,7 @@ export class Buyer {
     const terms = { network: requirement.network, asset: requirement.asset, amount: requirement.amount, payTo: requirement.payTo };
     const offer = await this.offerOf(draft);
     const r = render({ orderId, asked: input.asked, offer, ...terms });
-    const decision = decideLimit(toMicroUsdcEquivalent(BigInt(terms.amount), terms.asset), this.spentToday(draft.day, orderId), this.deps.limits);
+    const decision = decideLimit(toMicroUsdcEquivalent(BigInt(terms.amount), terms.asset), this.spentToday(draft.day, orderId, 'deciding'), this.deps.limits);
     return { orderId, url, terms, offer, text: r.text, textHash: r.textHash, changes: r.changes, decision };
   }
 
@@ -355,7 +365,7 @@ export class Buyer {
     if (!approved) {
       // The limits are micro-USDC; the recorded amount stays what the 402 asked for.
       const amount = toMicroUsdcEquivalent(BigInt(probed.terms.amount), probed.terms.asset);
-      const decision = decideLimit(amount, this.spentToday(draft.day, orderId), this.deps.limits);
+      const decision = decideLimit(amount, this.spentToday(draft.day, orderId, 'deciding'), this.deps.limits);
       if (decision.kind === 'refused') {
         this.write({ type: 'refused', at: iso(), orderId, reason: decision.reason });
         return { state: 'refused', orderId, reason: decision.reason };
@@ -383,6 +393,21 @@ export class Buyer {
       });
       approved = { type: 'approved', at: iso(), orderId, basis: 'mandate', decision: 'approved', expiresAt, signer: this.deps.agentAccount.address, signature };
       this.write(approved);
+    }
+
+    // The cap again, against what is now spent or in flight: a buyer approval can arrive after
+    // other orders were paid, or after the cap was lowered. Only before the first signature; a
+    // payment already signed is settled, never refused.
+    if (approved.decision === 'approved' && !this.last(orderId, 'paid') && !this.last(orderId, 'pay_signed')) {
+      const amount = toMicroUsdcEquivalent(BigInt(probed.terms.amount), probed.terms.asset);
+      const decision = decideLimit(amount, this.spentToday(draft.day, orderId, 'paying'), this.deps.limits);
+      if (decision.kind === 'refused') {
+        // `refused` while nothing is on the topic yet; once a record is, the order is abandoned.
+        const recorded = this.rowsOf(orderId).some((r) => r.type === 'committed');
+        this.write({ type: recorded ? 'abandoned' : 'refused', at: iso(), orderId, reason: decision.reason });
+        this.deps.log?.warn('limit_at_payment', { orderId, reason: decision.reason });
+        return { state: recorded ? 'abandoned' : 'refused', orderId, reason: decision.reason };
+      }
     }
 
     // The three records written before paying.

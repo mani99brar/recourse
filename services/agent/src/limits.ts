@@ -1,6 +1,9 @@
 // Spend limits, in micro-USDC. Within the spend limit the agent approves on its mandate; above it,
 // up to the per-order maximum, a buyer must sign; above the maximum, or past the daily cap (UTC
-// day), the order is refused before any record is written.
+// day), the order is refused before any record is written. The cap counts the day's paid orders,
+// payments in flight, and orders approved or waiting for a buyer; it is checked again just before
+// a payment is signed, against what is spent or in flight then (a late buyer approval, a lowered
+// cap), and an order past it then ends unpaid.
 
 type Env = Record<string, string | undefined>;
 

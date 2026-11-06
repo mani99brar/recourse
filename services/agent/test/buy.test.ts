@@ -85,6 +85,43 @@ describe('limits', () => {
     expect(messages(w).filter((m) => m.orderId === big || m.orderId === second)).toHaveLength(0);
     expect(w.fake.settled).toHaveLength(1);
   });
+
+  async function approveAsBuyer(x: World, buyer: ReturnType<World['open']>['buyer'], orderId: `0x${string}`) {
+    const request = buyer.pendingApproval(orderId)!;
+    const message = { orderId, textHash: request.rendered.textHash, amount: request.terms.amount, payTo: request.terms.payTo, decision: 'approved' as const, expiresAt: request.expiresAt };
+    buyer.recordBuyerDecision(orderId, 'approved', x.buyerAccount.address, await signApproval(x.buyerAccount, message), request.expiresAt);
+  }
+
+  test('an order waiting for the buyer holds its share of the daily cap', async () => {
+    // Each 6 USDC hoodie is above the 5 USDC spend limit; two of them are above the 7 USDC cap.
+    w = await world({ limits: { dailyCap: 7_000_000n } });
+    const { buyer } = w.open();
+    const first = buyer.draft({ sku: 'hoodie-grey-m', quantity: 1, asked: { brand: 'Northwind' } });
+    expect((await buyer.run(first)).state).toBe('awaiting_approval');
+    const second = buyer.draft({ sku: 'hoodie-grey-m', quantity: 1, asked: { brand: 'Northwind' } });
+    expect(await buyer.run(second)).toMatchObject({ state: 'refused', reason: 'daily_cap' });
+    await approveAsBuyer(w, buyer, first);
+    expect((await buyer.run(first)).state).toBe('done');
+    expect(w.fake.settled).toHaveLength(1);
+  });
+
+  test('the cap is checked again before paying an order the buyer approved', async () => {
+    w = await world({ limits: { dailyCap: 50_000_000n } });
+    const { buyer } = w.open();
+    const a = buyer.draft({ sku: 'hoodie-grey-m', quantity: 1, asked: { brand: 'Northwind' } });
+    const b = buyer.draft({ sku: 'hoodie-grey-m', quantity: 1, asked: { brand: 'Northwind' } });
+    expect((await buyer.run(a)).state).toBe('awaiting_approval');
+    expect((await buyer.run(b)).state).toBe('awaiting_approval');
+    // The operator lowers the cap while both wait; the buyer then approves both.
+    w.limits.dailyCap = 7_000_000n;
+    await approveAsBuyer(w, buyer, a);
+    await approveAsBuyer(w, buyer, b);
+    expect((await buyer.run(a)).state).toBe('done');
+    expect(await buyer.run(b)).toMatchObject({ state: 'refused', reason: 'daily_cap' });
+    expect(w.fake.settled).toHaveLength(1);
+    expect(messages(w).filter((m) => m.orderId === b)).toHaveLength(0);
+    expect(await w.open().buyer.run(b)).toMatchObject({ state: 'refused', reason: 'daily_cap' });
+  });
 });
 
 describe('above the spend limit', () => {
