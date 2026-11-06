@@ -3,7 +3,7 @@ import { addressBook } from '@recourse/shared';
 import { refreshLive } from '../src/live.js';
 import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
-import { buildClaim, fakeReader, ingest } from './helpers/fixtures.js';
+import { buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
 import { harness } from './helpers/service.js';
 
 describe('stuck detection', () => {
@@ -34,6 +34,21 @@ describe('stuck detection', () => {
     ingest(store, sim);
     const h = harness({ store, now: Number(b.now) + 4_000 });
     expect((await h.svc.claimRows())[0]!.statusKey).toBe('at_court');
+  });
+  it('an older failed send does not call a claim stuck while its resend is not read yet', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'stuck_failed', 1);
+    sim.tick(1_900);
+    const resent = h32(0x5f01);
+    sim.hedera('claims', 'SentToCourt', { claimId: b.claimId, messageId: resent });
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, b.live!); // the first send FAILURE, the resend not read
+    const h = harness({ store, now: Number(sim.t) + 60 });
+    expect((await h.svc.claimRows())[0]!.statusKey).toBe('at_court');
+    // Once the resend is read, it decides.
+    store.live.set(b.claimId, { ...b.live!, exec: { ...b.live!.exec, [resent]: 3 } });
+    expect((await h.svc.claimRows())[0]!.statusKey).toBe('stuck');
   });
 });
 

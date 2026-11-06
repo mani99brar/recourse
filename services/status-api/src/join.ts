@@ -259,13 +259,19 @@ export function caseViewOf(claim: FoldedClaim, events: readonly IndexedEvent[], 
   };
 }
 
-/** One bridge view per known CCIP message whose destination state has been read. */
+/**
+ * One bridge view per known CCIP message whose destination state has been read. A direction whose
+ * newest message is not read yet gets none: the status takes the newest send of a direction, so
+ * an older failed or untouched leg would otherwise call a claim stuck right after its resend.
+ */
 export function bridgeViewsOf(claim: FoldedClaim, live: LiveState | undefined): BridgeView[] {
   const out: BridgeView[] = [];
   const add = (refs: readonly MessageRef[], direction: BridgeView['direction']) => {
-    for (const m of refs) {
-      if (m.messageId === ZERO32) continue; // sent without CCIP
-      const st = live?.exec[m.messageId];
+    const sent = refs.filter((m) => m.messageId !== ZERO32); // ZERO32: sent without CCIP
+    const newest = sent[sent.length - 1];
+    if (newest === undefined || live?.exec[newest.messageId] === undefined) return;
+    for (const m of sent) {
+      const st = live.exec[m.messageId];
       if (st === undefined) continue;
       out.push({ messageId: m.messageId, direction, sendNo: m.sendNo, executionState: st as ExecutionState, sentAt: m.time });
     }
