@@ -163,6 +163,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -232,6 +235,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -299,6 +305,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -357,6 +366,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Internal"
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
@@ -445,6 +457,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -529,6 +544,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Internal"
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
@@ -957,7 +975,7 @@
                       "transactions": [
                         {
                           "chainId": 296,
-                          "to": "0x6D6fb82e82E525B9c30619189EA8aF17117C3c73",
+                          "to": "0x0000000000000000000000000000000000000003",
                           "data": "0x095ea7b3000000000000000000000000a22fb188b49eddecc4f9de22607e70e1d07aea2e00000000000000000000000000000000000000000000000000000000000f4240",
                           "value": "0",
                           "gas": "58000",
@@ -967,7 +985,7 @@
                             "contract": "VaultToken",
                             "function": "approve",
                             "args": {
-                              "spender": "0xA22fB188b49eddecc4f9DE22607e70E1d07Aea2e",
+                              "spender": "0x0000000000000000000000000000000000000002",
                               "amount": "1000000"
                             }
                           },
@@ -975,7 +993,7 @@
                         },
                         {
                           "chainId": 296,
-                          "to": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
+                          "to": "0x0000000000000000000000000000000000000001",
                           "data": "0x57ca1c393c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c000000000000000000000000222222222222222222222222222222222222222200000000000000000000000000000000000000000000000000000000006afff9000000000000000000000000000000000000000000000000000000000000006500000000000000000000000000000000000000000000000000000000000000660000000000000000000000000000000000000000000000000000000000000067000000000000000000000000000000000000000000000000000000000000006800000000000000000000000000000000000000000000000000000000000000690000000000000000000000000000000000000000000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000017d784000000000000000000000000000000000000000000000000000000000017d7840",
                           "value": "0",
                           "gas": "800000",
@@ -1150,6 +1168,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -1222,7 +1243,7 @@
                       "transactions": [
                         {
                           "chainId": 296,
-                          "to": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
+                          "to": "0x0000000000000000000000000000000000000001",
                           "data": "0x1548fc02c6fa55e9503c18d3fc3d6d3351750302ce36ea23f48a3dea986686e1c0eb4046",
                           "value": "0",
                           "gas": "62000",
@@ -1306,6 +1327,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -1380,7 +1404,7 @@
                       "transactions": [
                         {
                           "chainId": 421614,
-                          "to": "0xA88A9a25cE7f1d8b3941dA3b322Ba91D009E1397",
+                          "to": "0x0000000000000000000000000000000000000005",
                           "data": "0xa6a7f0ebacdbbc21be3cc9f012428236143ee63e0d60d196c418338e0505f738846df59c000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000917b226e616d65223a2244656c69766572792070686f746f222c226465736372697074696f6e223a225468652070617263656c20617320697420617272697665642e222c2266696c65555249223a222f697066732f6261666b726569676832616b69736361696c646371616273796733646672366368753366677072656769796d73636b376537617161347335327a79227d000000000000000000000000000000",
                           "value": "0",
                           "gas": "96000",
@@ -1458,6 +1482,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -1527,7 +1554,7 @@
                       "transactions": [
                         {
                           "chainId": 296,
-                          "to": "0xA22fB188b49eddecc4f9DE22607e70E1d07Aea2e",
+                          "to": "0x0000000000000000000000000000000000000002",
                           "data": "0xc36f3874",
                           "value": "0",
                           "gas": "70000",
@@ -1597,6 +1624,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Internal"
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
@@ -1669,7 +1699,7 @@
                       "transactions": [
                         {
                           "chainId": 296,
-                          "to": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
+                          "to": "0x0000000000000000000000000000000000000001",
                           "data": "0xaff1b484c6fa55e9503c18d3fc3d6d3351750302ce36ea23f48a3dea986686e1c0eb4046",
                           "value": "0",
                           "gas": "180000",
@@ -1759,6 +1789,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -1840,6 +1873,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Internal"
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
@@ -1925,6 +1961,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -2006,6 +2045,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -2076,7 +2118,7 @@
                       "transactions": [
                         {
                           "chainId": 296,
-                          "to": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
+                          "to": "0x0000000000000000000000000000000000000001",
                           "data": "0x987757ddc6fa55e9503c18d3fc3d6d3351750302ce36ea23f48a3dea986686e1c0eb4046",
                           "value": "0",
                           "gas": "200000",
@@ -2166,6 +2208,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -2248,6 +2293,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -2329,6 +2377,9 @@
           "500": {
             "$ref": "#/components/responses/Internal"
           },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
+          },
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
@@ -2361,6 +2412,7 @@
           "bridge_unavailable",
           "contract_underfunded",
           "insufficient_value",
+          "wrong_status",
           "case_wrong_state",
           "call_reverted",
           "rate_limited",
@@ -2404,7 +2456,7 @@
                       "transactions": [
                         {
                           "chainId": 421614,
-                          "to": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
+                          "to": "0x0000000000000000000000000000000000000004",
                           "data": "0x965798abc6fa55e9503c18d3fc3d6d3351750302ce36ea23f48a3dea986686e1c0eb4046",
                           "value": "41000000000000",
                           "gas": "430000",
@@ -2483,6 +2535,9 @@
           },
           "500": {
             "$ref": "#/components/responses/Internal"
+          },
+          "502": {
+            "$ref": "#/components/responses/ProxyUnavailable"
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
@@ -6292,6 +6347,22 @@
             }
           }
         }
+      },
+      "ProxyUnavailable": {
+        "description": "Error (upstream_unavailable) from the web server in front of the API, on /api/v1/...: the status API did not answer within 15 s, or could not be reached. It has no details. The status API itself answers every read within about 3 s and every action within 12 s, so this means it is down or restarting; try again shortly.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "code": "upstream_unavailable",
+                "message": "status API unreachable"
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -6552,7 +6623,7 @@
       "code": "upstream_unavailable",
       "status": 503,
       "family": "upstream",
-      "meaning": "A source the answer needs did not answer or is behind: details.upstream is one of index, hedera_rpc, arbitrum_rpc, mirror, ipfs, shop, precheck, docket, status_api. Retry later."
+      "meaning": "A source the answer needs did not answer or is behind: details.upstream is one of index, hedera_rpc, arbitrum_rpc, mirror, ipfs, shop, precheck, docket, status_api. Retry later. The web server in front answers it with HTTP 502 and no details when the status API itself does not answer (ProxyUnavailable)."
     }
   ],
   "x-recourse-revert-map": [

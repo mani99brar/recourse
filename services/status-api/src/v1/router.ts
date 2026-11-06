@@ -22,6 +22,7 @@ import { decodeRevert, revertError } from './reverts.js';
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const BODY_LIMIT = 64 * 1024;
 const STATUS_SET: ReadonlySet<string> = new Set(STATUS_KEYS);
+const FINISHED_KEYS: ReadonlySet<string> = new Set(['settled', 'closed_uncontested', 'closed_undrawn', 'expired']);
 
 /** The OpenAPI file, read once; served as is at /openapi.json and /v1/openapi.json. */
 let openapiText: string | null = null;
@@ -112,16 +113,18 @@ function addressParam(v: unknown, field: string): Address {
   return getAddress(v);
 }
 
-type NextRow = { nextCall: string | null; nextActor: string; deadline: bigint | null; shop: Address; platform: Address };
+type NextRow = { nextCall: string | null; nextActor: string; deadline: bigint | null; statusKey?: string; shop: Address; platform: Address };
 
 /**
  * The action under /v1/actions that builds a claim's next call; null when there is none. A
  * withdrawCredit only while the account that would sign it has credit (`credit` read and above
- * zero): a settled or closed claim whose credit was already taken out has nothing left to do.
+ * zero): a settled or closed claim whose credit was already taken out has nothing left to do. A
+ * finished claim never gets a relayRuling, which the action refuses (wrong_status).
  */
-export function nextActionOf(row: { nextCall: string | null; nextActor: string; deadline: bigint | null }, credit?: bigint | null) {
+export function nextActionOf(row: { nextCall: string | null; nextActor: string; deadline: bigint | null; statusKey?: string }, credit?: bigint | null) {
   if (!isActionName(row.nextCall)) return null;
   if (row.nextCall === 'withdrawCredit' && !(typeof credit === 'bigint' && credit > 0n)) return null;
+  if (row.nextCall === 'relayRuling' && row.statusKey !== undefined && FINISHED_KEYS.has(row.statusKey)) return null;
   return { action: row.nextCall, actor: row.nextActor, path: `/v1/actions/${row.nextCall}`, deadline: row.deadline };
 }
 

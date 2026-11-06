@@ -172,6 +172,9 @@ describe('/v1 reads', () => {
     const settled = { nextCall: 'withdrawCredit', nextActor: 'shop', deadline: null };
     for (const credit of [undefined, null, 0n]) expect(nextActionOf(settled, credit)).toBeNull();
     expect(nextActionOf(settled, 1n)).toMatchObject({ action: 'withdrawCredit', actor: 'shop' });
+    // relayRuling never for a finished claim
+    for (const statusKey of ['settled', 'closed_uncontested', 'closed_undrawn', 'expired']) expect(nextActionOf({ nextCall: 'relayRuling', nextActor: 'keeper', deadline: null, statusKey })).toBeNull();
+    expect(nextActionOf({ nextCall: 'relayRuling', nextActor: 'keeper', deadline: null, statusKey: 'at_court' })).toMatchObject({ action: 'relayRuling' });
   });
 
   it('shows the contest window the claim was filed under, not the current one', async () => {
