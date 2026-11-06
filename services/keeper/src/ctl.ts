@@ -4,6 +4,7 @@
 //   keeper-ctl status [claimId]
 //   keeper-ctl pause | resume
 //   keeper-ctl hold <claimId> | release <claimId>
+//   keeper-ctl expire <claimId>   allow expiry over a court ruling that has not reached Hedera
 //   keeper-ctl window add <hedera|arbitrum>@<fromISO>/<toISO> | window list | window clear
 
 import { parseSendPauseWindows, readEnv } from '@recourse/shared';
@@ -62,6 +63,13 @@ export async function runCtl(argv: readonly string[], env: Record<string, string
         return `released ${id} (operator hold and any hold the keeper set itself)`;
       });
     }
+    case 'expire': {
+      const id = claimArg(a1);
+      return edit((c) => {
+        c.expire[id] = Date.now();
+        return `expire allowed for ${id}: once its claim timeout has passed the keeper expires it on Hedera (and marks its case stale) even if a court ruling has not reached Hedera; that ruling is then ignored`;
+      });
+    }
     case 'window': {
       if (a1 === 'list') return { code: 0, out: readControl(dir).windows.join('\n') || '(no windows in the control file)' };
       if (a1 === 'clear') {
@@ -82,7 +90,7 @@ export async function runCtl(argv: readonly string[], env: Record<string, string
     default:
       return {
         code: 2,
-        out: 'usage: keeper-ctl status [claimId] | pause | resume | hold <claimId> | release <claimId> | window add <chain@from/to> | window list | window clear',
+        out: 'usage: keeper-ctl status [claimId] | pause | resume | hold <claimId> | release <claimId> | expire <claimId> | window add <chain@from/to> | window list | window clear',
       };
   }
 }

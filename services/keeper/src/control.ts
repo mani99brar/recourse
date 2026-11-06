@@ -16,12 +16,17 @@ export interface Control {
   releases: Record<string, number>;
   /** Extra windows, same text form as SEND_PAUSE_WINDOWS items. */
   windows: string[];
+  /**
+   * Claim id -> unix ms the operator allowed expiry over a court ruling that has not reached
+   * Hedera (keeper-ctl expire). Without it the keeper never expires such a claim itself.
+   */
+  expire: Record<string, number>;
   /** Unix ms of the latest rebuild request. */
   rebuildAt?: number;
 }
 
 export function emptyControl(): Control {
-  return { paused: false, holds: {}, releases: {}, windows: [] };
+  return { paused: false, holds: {}, releases: {}, windows: [], expire: {} };
 }
 
 export function controlPath(stateDir: string): string {
@@ -38,6 +43,7 @@ export function readControl(stateDir: string): Control {
   if (raw.holds && typeof raw.holds === 'object') c.holds = { ...raw.holds };
   if (raw.releases && typeof raw.releases === 'object') c.releases = { ...raw.releases };
   if (Array.isArray(raw.windows)) c.windows = raw.windows.filter((w): w is string => typeof w === 'string');
+  if (raw.expire && typeof raw.expire === 'object') c.expire = { ...raw.expire };
   if (typeof raw.rebuildAt === 'number') c.rebuildAt = raw.rebuildAt;
   return c;
 }
@@ -76,6 +82,11 @@ export function operatorHolds(c: Control, claimId: string): boolean {
   if (held === undefined) return false;
   const released = c.releases[claimId.toLowerCase()] ?? 0;
   return held > released;
+}
+
+/** True when the operator ran keeper-ctl expire for the claim: expiry may go over a pending ruling. */
+export function expiryForced(c: Control, claimId: string): boolean {
+  return c.expire[claimId.toLowerCase()] !== undefined;
 }
 
 /** True when an automatic hold placed at `heldAtMs` has been released since. */

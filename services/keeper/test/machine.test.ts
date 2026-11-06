@@ -568,6 +568,118 @@ describe('expiry', () => {
   });
 });
 
+describe('expiry never beats a court ruling (Both mode)', () => {
+  /** A Watching claim with a 3 h Hedera claim timeout; returns the second expiry becomes possible. */
+  async function watchingNearTimeout(opts: { keeper?: Partial<KeeperOptions> } = {}): Promise<{ r: Rig; id: Hex; expiresAfter: number }> {
+    const fake = new FakeChains();
+    fake.claimsParamsV.claimTimeout = 3 * 3600;
+    const r = rig({ fake, ...opts });
+    const id = await toWatching(r);
+    return { r, id, expiresAfter: Number(r.fake.claims.get(id)!.preCheckedAt) + r.fake.claimsParamsV.claimTimeout + 1 };
+  }
+
+  it('keeper down across the ruling and the claim timeout: relays the ruling, never expires', async () => {
+    const { r, id, expiresAfter } = await watchingNearTimeout();
+    expect(r.fake.mode).toBe(BridgeMode.Both);
+    r.fake.t = expiresAfter - 60;
+    r.fake.rule(id, 1); // no tick: the keeper is down
+    r.fake.t = expiresAfter + 5;
+    await r.k.tick();
+    expect(fns(r, id)).toContain('relayRuling');
+    expect(fns(r, id)).not.toContain('expireClaim');
+    expect(kinds(r)).toContain('expiry_race');
+    await run(r, 30);
+    r.fake.arrive(id);
+    await run(r, 60);
+    expect(phase(r, id)).toBe('Settled');
+    expect(fns(r, id)).not.toContain('expireClaim');
+  });
+
+  it('reads the case on Arbitrum: a Ruled case whose RulingFinal is not read yet still holds expiry back', async () => {
+    const { r, id, expiresAfter } = await watchingNearTimeout();
+    const cv = r.fake.cases.get(id)!;
+    cv.state = CaseState.Ruled; // the reader trails the chain: no RulingFinal event yet
+    cv.ruling = 1;
+    r.fake.t = expiresAfter + 5;
+    await run(r, 600, 60);
+    expect(phase(r, id)).toBe('Watching');
+    expect(fns(r, id)).not.toContain('expireClaim');
+    expect(r.alerter.pending().find((a) => a.kind === 'expiry_race')?.hint).toContain('Ruled');
+    r.fake.emitA('case', 'RulingFinal', { claimId: id, disputeId: r.fake.disputeOf(id), ruling: 1, attempts: 1 });
+    await run(r, 60);
+    expect(fns(r, id)).toContain('relayRuling');
+    expect(fns(r, id)).not.toContain('expireClaim');
+  });
+
+  it('a relay held after 5 failures keeps expiry back until keeper-ctl expire', async () => {
+    const { r, id, expiresAfter } = await watchingNearTimeout();
+    r.fake.overrides.set('relayRuling', () => ({ kind: 'reverted', error: 'InsufficientValue' }));
+    r.fake.rule(id, 1);
+    await run(r, 600, 60);
+    expect(fns(r, id).filter((f) => f === 'relayRuling')).toHaveLength(5);
+    expect(r.k.book.claims.get(id)!.autoHold?.reason).toMatch(/relayRuling failed 5 times/);
+    r.fake.t = expiresAfter + 1;
+    await run(r, 1800, 60);
+    expect(fns(r, id)).not.toContain('expireClaim');
+    const hint = r.alerter.pending().find((a) => a.kind === 'expiry_race')?.hint ?? '';
+    expect(hint).toContain(`keeper-ctl expire ${id}`);
+    expect(hint).toContain('held');
+    control(r, { expire: { [id]: Date.now() } });
+    await run(r, 60);
+    expect(fns(r, id)).toContain('expireClaim');
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Expired);
+  });
+
+  it('a ruling inside the relay lead of a Hedera window waits for the window, and expiry does not go first', async () => {
+    const fake = new FakeChains();
+    fake.claimsParamsV.claimTimeout = 3 * 3600;
+    const preCheckedAt = fake.t + 30; // toWatching pre-checks 30 s in
+    const expiresAfter = preCheckedAt + fake.claimsParamsV.claimTimeout + 1;
+    const from = expiresAfter + 600;
+    const r = rig({ fake, keeper: { windows: [{ chain: 'hedera', from, to: from + 2400 }] } });
+    const id = await toWatching(r);
+    expect(Number(r.fake.claims.get(id)!.preCheckedAt)).toBe(preCheckedAt);
+    r.fake.t = expiresAfter - 120;
+    r.fake.rule(id, 1);
+    await run(r, 300, 30);
+    expect(fns(r, id)).not.toContain('relayRuling'); // inside the 30-min lead
+    expect(fns(r, id)).not.toContain('expireClaim');
+    r.fake.t = from + 2400;
+    await r.k.tick();
+    expect(fns(r, id)).toContain('relayRuling');
+    r.fake.arrive(id);
+    await run(r, 60);
+    expect(phase(r, id)).toBe('Settled');
+    expect(fns(r, id)).not.toContain('expireClaim');
+  });
+
+  it('a Kleros dispute in its execution period gets executeRuling, not expireClaim or markStale', async () => {
+    const r = rig();
+    const id = await toWatching(r);
+    const d = r.fake.disputeOf(id).toString();
+    r.fake.t = Number(r.fake.claims.get(id)!.preCheckedAt) + r.fake.claimsParamsV.claimTimeout + 5;
+    expect(r.fake.t).toBeGreaterThan(Number(r.fake.cases.get(id)!.expiresAt)); // the case has expired too
+    r.fake.disputes.set(d, { ...r.fake.disputes.get(d)!, period: 4, lastPeriodChange: r.fake.t - 700 });
+    await run(r, 60);
+    expect(fns(r, id)).toContain('executeRuling');
+    expect(fns(r, id)).not.toContain('expireClaim');
+    expect(fns(r, id)).not.toContain('markStale');
+    expect(kinds(r)).toContain('expiry_race');
+  });
+
+  it('a ruling message that failed on the Hedera OffRamp holds expiry back for the operator', async () => {
+    const { r, id, expiresAfter } = await watchingNearTimeout();
+    r.fake.rule(id, 1);
+    await run(r, 30);
+    expect(phase(r, id)).toBe('Relayed');
+    r.fake.exec.set(`hedera:${r.fake.cases.get(id)!.lastMessageId.toLowerCase()}`, ExecutionState.Failure);
+    r.fake.t = expiresAfter + 1;
+    await run(r, 600, 60);
+    expect(fns(r, id)).not.toContain('expireClaim');
+    expect(r.alerter.pending().find((a) => a.kind === 'expiry_race')?.hint).toContain('failed on the Hedera OffRamp');
+  });
+});
+
 describe('stale cases on Arbitrum', () => {
   /** A Watching claim whose case expires (filedAt + the case's timeout) long before the Hedera claim can. */
   async function watchingWithCaseTimeout(caseTimeout: number): Promise<{ r: Rig; id: Hex; exp: number }> {

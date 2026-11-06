@@ -21,7 +21,7 @@ import {
 import type { Hex } from 'viem';
 import type { Alert, AlertKind, Alerter } from './alerts.js';
 import { ClaimBook, currentAttempt, isTerminal, milestoneOf, phaseOf } from './claims.js';
-import { controlWindows, operatorHolds, readControl, releasedSince, type Control } from './control.js';
+import { controlWindows, emptyControl, expiryForced, operatorHolds, readControl, releasedSince, type Control } from './control.js';
 import type { EvidencePort } from './evidence.js';
 import type { Journal } from './journal.js';
 import { replayJournal } from './journal.js';
@@ -99,7 +99,7 @@ export class Keeper {
   readonly health: KeeperHealth = { paused: false, windowsActive: [], cursors: {}, claimsByPhase: {} };
   private readonly timing: Timing;
   private readonly links: Links;
-  private control: Control = { paused: false, holds: {}, releases: {}, windows: [] };
+  private control: Control = emptyControl();
   private windows: SendPauseWindow[] = [];
   private claimsParams?: ClaimsParams;
   private caseParams?: CaseParams;
@@ -368,7 +368,9 @@ export class Keeper {
   /**
    * Expires a claim on Hedera once `expireClaim` would succeed: a Filed claim after filedAt +
    * claimTimeout, a Contested or AtCourt one after preCheckedAt + claimTimeout (strictly after, in
-   * both cases); a PreChecked claim never. Returns true when the row's own call must not run.
+   * both cases); a PreChecked claim never. A court ruling that has not reached Hedera yet always
+   * goes first, in every bridge mode: the keeper never expires such a claim itself unless the
+   * operator ran keeper-ctl expire. Returns true when the row's own call must not run.
    */
   private async expiry(c: KeeperClaim, now: number): Promise<boolean> {
     if (this.claimsParams === undefined) return false;
@@ -377,30 +379,25 @@ export class Keeper {
     if (c.filedAt !== undefined && now <= c.filedAt + timeout) return false;
     const claim = await this.o.chains.getClaim(c.claimId);
     if (!canExpireClaim(claim, BigInt(timeout), BigInt(now))) return false;
-    // A ruling still on its way to Hedera would arrive after expiry and be ignored: wait for it.
-    let changed = false;
-    let inFlight: Hex | undefined;
-    for (const m of c.inbound) {
-      const st = await this.o.chains.execState('hedera', m.messageId);
-      if (m.state !== st) changed = true;
-      m.state = st;
-      if (st === ExecutionState.Untouched || st === ExecutionState.InProgress) inFlight ??= m.messageId;
-    }
-    if (changed) this.book.save(c);
-    if (inFlight !== undefined) {
-      this.alertClaim(c, 'expiry_race', `claim timeout passed while ruling message ${inFlight} is still in flight; expiry waits`, {
-        links: [this.links.ccipMessage(inFlight)],
-      });
-      return true;
-    }
-    // One-leg modes: a final ruling not yet recorded goes first; the row's recordRuling runs.
-    if (c.rulingFinal && c.rulingReceivedAt === undefined && this.mode !== undefined && this.mode !== BridgeMode.Both) {
-      this.alertClaim(c, 'expiry_race', 'claim timeout passed with a final ruling not yet recorded on Hedera; recordRuling goes first');
-      return false;
+    if (operatorHolds(this.control, c.claimId)) return true;
+    const forced = expiryForced(this.control, c.claimId);
+    if (claim.status === ClaimStatus.AtCourt && !forced) {
+      const pending = await this.pendingRuling(c);
+      if (pending !== undefined) {
+        const held = c.autoHold ? ` The claim is held (${c.autoHold.reason}); keeper-ctl release ${c.claimId} tries the ruling again.` : '';
+        this.alertClaim(
+          c,
+          'expiry_race',
+          `claim timeout passed but ${pending.why}; expiry waits for the ruling.${held} To expire anyway, which makes Hedera ignore the ruling: keeper-ctl expire ${c.claimId}`,
+          pending.messageId ? { links: [this.links.ccipMessage(pending.messageId)] } : {},
+        );
+        // The row's own call (relay, record, re-relay or executeRuling) is what delivers the ruling.
+        return false;
+      }
     }
     // Expiry is the escrow's way out, so a hold from some other call's failures does not stop it;
     // an operator hold, or a failed expiry, does.
-    if (operatorHolds(this.control, c.claimId) || c.autoHold?.reason.startsWith('expireClaim')) return true;
+    if (c.autoHold?.reason.startsWith('expireClaim')) return true;
     // NotExpired here means the chain's latest block trails our clock by a second or two.
     const r = await this.tryCall(c, rowOf(phaseOf(c)), { chain: 'hedera', contract: 'claims', fn: 'expireClaim', args: [c.claimId] }, now, {
       retryEveryS: 120,
@@ -411,6 +408,59 @@ export class Keeper {
       this.alertClaim(c, 'expire_failed', `expireClaim reverted with ${r.error ?? 'no reason'}; claim held, escrow untouched. Read the claim status before keeper-ctl release`);
     }
     return true;
+  }
+
+  /**
+   * Why a court ruling for this claim exists but has not reached Hedera, or undefined. Reads the
+   * case on Arbitrum rather than trusting the journal, since the event reader can trail the chain
+   * by many blocks after a downtime: a Ruled case still has its ruling to relay (or record, in
+   * the one-leg modes); a Relayed case has a message in flight, or one that failed on the Hedera
+   * OffRamp and can still be executed by hand; an Opened case whose Kleros dispute is in its
+   * execution period has a final ruling that executeRuling delivers.
+   */
+  private async pendingRuling(c: KeeperClaim): Promise<{ why: string; messageId?: Hex } | undefined> {
+    if (c.rulingReceivedAt !== undefined) return undefined;
+    let changed = false;
+    const inbound = async (messageId: Hex): Promise<ExecutionState> => {
+      const st = await this.o.chains.execState('hedera', messageId);
+      const m = c.inbound.find((x) => x.messageId === messageId);
+      if (m && m.state !== st) {
+        m.state = st;
+        changed = true;
+      }
+      return st;
+    };
+    try {
+      if (this.o.chains.hasOpen('arbitrum', 'relayRuling', c.claimId)) return { why: 'a relayRuling transaction is still open' };
+      if (this.o.chains.hasOpen('hedera', 'recordRuling', c.claimId)) return { why: 'a recordRuling transaction is still open' };
+      const cv = await this.o.chains.caseOf(c.claimId);
+      if (cv.state === CaseState.Ruled) {
+        const how = this.mode === BridgeMode.Both ? 'relayed' : 'recorded on Hedera';
+        return { why: `the case on Arbitrum is Ruled (ruling ${cv.ruling}) and the ruling has not been ${how}` };
+      }
+      if (cv.state === CaseState.Relayed || c.inbound.length > 0) {
+        // Every copy we know of, plus the case's latest (the reader may not have its event yet).
+        const ids = c.inbound.map((m) => m.messageId);
+        const last = cv.lastMessageId.toLowerCase() as Hex;
+        if (cv.state === CaseState.Relayed && last !== ZERO32 && !ids.includes(last)) ids.push(last);
+        const states: [Hex, ExecutionState][] = [];
+        for (const id of ids) states.push([id, await inbound(id)]);
+        if (states.some(([, st]) => st === ExecutionState.Success)) return undefined; // Hedera recorded or ignored it
+        const flying = states.find(([, st]) => st === ExecutionState.Untouched || st === ExecutionState.InProgress);
+        if (flying) return { why: `ruling message ${flying[0]} is still in flight`, messageId: flying[0] };
+        const failed = states.find(([, st]) => st === ExecutionState.Failure);
+        if (failed) return { why: `ruling message ${failed[0]} failed on the Hedera OffRamp and can still be executed by hand`, messageId: failed[0] };
+        return undefined;
+      }
+      if (cv.state === CaseState.Opened && cv.attempts > 0) {
+        const disputeId = cv.disputeIds[cv.attempts - 1]!;
+        const d = await this.o.chains.dispute(disputeId).catch(() => undefined);
+        if (d !== undefined && (d.ruled || d.period === 4)) return { why: `Kleros dispute ${disputeId} is in its execution period and executeRuling has not run` };
+      }
+      return undefined;
+    } finally {
+      if (changed) this.book.save(c);
+    }
   }
 
   /**
@@ -441,18 +491,33 @@ export class Keeper {
    * WrongState are races, never failures: WrongState ends the attempts for good, NotExpired waits
    * for the expiresAt it names. Returns true when the phase's own call must not run this tick.
    */
-  private async markStale(c: KeeperClaim, now: number): Promise<boolean> {
+  private async markStale(c: KeeperClaim, now: number, opts: { expired?: boolean } = {}): Promise<boolean> {
     if (!c.received || c.staleAt !== undefined || c.done.includes('case-settled')) return false;
     const exp = this.caseExpiresAt(c);
     if (exp === undefined || now < exp) return false;
     const cv = await this.o.chains.caseOf(c.claimId);
     if (cv.state === CaseState.Stale) return true; // ClaimStale is on its way
     if (cv.state === CaseState.Ruled || cv.state === CaseState.Relayed) {
-      this.once(c, 'case-settled'); // ruled before it expired: the ruling goes on as usual
+      this.once(c, 'case-settled'); // ruled: the ruling goes on as usual
       return false;
     }
     if (!STALEABLE.includes(cv.state)) return false;
     if (operatorHolds(this.control, c.claimId)) return true;
+    // A final Kleros ruling nobody has executed yet still counts while Hedera has not expired the
+    // claim: executeRuling (the Watching row's nudge) delivers it and frees the slot as well.
+    if (!opts.expired && cv.state === CaseState.Opened && cv.attempts > 0 && !expiryForced(this.control, c.claimId)) {
+      const disputeId = cv.disputeIds[cv.attempts - 1]!;
+      const d = await this.o.chains.dispute(disputeId).catch(() => undefined);
+      if (d !== undefined && (d.ruled || d.period === 4)) {
+        this.alertClaim(
+          c,
+          'expiry_race',
+          `the case expired at ${exp} but Kleros dispute ${disputeId} is in its execution period; executeRuling goes first and markStale waits. To mark it stale anyway: keeper-ctl expire ${c.claimId}`,
+          { links: [this.links.courtCase(disputeId.toString())] },
+        );
+        return false;
+      }
+    }
     const r = await this.tryCall(c, rowOf(phaseOf(c)), { chain: 'arbitrum', contract: 'case', fn: 'markStale', args: [c.claimId] }, now, {
       retryEveryS: 300,
       benign: ['NotExpired', 'WrongState'],
@@ -810,7 +875,7 @@ export class Keeper {
   private async terminal(c: KeeperClaim, now: number): Promise<void> {
     // Hedera's court-stage expiry comes after the case's expiresAt, so an expired claim may still
     // hold an open-case slot on Arbitrum (say the keeper was down across both): free it.
-    if (c.terminal === 'Expired') await this.markStale(c, now);
+    if (c.terminal === 'Expired') await this.markStale(c, now, { expired: true });
     if (c.terminal === 'Settled' && c.shop && !c.done.includes('withdraw-due')) {
       const credit = await this.o.chains.creditOf(c.shop);
       if (credit > 0n) {

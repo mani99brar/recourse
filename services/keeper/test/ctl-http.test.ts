@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { controlWindows, operatorHolds, readControl, releasedSince } from '../src/control.js';
+import { controlWindows, expiryForced, operatorHolds, readControl, releasedSince } from '../src/control.js';
 import { runCtl } from '../src/ctl.js';
 import { createKeeperApp, listenKeeper } from '../src/http.js';
 
@@ -36,6 +36,14 @@ describe('keeper-ctl', () => {
     await runCtl(['release', ID], e);
     expect(operatorHolds(readControl(dir), ID)).toBe(false);
     expect(releasedSince(readControl(dir), ID, heldAt)).toBe(true);
+  });
+
+  it('expire allows expiry over a pending ruling for that claim only', async () => {
+    const { dir, env: e } = env();
+    expect(expiryForced(readControl(dir), ID)).toBe(false);
+    expect((await runCtl(['expire', ID], e)).out).toMatch(/ruling is then ignored/);
+    expect(expiryForced(readControl(dir), ID)).toBe(true);
+    expect(expiryForced(readControl(dir), `0x${'cd'.repeat(32)}`)).toBe(false);
   });
 
   it('adds a pause window only when it parses', async () => {
