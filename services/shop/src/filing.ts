@@ -12,12 +12,14 @@
 // `token_mismatch`: the vault holds a token other than the deployment's, so nothing is approved.
 
 import {
+  WaitForTransactionReceiptTimeoutError,
   decodeEventLog,
   encodeFunctionData,
   erc20Abi,
   getAddress,
   keccak256,
   parseAbi,
+  parseTransaction,
   type Abi,
   type Address,
   type Hex,
@@ -313,19 +315,39 @@ export class ClaimFiler {
     return row;
   }
 
-  /** Broadcasts journaled bytes (again, if need be) and waits for the receipt. */
-  private async send(signed: Extract<FilingJournalRow, { type: 'signed' }>): Promise<TransactionReceipt> {
+  /**
+   * Broadcasts journaled bytes (again, if need be) and waits for the receipt. `mayReplace`: bytes
+   * from an earlier run. If the node refuses them and the gas price has risen since they were
+   * signed, the same call is signed again at the same nonce and the current price (journaled
+   * first), so at most one of the two can ever mine. A refusal followed by no receipt is reported
+   * with the node's own words.
+   */
+  private async send(signed: Extract<FilingJournalRow, { type: 'signed' }>, options: { mayReplace?: boolean } = {}): Promise<TransactionReceipt> {
     const { publicClient } = this.deps.clients;
+    let refused: string | null = null;
     try {
       await publicClient.sendRawTransaction({ serializedTransaction: signed.raw });
     } catch (error) {
       // Already known to the node, or already mined: the receipt below answers either way.
-      this.deps.log?.warn('send_raw_failed', { txHash: signed.txHash, error: error instanceof Error ? error.message.slice(0, 200) : String(error) });
+      refused = error instanceof Error ? error.message.slice(0, 200) : String(error);
+      this.deps.log?.warn('send_raw_failed', { txHash: signed.txHash, error: refused });
     }
-    const receipt = await publicClient.waitForTransactionReceipt({
-      hash: signed.txHash,
-      timeout: this.deps.receiptTimeoutMs ?? 120_000,
-    });
+    if (refused !== null && options.mayReplace) {
+      const replacement = await this.replacementFor(signed);
+      if (replacement) return this.send(replacement);
+    }
+    let receipt: TransactionReceipt;
+    try {
+      receipt = await publicClient.waitForTransactionReceipt({
+        hash: signed.txHash,
+        timeout: this.deps.receiptTimeoutMs ?? 120_000,
+      });
+    } catch (error) {
+      if (refused !== null && error instanceof WaitForTransactionReceiptTimeoutError) {
+        throw new FilingError('tx_pending', `${signed.step} ${signed.txHash} (nonce ${signed.nonce}) has no receipt; the node refused it: ${refused}`);
+      }
+      throw error;
+    }
     this.write({
       type: 'mined',
       at: new Date().toISOString(),
@@ -339,8 +361,34 @@ export class ClaimFiler {
   }
 
   /**
+   * The journaled call signed again at the same nonce, when the network's gas price is now above
+   * the one it was signed at; null otherwise (the old bytes are as good as any).
+   */
+  private async replacementFor(signed: Extract<FilingJournalRow, { type: 'signed' }>): Promise<Extract<FilingJournalRow, { type: 'signed' }> | null> {
+    const { publicClient, walletClient, account, chain } = this.deps.clients;
+    const old = parseTransaction(signed.raw);
+    const gasPrice = await publicClient.getGasPrice();
+    if (old.gasPrice === undefined || old.to == null || gasPrice <= old.gasPrice) return null;
+    const raw = await walletClient.signTransaction({
+      account,
+      chain,
+      to: old.to,
+      data: old.data ?? '0x',
+      gas: old.gas,
+      gasPrice,
+      nonce: signed.nonce,
+      type: 'legacy',
+    });
+    const row = { ...signed, at: new Date().toISOString(), txHash: keccak256(raw), raw };
+    this.write(row);
+    this.deps.log?.warn('filing_resigned', { claimId: signed.claimId, step: signed.step, nonce: signed.nonce, replaces: signed.txHash, txHash: row.txHash, gasPrice: gasPrice.toString(), was: old.gasPrice.toString() });
+    return row;
+  }
+
+  /**
    * What became of a journaled transaction: its receipt when mined; resent and awaited when its
-   * nonce is still unused; null when that nonce went to another transaction (it can never mine).
+   * nonce is still unused (replaced at the current gas price if the node refuses the old bytes and
+   * the price has risen); null when that nonce went to another transaction (it can never mine).
    */
   private async settleSigned(signed: Extract<FilingJournalRow, { type: 'signed' }>): Promise<TransactionReceipt | null> {
     const { publicClient, account } = this.deps.clients;
@@ -348,7 +396,7 @@ export class ClaimFiler {
     if (receipt) return receipt;
     const used = await publicClient.getTransactionCount({ address: account.address, blockTag: 'latest' });
     if (used > signed.nonce) return null;
-    return this.send(signed);
+    return this.send(signed, { mayReplace: true });
   }
 
   private markFiled(claimId: Hex, orderId: Hex, txHash: Hex | null, receipt: TransactionReceipt | null): Filed {

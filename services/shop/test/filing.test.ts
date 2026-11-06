@@ -2,11 +2,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { decodeFunctionData, erc20Abi, getAddress, keccak256, type Address, type Hex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, keccak256, parseTransaction, type Address, type Hex } from 'viem';
 import { claimIdOf, orderIdOf, type RecordRefs } from '@recourse/shared';
 import { Journal } from '@recourse/records';
 import type { ChainClients } from '../src/chain.js';
 import { ClaimFiler, FilingError, type FilingJournalRow } from '../src/filing.js';
+import { devAccount } from '../src/local-chain.js';
 
 const CLAIMS = getAddress('0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C');
 const VAULT = getAddress('0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8');
@@ -132,5 +133,79 @@ describe('claim filing, court fee allowance', () => {
     const call = decodeFunctionData({ abi: erc20Abi, data: c.signed[0]! });
     expect(call.functionName).toBe('approve');
     expect(call.args).toEqual([VAULT, 1_000_000n]);
+  });
+});
+
+/**
+ * A chain where an earlier run's approve was signed at gas price 1 and never reached the node; the
+ * nonce is still free and the gas price is now 3, so the node refuses the old bytes for good.
+ * Signs with anvil's public development account 4.
+ */
+async function chainWithUnderpricedApprove() {
+  const account = devAccount(4);
+  const claimId = claimIdOf(296n, CLAIMS, orderIdOf(PLATFORM, account.address, NONCE));
+  const data = encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [VAULT, 1_000_000n] });
+  const oldRaw = await account.signTransaction({ to: MOCK, data, gas: 60_000n, gasPrice: 1n, nonce: 4, chainId: 296, type: 'legacy' });
+  const sent: Hex[] = [];
+  let allowance = 0n;
+  let mined = false;
+  const publicClient = {
+    getChainId: async () => 296,
+    readContract: async ({ functionName }: { functionName: string }) => {
+      if (functionName === 'claimIdFor') return claimId;
+      if (functionName === 'getClaim') return { status: 0 };
+      if (functionName === 'usdc') return MOCK;
+      if (functionName === 'params') return { courtFeeUsdc: 1_000_000n };
+      if (functionName === 'allowance') return allowance;
+      throw new Error(`unexpected read ${functionName}`);
+    },
+    getTransactionReceipt: async () => {
+      throw new Error('no receipt');
+    },
+    getTransactionCount: async () => (mined ? 5 : 4),
+    getGasPrice: async () => 3n,
+    estimateGas: async () => 50_000n,
+    sendRawTransaction: async ({ serializedTransaction }: { serializedTransaction: Hex }) => {
+      sent.push(serializedTransaction);
+      if (parseTransaction(serializedTransaction).gasPrice! < 3n) throw new Error('INSUFFICIENT_TX_FEE');
+      return keccak256(serializedTransaction);
+    },
+    waitForTransactionReceipt: async ({ hash }: { hash: Hex }) => {
+      if (!sent.some((raw) => keccak256(raw) === hash && parseTransaction(raw).gasPrice! >= 3n)) throw new Error(`never mined: ${hash}`);
+      mined = true;
+      allowance = 1_000_000n;
+      return { status: 'success', transactionHash: hash, blockNumber: 11n, logs: [] };
+    },
+    simulateContract: async () => {
+      throw new Error('stop at the fileClaim simulate');
+    },
+  };
+  const walletClient = { signTransaction: ({ account: a, chain: _c, ...tx }: { account: typeof account; chain: unknown } & Record<string, unknown>) => a.signTransaction({ ...tx, chainId: 296 } as never) };
+  const clients = { publicClient, walletClient, account, chain: undefined, hedera: false } as unknown as ChainClients;
+  const history: FilingJournalRow[] = [
+    { type: 'signed', at: '2026-11-01T00:00:00.000Z', claimId, orderId: orderIdOf(PLATFORM, account.address, NONCE), step: 'approve', txHash: keccak256(oldRaw), nonce: 4, raw: oldRaw },
+  ];
+  return { clients, sent, history, oldRaw };
+}
+
+describe('claim filing, a journaled transaction the node refuses', () => {
+  it('signs the same call again at the same nonce and the current gas price', async () => {
+    const c = await chainWithUnderpricedApprove();
+    const journal = Journal.open<FilingJournalRow>(join(mkdtempSync(join(tmpdir(), 'filing-')), 'claims.jsonl'));
+    journals.push(journal);
+    for (const row of c.history) journal.append(row);
+    const f = new ClaimFiler({ clients: c.clients, claims: CLAIMS, vault: VAULT, usdc: MOCK, claimsAbi: [], journal, receiptTimeoutMs: 1_000 });
+    await expect(f.fileClaim({ orderNonce: NONCE, platform: PLATFORM, refs, basketUsdc: 2_000_000n, netLossUsdc: 2_000_000n })).rejects.toThrow(
+      'stop at the fileClaim simulate',
+    );
+    expect(c.sent[0]).toBe(c.oldRaw);
+    expect(c.sent).toHaveLength(2);
+    const old = parseTransaction(c.oldRaw);
+    const replacement = parseTransaction(c.sent[1]!);
+    expect(replacement).toMatchObject({ to: old.to, data: old.data, gas: old.gas, nonce: 4, gasPrice: 3n });
+    const signed = [...journal.rows()].filter((r) => r.type === 'signed');
+    expect(signed.map((r) => r.type === 'signed' && r.nonce)).toEqual([4, 4]);
+    expect(signed.at(-1)).toMatchObject({ step: 'approve', raw: c.sent[1] });
+    expect([...journal.rows()].filter((r) => r.type === 'mined')).toHaveLength(1);
   });
 });
