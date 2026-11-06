@@ -101,7 +101,7 @@ const keyOf = (orderId: Hex, kind: RecordKind) => `${orderId.toLowerCase()}:${ki
 
 export class RecordsClient {
   private readonly states = new Map<string, State>();
-  private readonly inFlight = new Map<string, Promise<Committed>>();
+  private readonly inFlight = new Map<string, { hash: Hex; commit: Promise<Committed> }>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly retryDelaysMs: number[];
@@ -154,11 +154,17 @@ export class RecordsClient {
 
   commitRecord(kind: RecordKind, orderId: Hex, docBytes: Uint8Array): Promise<Committed> {
     const k = keyOf(orderId, kind);
+    // A call for the slot while another runs joins it only with the same document; the first call has
+    // journaled nothing yet, so commitOnce's own conflict check cannot see it.
+    const hash = recordHash(docBytes);
     const running = this.inFlight.get(k);
-    if (running) return running;
-    const p = this.commitOnce(kind, orderId, docBytes).finally(() => this.inFlight.delete(k));
-    this.inFlight.set(k, p);
-    return p;
+    if (running) {
+      if (running.hash === hash) return running.commit;
+      return Promise.reject(new RecordsError('record_conflict', `${RECORD_KEYS[kind]} for ${orderId} is being written with another document`));
+    }
+    const commit = this.commitOnce(kind, orderId, docBytes).finally(() => this.inFlight.delete(k));
+    this.inFlight.set(k, { hash, commit });
+    return commit;
   }
 
   private async commitOnce(kind: RecordKind, orderId: Hex, docBytes: Uint8Array): Promise<Committed> {

@@ -71,6 +71,15 @@ describe('records client: commits', () => {
     expect(h.ledger.messages(TOPIC)).toHaveLength(1);
   });
 
+  it('refuses a concurrent call for the same record with another document', async () => {
+    const h = harness();
+    const { client } = h.open();
+    const [a, b] = await Promise.allSettled([client.commitRecord(1, ORDER, doc(1)), client.commitRecord(1, ORDER, doc(1, ORDER, 1))]);
+    expect(a).toMatchObject({ status: 'fulfilled', value: { hash: recordHash(doc(1)) } });
+    expect(b).toMatchObject({ status: 'rejected', reason: { code: 'record_conflict' } });
+    expect(h.ledger.messages(TOPIC)).toHaveLength(1);
+  });
+
   it('refuses the wrong writer, invalid documents and oversized ones before pinning', async () => {
     const h = harness();
     const agent = h.open().client;
