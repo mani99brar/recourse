@@ -1,8 +1,8 @@
 {
   "version": 1,
   "contracts": {
-    "claims": "0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
-    "vault": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
+    "claims": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
+    "vault": "0xA22fB188b49eddecc4f9DE22607e70E1d07Aea2e",
     "case": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8"
   },
   "peers": {
@@ -16,14 +16,16 @@
     "toHedera": "0x181dcf1000000000000000000000000000000000000000000000000000000000000249f00000000000000000000000000000000000000000000000000000000000000001"
   },
   "link": {
-    "claims": "0",
+    "claims": "5000000000000000000",
     "case": "0"
   },
   "feePoolWei": "10000000000000000",
   "association": {
-    "vault": "0.0.11329716",
-    "mirrorRows": "1",
-    "checkedAt": "2026-11-06T06:34:38Z"
+    "vault": "0.0.11336129",
+    "usdcMode": "mock",
+    "usdc": "0x6D6fb82e82E525B9c30619189EA8aF17117C3c73",
+    "mirrorRows": "none (mock USDC, not an HTS token)",
+    "checkedAt": "2026-11-06T08:32:44Z"
   },
   "sourcify": {},
   "lock": {},
