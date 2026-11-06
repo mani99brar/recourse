@@ -45,7 +45,8 @@ describe('pages render', () => {
     it(`case page for ${k}`, () => {
       const html = renderToString(<CaseView d={detail(k)} />);
       expect(html).toContain(STATUS_WORDS[k].title);
-      expect(html).toContain('does not send anything');
+      // With no wallet in the page there is nothing to connect, and the claim still reads in full.
+      expect(html).not.toContain('Connect wallet');
     });
   }
   it('shows a stuck claim with its next call', () => {

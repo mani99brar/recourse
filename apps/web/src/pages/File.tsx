@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { PrecheckResult, VaultToken } from '@recourse/shared';
+import { FileClaimAction } from '../actions/forms.js';
 import { Banner, Card, Loading, Pill, Row } from '../components.js';
 import { ApiFailure, getApi, usePoll, type Fresh } from '../lib/api.js';
 import { parseUsdc, usdc } from '../lib/format.js';
@@ -90,7 +91,7 @@ export function FilePage() {
     <>
       <h1>Check an order before filing</h1>
       <p className="lead">
-        Load the records of an order and see what the pre-check would say. This page only checks. It does not sign, send or file anything; a shop files through its own service.
+        Load the records of an order and see what the pre-check would say. The shop that took the order can then file the claim here: the page shows what filing will do, and the shop's own wallet signs. Checking needs no wallet.
       </p>
       <Banner fresh={params.data ?? undefined} error={params.error} token={token} />
       <Card title="1. The order">
@@ -158,6 +159,16 @@ export function FilePage() {
         </dl>
         <p className="muted small">The court fee comes back to you if the claim closes uncontested, expires, or is not drawn.</p>
       </Card>
+      {state.data && !state.data.claimId && (
+        <FileClaimAction
+          key={state.data.orderId}
+          orderId={state.data.orderId}
+          packedHeld={state.data.records.find((r) => r.kind === 4)?.held === true}
+          platform={platform.trim()}
+          netLoss={netLoss}
+          token={token}
+        />
+      )}
     </>
   );
 }

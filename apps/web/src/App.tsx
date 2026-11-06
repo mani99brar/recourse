@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { WalletBar } from './actions/WalletBar.js';
 import { CasePage } from './pages/Case.js';
 import { DocketPage } from './pages/Docket.js';
 import { FilePage } from './pages/File.js';
@@ -23,8 +24,9 @@ export function Shell({ hash }: { hash: string }) {
         <nav aria-label="Main">
           <a href="#/" aria-current={r.name === 'home' ? 'page' : undefined}>Claims</a>
           <a href="#/docket" aria-current={r.name === 'docket' ? 'page' : undefined}>Docket</a>
-          <a href="#/file" aria-current={r.name === 'file' ? 'page' : undefined}>Check an order</a>
+          <a href="#/file" aria-current={r.name === 'file' ? 'page' : undefined}>Check or file an order</a>
         </nav>
+        <WalletBar />
       </header>
       <main>
         {r.name === 'home' && <HomePage />}
@@ -34,7 +36,7 @@ export function Shell({ hash }: { hash: string }) {
         {r.name === 'file' && <FilePage />}
       </main>
       <footer>
-        <p>Read-only. Test network only; no real money. Amounts, names and ids come from the chains and the public records. Any value marked "sample" is a made-up example.</p>
+        <p>Test networks only; no real money. Reading needs no wallet. To act, your own browser wallet signs each step after you confirm it; this site never holds a key and never signs for you. Amounts, names and ids come from the chains and the public records. Any value marked "sample" is a made-up example.</p>
       </footer>
     </div>
   );

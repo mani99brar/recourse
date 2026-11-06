@@ -8,15 +8,35 @@ export class ApiFailure extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    /** The API's own sentence for people (v1 errors); null on the older `{ error: code }` form. */
+    readonly said: string | null = null,
+    /** v1 `error.details`: facts such as `field`, `closesAt`, `contester`, `revert`. */
+    readonly details: Record<string, unknown> = {},
   ) {
     super(code);
   }
 }
 
+/** An error body in either form: v1 `{ error: { code, message, details? } }` or the older `{ error: code }`. */
+export function failureFrom(status: number, body: unknown): ApiFailure {
+  const e = (body as { error?: unknown } | null | undefined)?.error;
+  if (typeof e === 'string') return new ApiFailure(status, e);
+  if (e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string') {
+    const { code, message, details } = e as { code: string; message?: unknown; details?: unknown };
+    return new ApiFailure(status, code, typeof message === 'string' ? message : null, details && typeof details === 'object' ? (details as Record<string, unknown>) : {});
+  }
+  return new ApiFailure(status, 'unreachable');
+}
+
+/** The full URL of an API path ("/claims/0x…" or "/v1/claims/0x…"). */
+export function apiUrl(path: string): string {
+  return `${BASE}${path}`;
+}
+
 export async function getApi<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, { signal: signal ?? null, headers: { accept: 'application/json' } });
-  const body = (await r.json().catch(() => ({}))) as { error?: string };
-  if (!r.ok) throw new ApiFailure(r.status, body.error ?? 'unreachable');
+  const r = await fetch(apiUrl(path), { signal: signal ?? null, headers: { accept: 'application/json' } });
+  const body = (await r.json().catch(() => ({}))) as unknown;
+  if (!r.ok) throw failureFrom(r.status, body);
   return body as T;
 }
 

@@ -26,7 +26,7 @@ export function HomePage() {
     <>
       <h1>Recourse</h1>
       <p className="lead">
-        When an AI shopping agent buys the wrong thing, a shop can file a claim and be paid from the agent company's deposit. This site shows every claim, read from the chains. It never signs or sends anything.
+        When an AI shopping agent buys the wrong thing, a shop can file a claim and be paid from the agent company's deposit. This site shows every claim, read from the chains. It never holds a key: when a party acts here, their own wallet signs.
       </p>
       <Banner fresh={data ?? undefined} error={error} />
       <Card title="Find a claim">
