@@ -91,6 +91,22 @@ export const COURT_PERIODS: Record<string, string> = {
   execution: 'Ruling being applied',
 };
 
+/**
+ * The plain sentence for a status. A ruling on its way back to Hedera gets its own words: the
+ * generic "stuck" text offers ending the claim, which would throw the ruling away.
+ */
+export function statusPlain(key: StatusKey, call: NextCall | null, courtState?: string): string {
+  if (call === 'relayRuling') {
+    return key === 'stuck'
+      ? "The court has ruled, but the ruling has not arrived on Hedera. Anyone can send it again. Ending the claim instead would throw the ruling away."
+      : 'The court has ruled. The ruling is being sent back to Hedera, where it decides the claim.';
+  }
+  if ((key === 'at_court' || key === 'refused_once') && call === null && courtState === 'relayed') {
+    return 'The court has ruled and the ruling is on its way back to Hedera, where it decides the claim.';
+  }
+  return STATUS_WORDS[key].plain;
+}
+
 /** Plain label for a status deadline. Never assumes a deadline exists. */
 export function deadlineLabel(key: StatusKey, call: NextCall | null): string {
   if (key === 'filed') return 'Expires if not pre-checked by';

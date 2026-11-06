@@ -170,6 +170,41 @@ describe('at court', () => {
     expect(deriveStatus(atCourt, null, waiting, LOCKED, T0 + LOCKED.stuckAfter + 1n).nextCall).toBe('resend');
   });
 
+  it('past the timeout, a ruling still on its way is never thrown away by advising expiry', () => {
+    const after = expiry + 1n;
+    const relayed = kase({ state: CaseState.Relayed, attempts: 1 });
+    const back = (executionState: ExecutionState, sentAt = after - 300n) => [msg({}), msg({ direction: 'toHedera', executionState, sentAt })];
+    const waitOnly = { statusKey: 'at_court', nextActor: 'none', nextCall: null, deadline: null };
+    // Relayed five minutes ago, not delivered yet (or delivery not read yet): wait for it.
+    expect(deriveStatus(atCourt, relayed, back(ExecutionState.Untouched), LOCKED, after)).toEqual(waitOnly);
+    expect(deriveStatus(atCourt, relayed, back(ExecutionState.InProgress), LOCKED, after)).toEqual(waitOnly);
+    expect(deriveStatus(atCourt, relayed, [msg({})], LOCKED, after)).toEqual(waitOnly);
+    // Ruled on Arbitrum and not relayed: the keeper sends it back.
+    expect(deriveStatus(atCourt, kase({ state: CaseState.Ruled, attempts: 1 }), [msg({})], LOCKED, after)).toEqual({
+      statusKey: 'at_court',
+      nextActor: 'keeper',
+      nextCall: 'relayRuling',
+      deadline: null,
+    });
+    expect(deriveStatus(atCourt, kase({ state: CaseState.Ruled, attempts: 2 }), [msg({})], LOCKED, after)).toMatchObject({
+      statusKey: 'refused_once',
+      nextCall: 'relayRuling',
+    });
+    // The return message has waited past stuckAfter: anyone may send it again, still not expire.
+    expect(deriveStatus(atCourt, relayed, back(ExecutionState.Untouched, after - LOCKED.stuckAfter - 1n), LOCKED, after)).toEqual({
+      statusKey: 'stuck',
+      nextActor: 'anyone',
+      nextCall: 'relayRuling',
+      deadline: null,
+    });
+    // Nothing on its way: a failed return message, one Hedera ignored, or a case still open.
+    expect(deriveStatus(atCourt, relayed, back(ExecutionState.Failure), LOCKED, after).nextCall).toBe('expireClaim');
+    expect(deriveStatus(atCourt, relayed, back(ExecutionState.Success), LOCKED, after).nextCall).toBe('expireClaim');
+    expect(deriveStatus(atCourt, kase({ state: CaseState.Opened, attempts: 1 }), [msg({})], LOCKED, after).nextCall).toBe('expireClaim');
+    // Before the timeout nothing changes.
+    expect(deriveStatus(atCourt, relayed, back(ExecutionState.Untouched), LOCKED, expiry)).toMatchObject({ statusKey: 'at_court', nextActor: 'none' });
+  });
+
   it('a failed return leg beside a successful outbound one is stuck', () => {
     const views = [msg({}), msg({ direction: 'toHedera', executionState: ExecutionState.Failure })];
     const c = kase({ state: CaseState.Relayed, attempts: 1 });

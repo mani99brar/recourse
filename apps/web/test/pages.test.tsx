@@ -49,6 +49,16 @@ describe('pages render', () => {
   it('shows a stuck claim with its next call', () => {
     expect(renderToString(<CaseView d={detail('stuck', { nextCall: 'resend' })} />)).toContain('resend the message');
   });
+  it('a ruling on its way back is never shown with advice to end the claim', () => {
+    const stuckBack = renderToString(<CaseView d={detail('stuck', { nextCall: 'relayRuling' })} />);
+    expect(stuckBack).toContain('send the ruling back');
+    expect(stuckBack).not.toContain('end the claim after the timeout');
+    expect(stuckBack).toContain('throw the ruling away');
+    const court = detail('at_court').court;
+    const inFlight = renderToString(<CaseView d={detail('at_court', { nextActor: 'none', nextCall: null, court: { ...court, state: 'relayed' } })} />);
+    expect(inFlight).toContain('on its way back to Hedera');
+    expect(inFlight).not.toContain('end the claim');
+  });
   it('shows an unpaid shortfall apart from paid', () => {
     const html = renderToString(<CaseView d={detail('settled', { money: { owed: '68000000', paid: '20000000', credited: '20000000', notCovered: '48000000', escrow: { amount: '3000000', fate: 'kept_by_pool' }, projected: false } })} />);
     expect(html).toContain('48.00 USDC');

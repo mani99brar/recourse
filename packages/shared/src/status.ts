@@ -161,6 +161,20 @@ function caseDead(c: CaseView | null, p: LiveParams, now: bigint): boolean {
   return false;
 }
 
+/**
+ * True while a ruling can still reach Hedera and settle an AtCourt claim: the case is Ruled on
+ * Arbitrum and not yet relayed, or it was relayed and the latest return message is not read yet,
+ * Untouched or InProgress. A ruling that lands before `expireClaim` applies even after the
+ * timeout, so expiry would throw it away (the keeper waits in the same state). A failed return
+ * message, or one that succeeded while the claim stayed AtCourt (Hedera ignored it), is not pending.
+ */
+function rulingOnItsWay(c: CaseView | null, back: BridgeView | undefined): boolean {
+  if (back !== undefined && (back.executionState === ExecutionState.Untouched || back.executionState === ExecutionState.InProgress)) return true;
+  if (c === null) return false;
+  if (c.state === CaseState.Ruled) return true;
+  return c.state === CaseState.Relayed && back === undefined;
+}
+
 /** Status of one claim. First matching row wins. */
 export function deriveStatus(
   claim: ClaimForStatus,
@@ -190,9 +204,18 @@ export function deriveStatus(
   if (s === ClaimStatus.AtCourt) {
     const expiry = claim.preCheckedAt + p.claimTimeout;
     const expired = now > expiry;
-    const back = legStuck(latest(bridgeViews, 'toHedera'), p, now);
+    const lastBack = latest(bridgeViews, 'toHedera');
+    const back = legStuck(lastBack, p, now);
     const out = legStuck(latest(bridgeViews, 'toArbitrum'), p, now);
     const dead = caseDead(caseView, p, now);
+    // Past the timeout with a ruling still on its way: never advise expiry, which would discard it.
+    // No deadline either: the timeout has passed, and showing it reads as "can be ended after".
+    if (expired && !dead && rulingOnItsWay(caseView, lastBack)) {
+      if (back === 'waiting') return view('stuck', 'anyone', 'relayRuling');
+      const key: StatusKey = caseView !== null && caseView.attempts === 2 ? 'refused_once' : 'at_court';
+      if (caseView !== null && caseView.state === CaseState.Ruled) return view(key, 'keeper', 'relayRuling');
+      return view(key, 'none', null);
+    }
     if (back || out || dead || expired) {
       let call: NextCall;
       if (expired || dead) call = 'expireClaim';
