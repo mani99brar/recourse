@@ -2,6 +2,7 @@
 // `@recourse/shared/node`.
 
 export * from './addresses.js';
+export * from './priceAsset.js';
 export * from './bytes.js';
 export * from './abi/erc8004.js';
 export * from './abi/kleros.js';

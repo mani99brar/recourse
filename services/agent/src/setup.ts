@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, getAddress, http, type Address } from 'viem';
 import { hederaTestnet } from 'viem/chains';
-import { addressBook, erc8004IdentityAbi, partyByRole, type Parties } from '@recourse/shared';
+import { addressBook, erc8004IdentityAbi, partyByRole, priceAssetIdOf, priceAssetOf, type Parties } from '@recourse/shared';
 import { loadSigner, readParties } from '@recourse/shared/node';
 import {
   Journal,
@@ -98,7 +98,8 @@ export async function openAgent(env: Env, log: Logger, options: { shop?: ShopTar
     mirror: records.mirror,
     journal,
     limits: readLimits(env),
-    asset: (env.PRICE_ASSET ?? 'usdc').toLowerCase() === 'hbar' ? '0.0.0' : addressBook.hedera.usdc.tokenId,
+    // The same PRICE_ASSET rule as the shop's, so the agent expects the asset the 402 names.
+    asset: priceAssetIdOf(priceAssetOf(env)),
     log,
   });
   return {

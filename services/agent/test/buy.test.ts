@@ -176,3 +176,51 @@ describe('terms that change', () => {
     expect(messages(w).some((m) => m.kind === RecordKind.Ordered)).toBe(false);
   });
 });
+
+describe('paid in HBAR', () => {
+  test('the limits compare the micro-USDC equivalent; the records keep the tinybar amount', async () => {
+    w = await world({ priceAsset: 'hbar' });
+    const { buyer } = w.open();
+    // 1 HBAR: within the 5 USDC spend limit at 1 HBAR per USDC, though 100000000 tinybar is above every limit.
+    expect((await buyer.preview({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP })).decision).toEqual({ kind: 'mandate' });
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'done', orderId });
+    expect(w.fake.settled).toHaveLength(1);
+    expect(w.fake.settled[0]).toMatchObject({ amount: '100000000', asset: '0.0.0', payer: AGENT });
+
+    const msgs = messages(w).filter((m) => m.orderId === orderId);
+    const [, shown, approval, ordered] = await Promise.all(msgs.map((m) => docAt(w!, m.cid)));
+    expect(shown).toMatchObject({ attrs: { price: '1.00 HBAR' }, changes: [], terms: { amount: '100000000', asset: '0.0.0' } });
+    expect(approval).toMatchObject({ approval: 'approved', approvalBasis: 'mandate', amount: '100000000', asset: '0.0.0' });
+    expect(ordered).toMatchObject({ amount: '100000000', asset: '0.0.0', attrs: { price: '1.00 HBAR' } });
+    // The mandate states its limits in micro-USDC, unscaled.
+    expect(await docAt(w, approval!.mandateCid as string)).toMatchObject({ spendLimitUsdc: '5000000', maxOrderUsdc: '25000000', dailyCapUsdc: '50000000' });
+  });
+
+  test('the maximum and the daily cap hold at the micro-USDC equivalent', async () => {
+    w = await world({ priceAsset: 'hbar', limits: { maxOrder: 5_500_000n, dailyCap: 3_000_000n } });
+    const { buyer } = w.open();
+    const big = buyer.draft({ sku: 'hoodie-grey-m', quantity: 1, asked: { brand: 'Northwind' } });
+    expect(await buyer.run(big)).toMatchObject({ state: 'refused', reason: 'above_max_order' });
+    // Two 1.5 HBAR orders reach the 3 USDC cap exactly; the paid one counts as 1.5 USDC, not 150000000.
+    const first = buyer.draft({ sku: 'tee-navy-m', quantity: 1, asked: { brand: 'Northwind' } });
+    expect((await buyer.run(first)).state).toBe('done');
+    const second = buyer.draft({ sku: 'tee-navy-m', quantity: 1, asked: { brand: 'Northwind' } });
+    expect((await buyer.run(second)).state).toBe('done');
+    const third = buyer.draft({ sku: 'cap-red', quantity: 1, asked: { brand: 'Northwind' } });
+    expect(await buyer.run(third)).toMatchObject({ state: 'refused', reason: 'daily_cap' });
+    expect(w.fake.settled.map((s) => [s.amount, s.asset])).toEqual([
+      ['150000000', '0.0.0'],
+      ['150000000', '0.0.0'],
+    ]);
+  });
+
+  test('6 HBAR is above the 5 USDC spend limit and waits for the buyer', async () => {
+    w = await world({ priceAsset: 'hbar' });
+    const { buyer } = w.open();
+    const orderId = buyer.draft({ sku: 'hoodie-grey-m', quantity: 1, asked: { brand: 'Northwind', price: '7.00' } });
+    expect((await buyer.run(orderId)).state).toBe('awaiting_approval');
+    expect(buyer.pendingApproval(orderId)!.terms).toMatchObject({ amount: '600000000', asset: '0.0.0' });
+    expect(w.fake.settled).toHaveLength(0);
+  });
+});

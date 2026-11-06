@@ -17,13 +17,14 @@
 // write to it; readers filter by payer account). Paid by the ops account.
 // agentURI: the shop's `<SHOP_PUBLIC_URL>/.well-known/agent-registration.json` when the public URL
 // is set; otherwise an inline `data:application/json;base64,` document, changed later with
-// `--update-uris`. The agent company's is inline until a pinned document exists.
+// `--update-uris`. The inline shop document names the x402 asset of PRICE_ASSET, so a change of
+// asset needs `--update-uris` too. The agent company's is inline until a pinned document exists.
 
 import { parseArgs } from 'node:util';
 import { Client, PrivateKey, TopicCreateTransaction } from '@hiero-ledger/sdk';
 import { createPublicClient, createWalletClient, http, parseEventLogs, type Address, type Hex, type PrivateKeyAccount } from 'viem';
 import { hederaTestnet } from 'viem/chains';
-import { accountIdOf, addressBook, erc8004IdentityAbi } from '@recourse/shared';
+import { accountIdOf, addressBook, erc8004IdentityAbi, priceAssetIdOf, priceAssetOf } from '@recourse/shared';
 import { loadKeyBytes, loadSigner } from '@recourse/shared/node';
 import {
   MirrorClient,
@@ -66,7 +67,7 @@ function shopUri(env: Env, payTo: string, agentId?: string): { uri: string; kind
     name: displayNameOf('shop', env),
     x402BaseUrl: `${base}/x402/`,
     payTo,
-    asset: addressBook.hedera.usdc.tokenId,
+    asset: priceAssetIdOf(priceAssetOf(env)),
     network: 'hedera:testnet',
     ...(agentId ? { agentId } : {}),
   });
@@ -112,7 +113,8 @@ async function main(): Promise<number> {
     checkAccount(mirror, { role: 'shop', accountId: ids.shop, minTinybar: 1n * HBAR, evmAddress: shop.address }),
   ]);
   const report = await Promise.all([
-    checkAccount(mirror, { role: 'agent', accountId: ids.agent, minTinybar: 1n * HBAR, evmAddress: agentAddress, usdc: { minBalance: 1n } }),
+    // Paying for orders in HBAR, the agent needs no USDC.
+    checkAccount(mirror, { role: 'agent', accountId: ids.agent, minTinybar: 1n * HBAR, evmAddress: agentAddress, ...(priceAssetOf(env) === 'hbar' ? {} : { usdc: { minBalance: 1n } }) }),
     checkAccount(mirror, { role: 'shop (usdc)', accountId: ids.shop, usdc: {} }),
     checkAccount(mirror, { role: 'platform (usdc)', accountId: ids.platform, usdc: {} }),
     ...(facilitatorId !== undefined && facilitatorAddress !== undefined

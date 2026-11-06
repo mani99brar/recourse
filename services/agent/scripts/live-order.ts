@@ -1,12 +1,13 @@
 // One whole order on Hedera testnet, the live counterpart of local-demo, built from the same pieces:
 //
-//   agent checkout: asked, shown, approval -> x402 payment (USDC) -> ordered
+//   agent checkout: asked, shown, approval -> x402 payment (USDC, or HBAR when PRICE_ASSET=hbar) -> ordered
 //   shop: packed      buyer: arrived, complaint to the shop      shop: fileClaim on RecourseClaims
 //
 // Dry run by default: checks the accounts, the records topic, the keys, the claims deployment and
 // the court fee, and shows the approval text and how the spend limits decide it; nothing is
 // journaled, written or paid. `--send` runs it for real, step by step; a rerun with `--order <id>`
-// carries on where it stopped (every step is journaled and idempotent).
+// carries on where it stopped (every step is journaled and idempotent). The court fee is USDC from
+// the shop in either mode.
 //
 //   pnpm --filter @recourse/agent live-order [--sku tee-navy-l] [--local-shop [--facilitator N]]
 //                                           [--through order|pack|report|claim] [--send] [--order <id>]
@@ -18,7 +19,7 @@
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { erc20Abi, getAddress, type Hex } from 'viem';
-import { addressBook, claimIdOf, hederaAccountIdOf, partyByRole, type Attrs } from '@recourse/shared';
+import { addressBook, claimIdOf, hederaAccountIdOf, partyByRole, priceAssetOf, type Attrs } from '@recourse/shared';
 import { loadSigner } from '@recourse/shared/node';
 import {
   Journal,
@@ -32,17 +33,20 @@ import {
   ipfsOptionsFromEnv,
   mirrorFromEnv,
   openRecordsClient,
+  readJournal,
   recordsTopicId,
   withFileLock,
 } from '@recourse/records';
 import type { RunningShop } from '../../shop/src/boot.js';
+import { basketPrice, itemBySku } from '../../shop/src/catalog.js';
 import { chainClients, loadAbi, readHederaDeployment } from '../../shop/src/chain.js';
 import { claimInputFor } from '../../shop/src/claim-input.js';
 import { ClaimFiler, type FilingJournalRow } from '../../shop/src/filing.js';
 import type { ShopJournalRow } from '../../shop/src/orders.js';
 import { packOrder } from '../../shop/src/pack.js';
+import type { AgentRow } from '../src/buy.js';
 import { hashscanLink, loadBuyer, withOrdersLock } from '../src/cli.js';
-import { openAgent, partiesOrNull } from '../src/setup.js';
+import { ORDERS_JOURNAL, openAgent, partiesOrNull } from '../src/setup.js';
 
 const STEPS = ['order', 'pack', 'report', 'claim'] as const;
 type Step = (typeof STEPS)[number];
@@ -87,8 +91,21 @@ async function main(): Promise<number> {
     // Checks every step needs, before anything is written.
     const mirror = new MirrorClient(env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl);
     const agentParty = partyByRole(parties, 'agent');
+    // 1 HBAR covers the agent's record fees (the facilitator pays the transfer's fee). Until the
+    // order's payment is signed the agent must also hold its price, in HBAR (and then no USDC) when
+    // paying in HBAR. A rerun with --order prices the journaled basket, and once a payment is signed
+    // its money may already have left, so only the fees are checked.
+    const orderRows = values.order ? readJournal<AgentRow>(ORDERS_JOURNAL).rows.filter((r) => 'orderId' in r && r.orderId === values.order) : [];
+    const drafted = orderRows.find((r): r is Extract<AgentRow, { type: 'draft' }> => r.type === 'draft');
+    if (values.order && !drafted) throw new Error(`--order: no draft for ${values.order} in ${ORDERS_JOURNAL}`);
+    const basket = drafted ? { sku: drafted.sku, quantity: drafted.quantity } : { sku: values.sku!, quantity: 1 };
+    const item = itemBySku(basket.sku);
+    if (!item) throw new Error(`--sku: no item ${basket.sku}`);
+    const priceAsset = priceAssetOf(env);
+    const toPay = orderRows.some((r) => r.type === 'pay_signed' || r.type === 'paid') ? 0n : BigInt(basketPrice(item, basket.quantity, priceAsset).amount);
+    const agentNeeds = priceAsset === 'hbar' ? { minTinybar: 1n * HBAR + toPay } : { minTinybar: 1n * HBAR, usdc: { minBalance: toPay } };
     const checks = await Promise.all([
-      checkAccount(mirror, { role: 'agent', accountId: hederaAccountIdOf(agentParty), minTinybar: 1n * HBAR, usdc: { minBalance: 2_000_000n } }),
+      checkAccount(mirror, { role: 'agent', accountId: hederaAccountIdOf(agentParty), ...agentNeeds }),
       checkAccount(mirror, { role: 'shop', accountId: hederaAccountIdOf(shopParty), minTinybar: 1n * HBAR, usdc: {} }),
     ]);
     for (const c of checks) console.log(describeCheck(c));

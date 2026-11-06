@@ -1,6 +1,7 @@
-// x402 resource server for the shop: Hedera `exact` scheme, USDC on hedera:testnet, payment settled
-// before the route handler runs. The handler learns the settlement (tx id, payer) through
-// `SettlementBook`, filled by an after-settle hook keyed by the request's payment header.
+// x402 resource server for the shop: Hedera `exact` scheme on hedera:testnet, in USDC or HBAR
+// (PRICE_ASSET), payment settled before the route handler runs. The handler learns the settlement
+// (tx id, payer) through `SettlementBook`, filled by an after-settle hook keyed by the request's
+// payment header.
 
 import { paymentMiddlewareFromHTTPServer } from '@x402/express';
 import {
@@ -13,12 +14,12 @@ import {
 import type { SettleResponse } from '@x402/core/types';
 import { inspectHederaTransaction } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/server';
-import { addressBook } from '@recourse/shared';
+import { HBAR_ASSET_ID, addressBook } from '@recourse/shared';
 import type { Request, RequestHandler } from 'express';
 
 export const NETWORK = 'hedera:testnet' as const;
 export const USDC_TOKEN_ID = addressBook.hedera.usdc.tokenId;
-export const HBAR_ASSET_ID = '0.0.0';
+export { HBAR_ASSET_ID };
 /** Settle before the handler, so a handler only ever runs for a payment that is final on chain. */
 export const PAYMENT_FLOW = 'upfront' as const;
 

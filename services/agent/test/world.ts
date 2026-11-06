@@ -9,7 +9,7 @@ import { PrivateKey } from '@hiero-ledger/sdk';
 import { createClientHederaSigner } from '@x402/hedera';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { getAddress, type Hex } from 'viem';
-import type { Parties } from '@recourse/shared';
+import { priceAssetIdOf, type Parties, type PriceAsset } from '@recourse/shared';
 import {
   Journal,
   MemoryIpfs,
@@ -21,7 +21,6 @@ import {
   type MemorySubmitterOptions,
   type RecordsJournalRow,
 } from '@recourse/records';
-import { USDC_TOKEN_ID } from '../../shop/src/payments.js';
 import { fakeFacilitator } from '../../shop/test/fake-facilitator.js';
 import { TEST_SHOP_ACCOUNT, TEST_SHOP_ADDRESS, startTestShop } from '../../shop/test/helpers.js';
 import { Buyer, type AgentRow } from '../src/buy.js';
@@ -39,12 +38,13 @@ export const PARTIES: Parties = [
 
 export const ASKED_CAP = { brand: 'Northwind', size: 'One size', colour: 'Red', quantity: '1', price: '2.00', merchant: 'Test Shop' };
 
-export async function world(options: { limits?: Partial<Limits> } = {}) {
+export async function world(options: { limits?: Partial<Limits>; priceAsset?: PriceAsset } = {}) {
   const fake = fakeFacilitator();
   const ledger = new MemoryLedger(Math.floor(Date.now() / 1000));
   ledger.createTopic(TOPIC);
   const ipfs = new MemoryIpfs();
-  const shop = await startTestShop([fake], {}, { parties: PARTIES, reader: new TopicReader(ledger.mirror(), TOPIC) });
+  const priceAsset = options.priceAsset ?? 'usdc';
+  const shop = await startTestShop([fake], { priceAsset }, { parties: PARTIES, reader: new TopicReader(ledger.mirror(), TOPIC) });
   const dir = mkdtempSync(join(tmpdir(), 'agent-test-'));
   const payerKey = PrivateKey.generateECDSA();
   const agentAccount = privateKeyToAccount(generatePrivateKey());
@@ -83,7 +83,7 @@ export async function world(options: { limits?: Partial<Limits> } = {}) {
       mirror,
       journal: agentJournal,
       limits,
-      asset: USDC_TOKEN_ID,
+      asset: priceAssetIdOf(priceAsset),
       log: memoryLogger(),
       now: () => ledger.clock,
       sleep,

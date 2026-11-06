@@ -3,14 +3,14 @@
 
 import { existsSync } from 'node:fs';
 import type { Address } from 'viem';
-import { addressBook, partyByRole } from '@recourse/shared';
+import { addressBook, partyByRole, priceAssetOf, type PriceAsset } from '@recourse/shared';
 import { readParties } from '@recourse/shared/node';
 import { displayNameOf, hederaAccountOf, recordsTopicId } from '@recourse/records';
 import { parseFacilitatorUrls } from './facilitators.js';
 
 type Env = Record<string, string | undefined>;
 
-export type PriceAsset = 'usdc' | 'hbar';
+export type { PriceAsset };
 export type StandingCheck = 'off' | 'vault';
 
 export interface ShopConfig {
@@ -34,8 +34,7 @@ export interface ShopConfig {
 export function loadShopConfig(env: Env = process.env, defaults: { stateDir: string }): ShopConfig {
   const port = Number(env.SHOP_PORT ?? '8720');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('SHOP_PORT: not a port number');
-  const priceAsset = (env.PRICE_ASSET ?? 'usdc').toLowerCase();
-  if (priceAsset !== 'usdc' && priceAsset !== 'hbar') throw new Error('PRICE_ASSET: expected usdc or hbar');
+  const priceAsset = priceAssetOf(env);
   const standingCheck = (env.SHOP_STANDING_CHECK ?? 'off').toLowerCase();
   if (standingCheck !== 'off' && standingCheck !== 'vault') throw new Error('SHOP_STANDING_CHECK: expected off or vault');
   const shop = hederaAccountOf('shop', env);

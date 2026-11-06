@@ -37,6 +37,7 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 | CCIP finality | Full finality, plain receivers. |
 | USDC association | Explicit, after deploy, checked on the mirror node. |
 | Facilitator | x402.org first, then Blocky402, then self-hosted. |
+| Order payments | x402 orders on the testnet demo are priced and paid in HBAR (1 HBAR per 1 USDC of list price), set by PRICE_ASSET=hbar. Agent spend limits stay in USDC and the HBAR amount is converted before comparison. The deposit, court fee and payouts stay in Circle USDC on the vault. |
 | Privacy | Record docs are public by CID (disclosed). Buyer fields are salted. The docket is de-identified. |
 | Contest | The losing side contests, within a 30-minute window. |
 | Good standing | The shop checks `inGoodStanding` before it accepts an order. |

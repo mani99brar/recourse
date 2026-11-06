@@ -1,5 +1,6 @@
-// One paid request, no human: the agent pays the shop's connectivity-check route (0.05 USDC) over
-// x402 on hedera:testnet and prints the Hedera transaction id and its HashScan link.
+// One paid request, no human: the agent pays the shop's connectivity-check route (0.05 USDC, or
+// 0.1 HBAR when PRICE_ASSET=hbar) over x402 on hedera:testnet and prints the Hedera transaction id
+// and its HashScan link.
 //
 //   pnpm --filter @recourse/agent pay-once                       # dry run: checks and 402s only
 //   pnpm --filter @recourse/agent pay-once --send                # pay, walking the facilitators
@@ -14,15 +15,15 @@
 // so the check is never paid twice. `--shop-url` pays a running shop instead, through whichever
 // facilitator it uses.
 //
-// The payment is real: USDC moves from the agent's account to the shop's account. Checks first:
-// both accounts exist with a key and are associated with USDC, the agent holds enough, and the 402
-// is `exact` on hedera:testnet, in the expected asset, to the shop's 0.0.N account, for at most the
-// check price. The signed transaction id is journaled before sending.
+// The payment is real: USDC (or HBAR) moves from the agent's account to the shop's account. Checks
+// first: both accounts exist with a key and, for USDC, are associated with it, the agent holds
+// enough, and the 402 is `exact` on hedera:testnet, in the expected asset, to the shop's 0.0.N
+// account, for at most the check price. The signed transaction id is journaled before sending.
 
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { addressBook } from '@recourse/shared';
+import { HBAR_ASSET_ID, addressBook, priceAssetIdOf, priceAssetOf } from '@recourse/shared';
 import { Journal, MirrorClient, checkAccount, createLogger, describeCheck, hederaAccountOf, validStartSeconds } from '@recourse/records';
 import { loadAgentPayer, type AgentPayer } from '../src/hedera-signer.js';
 import { PAYMENT_DEAD_AFTER_S, PaymentRefused, chooseRequirement, payExactly, probe402, termsOf } from '../src/x402-pay.js';
@@ -109,7 +110,7 @@ async function confirm(ctx: Context, txId: string, payTo: string, amount: bigint
     const tx = await ctx.mirror.transaction(txId).catch(() => null);
     if (tx) {
       const moved =
-        ctx.asset === '0.0.0'
+        ctx.asset === HBAR_ASSET_ID
           ? tx.transfers.filter((t) => t.account === payTo).reduce((s, t) => s + t.amount, 0n)
           : tx.tokenTransfers.filter((t) => t.tokenId === ctx.asset && t.account === payTo).reduce((s, t) => s + t.amount, 0n);
       console.log(`mirror: ${tx.result}, ${moved} of ${ctx.asset} to ${payTo}, consensus ${tx.consensusTimestamp}`);
@@ -135,8 +136,9 @@ async function main(): Promise<number> {
   const log = createLogger('agent');
   const send = values.send ?? false;
   console.log(send ? 'pay-once: SEND (a real payment on Hedera testnet)' : 'pay-once: dry run (nothing is paid)');
-  const hbar = (env.PRICE_ASSET ?? 'usdc').toLowerCase() === 'hbar';
-  const asset = hbar ? '0.0.0' : addressBook.hedera.usdc.tokenId;
+  const priceAsset = priceAssetOf(env);
+  const hbar = priceAsset === 'hbar';
+  const asset = priceAssetIdOf(priceAsset);
   const maxAmount = hbar ? MAX_PING_TINYBAR : MAX_PING_USDC;
   const mirror = new MirrorClient(env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl);
 
@@ -144,7 +146,7 @@ async function main(): Promise<number> {
   const shopAccount = hederaAccountOf('shop', env).accountId;
   log.info('accounts', { agent: payer.accountId, shop: shopAccount, source: payer.source });
   const checks = await Promise.all([
-    checkAccount(mirror, { role: 'agent', accountId: payer.accountId, minTinybar: 1n, ...(hbar ? {} : { usdc: { minBalance: maxAmount } }) }),
+    checkAccount(mirror, { role: 'agent', accountId: payer.accountId, ...(hbar ? { minTinybar: maxAmount } : { minTinybar: 1n, usdc: { minBalance: maxAmount } }) }),
     checkAccount(mirror, { role: 'shop', accountId: shopAccount, ...(hbar ? {} : { usdc: {} }) }),
   ]);
   for (const c of checks) console.log(describeCheck(c));

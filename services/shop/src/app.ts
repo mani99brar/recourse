@@ -11,7 +11,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
 import type { FacilitatorClient, RoutesConfig } from '@x402/core/server';
-import { isHex32, orderIdOf, partyByAddress, type Parties } from '@recourse/shared';
+import { isHex32, orderIdOf, partyByAddress, priceAssetIdOf, type Parties } from '@recourse/shared';
 import { shopRegistration, type Journal, type Logger, type TopicReader } from '@recourse/records';
 import {
   CATALOG,
@@ -200,7 +200,7 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
         name: config.displayName,
         x402BaseUrl: `${base}/x402/`,
         payTo: config.payTo,
-        asset: config.priceAsset === 'hbar' ? HBAR_ASSET_ID : USDC_TOKEN_ID,
+        asset: priceAssetIdOf(config.priceAsset),
         network: NETWORK,
         ...(deps.agentId ? { agentId: deps.agentId } : {}),
       }),
@@ -212,7 +212,7 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
       merchant: config.displayName,
       network: NETWORK,
       payTo: config.payTo,
-      asset: config.priceAsset === 'hbar' ? HBAR_ASSET_ID : USDC_TOKEN_ID,
+      asset: priceAssetIdOf(config.priceAsset),
       items: CATALOG.map((item) => ({
         sku: item.sku,
         title: item.title,

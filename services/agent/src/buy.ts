@@ -18,7 +18,7 @@
 import type { Address, Hex, LocalAccount } from 'viem';
 import { bytesToHex, hexToBytes } from 'viem';
 import type { ClientHederaSigner } from '@x402/hedera';
-import { RecordKind, newOrderNonce, orderIdOf, recordHash, type Attrs, type RecordKind as Kind } from '@recourse/shared';
+import { RecordKind, newOrderNonce, orderIdOf, recordHash, toMicroUsdcEquivalent, type Attrs, type RecordKind as Kind } from '@recourse/shared';
 import { render, type RenderInput } from '@recourse/renderer';
 import { validStartSeconds, type Journal, type Logger, type MirrorClient, type Pinned, type RecordsClient } from '@recourse/records';
 import { signApproval, signReport } from './approval.js';
@@ -224,7 +224,10 @@ export class Buyer {
     return `${this.deps.shop.x402Base.replace(/\/+$/, '')}/orders/${draft.sku}/${draft.quantity}`;
   }
 
-  /** Micro-USDC committed today by orders that are paid or may still be paid, other than `except`. */
+  /**
+   * Micro-USDC committed today by orders that are paid or may still be paid, other than `except`.
+   * An HBAR amount counts at its micro-USDC equivalent.
+   */
   private spentToday(day: string, except: Hex): bigint {
     let sum = 0n;
     for (const id of this.orders()) {
@@ -234,7 +237,7 @@ export class Buyer {
       const end = this.rowsOf(id).find((r) => r.type === 'refused' || r.type === 'abandoned' || (r.type === 'approved' && r.decision !== 'approved'));
       if (end) continue;
       const probed = this.last(id, 'probed');
-      if (probed && this.last(id, 'approved')) sum += BigInt(probed.terms.amount);
+      if (probed && this.last(id, 'approved')) sum += toMicroUsdcEquivalent(BigInt(probed.terms.amount), probed.terms.asset);
     }
     return sum;
   }
@@ -288,7 +291,7 @@ export class Buyer {
     const terms = { network: requirement.network, asset: requirement.asset, amount: requirement.amount, payTo: requirement.payTo };
     const offer = await this.offerOf(draft);
     const r = render({ orderId, asked: input.asked, offer, ...terms });
-    const decision = decideLimit(BigInt(terms.amount), this.spentToday(draft.day, orderId), this.deps.limits);
+    const decision = decideLimit(toMicroUsdcEquivalent(BigInt(terms.amount), terms.asset), this.spentToday(draft.day, orderId), this.deps.limits);
     return { orderId, url, terms, offer, text: r.text, textHash: r.textHash, changes: r.changes, decision };
   }
 
@@ -328,7 +331,8 @@ export class Buyer {
 
     let approved = this.last(orderId, 'approved');
     if (!approved) {
-      const amount = BigInt(probed.terms.amount);
+      // The limits are micro-USDC; the recorded amount stays what the 402 asked for.
+      const amount = toMicroUsdcEquivalent(BigInt(probed.terms.amount), probed.terms.asset);
       const decision = decideLimit(amount, this.spentToday(draft.day, orderId), this.deps.limits);
       if (decision.kind === 'refused') {
         this.write({ type: 'refused', at: iso(), orderId, reason: decision.reason });

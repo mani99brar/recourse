@@ -41,12 +41,12 @@ Hedera testnet funding is per address: the faucet pays at most 10 HBAR to one ad
 | ops-hedera | 10 | keeper sends, HCS topic, CCIP fees if paid natively |
 | precheck-signer | 3 | `recordPreCheck` sends |
 | shop | 3 | filing and credit withdrawal |
-| agent | 2 | |
+| agent | 2, or 8 with `PRICE_ASSET=hbar` | record fees; with `PRICE_ASSET=hbar` it also pays the x402 orders in HBAR (1 to 6 HBAR each) |
 | platform | 1 | |
 | scheme | 1 | |
 | buyer, facilitator | 0 | not needed; the public facilitators are tried first |
 
-USDC (Circle's Hedera faucet takes only existing `0.0.N` ids and gives 20 USDC per address): the platform deposits 18 of its 20; the shop needs about 1 per claim (the court fee); the agent's daily cap is 15 USDC with orders of 2 to 3 USDC. New accounts have `max_automatic_token_associations = -1`, so no association step is needed; `ops/fund/04-associate-usdc.sh` is only a fallback.
+USDC (Circle's Hedera faucet takes only existing `0.0.N` ids and gives 20 USDC per address): the platform deposits 18 of its 20; the shop needs about 1 per claim (the court fee); the agent's daily cap is 15 USDC with orders of 1 to 6 USDC; when orders are paid in HBAR (`PRICE_ASSET=hbar`) the agent needs no USDC, and an HBAR order counts against the cap at 1 USDC per HBAR. New accounts have `max_automatic_token_associations = -1`, so no association step is needed; `ops/fund/04-associate-usdc.sh` is only a fallback.
 
 Accounts so far: deployer 0.0.11329546, ops-hedera 0.0.11329551, platform 0.0.11329672, shop 0.0.11329680 and agent 0.0.11329682 exist and are complete. precheck-signer, scheme, buyer and facilitator have no account yet. Run `ops/fund/balances.sh` for the current picture.
 

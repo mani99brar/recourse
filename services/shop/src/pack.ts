@@ -9,7 +9,7 @@ import { itemBySku, offerAttrs } from './catalog.js';
 import { OrderBook, type ShopJournalRow } from './orders.js';
 import { HBAR_ASSET_ID } from './payments.js';
 
-/** Price text for a settled amount: "1.50 USDC" or "150 HBAR". */
+/** Price text for a settled amount: "1.5 USDC" or, for 150000000 tinybar, "1.5 HBAR". */
 export function chargedPrice(amount: string, asset: string): string {
   return asset === HBAR_ASSET_ID ? `${formatUnits(BigInt(amount), 8)} HBAR` : `${formatUnits(BigInt(amount), 6)} USDC`;
 }

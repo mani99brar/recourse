@@ -10,6 +10,7 @@ import type { PaymentRequired, PaymentRequirements, SettleResponse } from '@x402
 import { inspectHederaTransaction, type ClientHederaSigner } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/client';
 import { wrapFetchWithPayment } from '@x402/fetch';
+import { HBAR_ASSET_ID } from '@recourse/shared';
 
 export const NETWORK = 'hedera:testnet' as const;
 const ACCOUNT_ID = /^0\.0\.\d+$/;
@@ -236,7 +237,7 @@ function checkSignedTransfer(
 ): void {
   if (info.hasNonTransferOperations) throw new PaymentRefused('bad_transfer', 'signed transaction does more than transfer');
   const amount = BigInt(approved.amount);
-  const transfers = approved.asset === '0.0.0' ? info.hbarTransfers : (info.tokenTransfers[approved.asset] ?? []);
+  const transfers = approved.asset === HBAR_ASSET_ID ? info.hbarTransfers : (info.tokenTransfers[approved.asset] ?? []);
   const net = (account: string) =>
     transfers.filter((t) => t.accountId === account).reduce((sum, t) => sum + BigInt(t.amount), 0n);
   if (net(approved.payTo) !== amount || net(payer) !== -amount) {

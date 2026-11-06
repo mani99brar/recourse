@@ -5,6 +5,7 @@
 import type { FacilitatorClient } from '@x402/core/server';
 import type { PaymentPayload, PaymentRequirements, SettleResponse, SupportedResponse, VerifyResponse } from '@x402/core/types';
 import { inspectHederaTransaction } from '@x402/hedera';
+import { HBAR_ASSET_ID } from '@recourse/shared';
 
 export const FAKE_FEE_PAYER = '0.0.990001';
 
@@ -24,7 +25,7 @@ function payerOf(
   const tx = (payload.payload as { transaction?: unknown }).transaction;
   if (typeof tx !== 'string') return { payer: '', ok: false, reason: 'no transaction' };
   const info = inspectHederaTransaction(tx);
-  const transfers = requirements.asset === '0.0.0' ? info.hbarTransfers : (info.tokenTransfers[requirements.asset] ?? []);
+  const transfers = requirements.asset === HBAR_ASSET_ID ? info.hbarTransfers : (info.tokenTransfers[requirements.asset] ?? []);
   const toPayTo = transfers.filter((t) => t.accountId === requirements.payTo).reduce((s, t) => s + BigInt(t.amount), 0n);
   const debit = transfers.find((t) => BigInt(t.amount) < 0n);
   if (toPayTo !== BigInt(requirements.amount)) return { payer: debit?.accountId ?? '', ok: false, reason: 'amount mismatch' };

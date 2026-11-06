@@ -36,10 +36,10 @@ flowchart LR
     KC["Kleros court 8"]
     RC --> KC
   end
-  AG["Buying agent<br/>(services/agent)"] -- "x402 payment" --> SH["Shop<br/>(services/shop)"]
+  AG["Buying agent<br/>(services/agent)"] -- "x402 payment (HBAR with PRICE_ASSET=hbar)" --> SH["Shop<br/>(services/shop)"]
   AG -- "records I S A O R" --> HCS
   SH -- "record D" --> HCS
-  SH -- "x402 settles in USDC" --> USDC
+  V -- "deposit, court fee, payouts" --- USDC
   SH -- "fileClaim + court fee" --> CL
   PC["Pre-check<br/>(services/precheck)"] -- "reads records, recordPreCheck" --> CL
   CL <-- "CCIP: ClaimToCourt / RulingBack" --> RC
@@ -68,7 +68,7 @@ sequenceDiagram
   participant RC as RecourseCase (Arbitrum)
   participant K as Kleros court 8
   Ag->>HCS: records I S A O (asked, shown, approval, ordered)
-  Ag->>Sh: x402 payment in USDC (settlement tx id goes in record O)
+  Ag->>Sh: x402 payment, HBAR with PRICE_ASSET=hbar, else USDC (settlement tx id goes in record O)
   Sh->>HCS: record D (packed)
   Note over Ag,Sh: the wrong goods arrive
   Ag->>HCS: record R (arrived), signed by the buyer
@@ -100,9 +100,9 @@ sequenceDiagram
 
 | Technology | What it does here | Where in the code |
 |---|---|---|
-| **Hedera x402 payments** | The agent pays the shop with the x402 `exact` scheme on `hedera:testnet`, in USDC. The agent reads the price and `payTo` from the shop's 402 response; below its spend limit it pays without a human, above it a buyer approval is needed. A public facilitator is tried first, then a second public one, then a self-hosted one. The settlement transaction id goes into the "ordered" record. | `services/shop`, `services/agent` |
+| **Hedera x402 payments** | The agent pays the shop with the x402 `exact` scheme on `hedera:testnet`. On the testnet demo orders are priced and paid in HBAR, 1 HBAR per 1 USDC of list price, when `PRICE_ASSET=hbar`; unset or `usdc`, they are paid in USDC `0.0.429274`. Set it in the shared `~/.config/recourse/recourse.env`, which the shop unit, the agent commands and `ops/fund` all read, not in `shop.env`: a shop asking for HBAR from an agent that expects USDC is refused as `wrong_asset`. The agent reads the price and `payTo` from the shop's 402 response; below its spend limit it pays without a human, above it a buyer approval is needed. The spend limits are in USDC, and an HBAR amount is converted at that rate before it is compared. A public facilitator is tried first, then a second public one, then a self-hosted one. The settlement transaction id goes into the "ordered" record. | `services/shop`, `services/agent` |
 | **Hedera Consensus Service** | One records topic holds the six records of every order. The pre-check and the court evidence read the topic through the mirror node and accept only messages from the right payer. | `packages/records`, `services/precheck` |
-| **HTS USDC** | Payments, the platform deposit, the court-fee escrow and the shop's payout are all USDC `0.0.429274`, used through its ERC-20 facade. The vault associates the token explicitly after deploy, and nothing moves before the mirror node shows the association. | `contracts/src/hedera`, `contracts/script/hedera` |
+| **HTS USDC** | The platform deposit, the court-fee escrow and the shop's payout are all Circle's testnet USDC `0.0.429274`, used through its ERC-20 facade; with `PRICE_ASSET=hbar` the x402 order payments are in HBAR. The vault associates the token explicitly after deploy, and nothing moves before the mirror node shows the association. | `contracts/src/hedera`, `contracts/script/hedera` |
 | **Chainlink CCIP, both ways** | `RecourseClaims` sends `ClaimToCourt` to `RecourseCase`; `RecourseCase` sends `RulingBack`. Each contract is its own receiver and sender, with V2 extra args, out-of-order execution on and full finality. Fees are paid in LINK (or HBAR on the Hedera side). Resend is open to anyone, capped in count and spacing, so a lost message costs a bounded amount of LINK. | `contracts/src/hedera/RecourseClaims.sol`, `contracts/src/arbitrum/RecourseCase.sol`, `contracts/src/shared` |
 | **Kleros court on Arbitrum Sepolia** | `RecourseCase` creates the dispute on the live KlerosCore in court 8 (testnet), registers the dispute template, and receives the ruling through `rule`. The keeper pays the arbitration cost from the case's fee pool and posts the evidence. | `contracts/src/arbitrum`, `packages/court`, `services/keeper` |
 | **Arkiv docket** | The docket service writes one de-identified `case` entity per ruled claim and a monthly count, from one writer wallet. The docket page reads them back and computes fault rates (Wilson 95% interval) in the browser. | `services/docket`, `arkiv/`, `apps/web/src/pages/Docket.tsx` |
@@ -204,7 +204,7 @@ Ten roles, each with its own Foundry keystore kept outside the repo ([docs/keys.
 | Deploy and wiring scripts | Written and rehearsed on local anvils. The Hedera deploy, USDC association and parameter steps have run on testnet; the Arbitrum deploy and the wiring between the chains have not. |
 | TypeScript services (shop, agent, pre-check, keeper, docket, intake, status API) | Written and tested against local chains and fakes. **Not running anywhere**; unit files are written but not installed. |
 | Web app | Builds. Not hosted. |
-| Funding | Small. Five Hedera roles hold a few HBAR from the faucet (at most 10 HBAR per address). No role holds Arbitrum Sepolia ETH or LINK yet. Testnet USDC has been requested for the platform, shop and agent and has not arrived yet. |
+| Funding | Small. Five Hedera roles hold a few HBAR from the faucet (at most 10 HBAR per address). No role holds Arbitrum Sepolia ETH or LINK yet. Testnet USDC has been requested for the platform, shop and agent and has not arrived yet. With orders paid in HBAR (`PRICE_ASSET=hbar`) the agent needs no USDC; its HBAR floor is then 8 (`ops/fund/lib.sh`). |
 | CCIP lanes | Public lanes exist on both testnets; no message from this project has been sent. |
 | Kleros dispute | No dispute has been created by this project. |
 | Arkiv docket | Reads and writes work against a local store; no entity has been written to the Arkiv testnet. |

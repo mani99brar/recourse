@@ -43,8 +43,19 @@ USDC_ROLES=(platform agent shop scheme ops-hedera buyer facilitator)
 # facilitators are used before the self-hosted one). Override with e.g. HBAR_SHOP=4.
 # Measured costs on 5 Nov: an account created by a value transfer costs 0.76 HBAR on top of
 # the value; completing a hollow account costs 0.026 HBAR.
+# The agent pays its record fees in HBAR. With PRICE_ASSET=hbar (from the environment, else from
+# the env file the services load, read the way ops/wire/lib.sh reads it) it also pays each x402
+# order in HBAR, 1 to 6 HBAR at quantity 1, so its floor is 8 HBAR then (one 6 HBAR order plus
+# fees), else 2.
+env_price_asset() {
+  [[ -f $ENV_FILE ]] || return 0
+  ( set +eu; set -a; . "$ENV_FILE" >/dev/null 2>&1; printf %s "${PRICE_ASSET:-}" ) || true
+}
+FUND_PRICE_ASSET=${PRICE_ASSET:-$(env_price_asset)}
+AGENT_HBAR_FLOOR=2
+if [[ ${FUND_PRICE_ASSET,,} == hbar ]]; then AGENT_HBAR_FLOOR=8; fi
 declare -A HBAR_DEFAULT=(
-  [precheck-signer]=3 [platform]=1 [agent]=2 [shop]=3 [scheme]=1 [buyer]=0 [facilitator]=0
+  [precheck-signer]=3 [platform]=1 [agent]=$AGENT_HBAR_FLOOR [shop]=3 [scheme]=1 [buyer]=0 [facilitator]=0
 )
 # Arbitrum Sepolia ETH the deployer sends to ops-arb (of about 0.05 ETH in total).
 ARB_ETH_TO_OPS=${ARB_ETH_TO_OPS:-0.035}

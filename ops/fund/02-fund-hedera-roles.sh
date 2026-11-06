@@ -10,20 +10,29 @@ if ! is_complete deployer; then
   echo "deployer is not complete yet; run 01-complete-hedera.sh --send first" >&2
   if [[ $SEND == 1 ]]; then exit 1; fi
 fi
+# Tinybar as a decimal HBAR string (8 places), for cast to-wei.
+hbar_of() { printf '%d.%08d' $(($1 / 100000000)) $(($1 % 100000000)); }
+# What each role is short of its floor, in tinybar (the whole floor when it has no account yet).
+declare -A FLOOR=() SHORT=()
 total=0
-for role in "${!HBAR_DEFAULT[@]}"; do
-  v=HBAR_${role//-/_}; v=${v^^}; amt=${!v:-${HBAR_DEFAULT[$role]}}
-  total=$((total + amt))
+for role in precheck-signer platform agent shop scheme buyer facilitator; do
+  v=HBAR_${role//-/_}; v=${v^^}; floor=${!v:-${HBAR_DEFAULT[$role]}}; FLOOR[$role]=$floor
+  acct=$(mirror_account "$role"); have=0
+  if [[ -n $(jq -r '.account // empty' <<<"$acct") ]]; then have=$(jq -r '.balance.balance // 0' <<<"$acct"); fi
+  short=$((floor * 100000000 - have))
+  if (( short < 0 )); then short=0; fi
+  SHORT[$role]=$short; total=$((total + short))
 done
 bal=$(cast balance "$(addr deployer)" --rpc-url "$HEDERA_RPC_URL_1" --ether 2>/dev/null || echo 0)
-echo "deployer holds $bal HBAR; this run sends $total HBAR plus fees"
+echo "deployer holds $bal HBAR; this run sends $(hbar_of "$total") HBAR plus fees"
 for role in precheck-signer platform agent shop scheme buyer facilitator; do
-  v=HBAR_${role//-/_}; v=${v^^}; amt=${!v:-${HBAR_DEFAULT[$role]}}
+  amt=${FLOOR[$role]}
   if [[ $amt == 0 ]]; then echo "$role: needs no HBAR, skipping"; continue; fi
-  if [[ -n $(account_id "$role") && $(mirror_account "$role" | jq -r '.balance.balance') -ge $((amt * 100000000)) ]]; then
+  if [[ ${SHORT[$role]} == 0 ]]; then
     echo "$role: already holds at least $amt HBAR, skipping transfer"
   else
-    send_cast deployer "$HEDERA_RPC_URL_1" "$(addr "$role")" --value "$(cast to-wei "$amt")" --gas-limit 150000
+    echo "$role: $(hbar_of "${SHORT[$role]}") HBAR short of its $amt HBAR floor"
+    send_cast deployer "$HEDERA_RPC_URL_1" "$(addr "$role")" --value "$(cast to-wei "$(hbar_of "${SHORT[$role]}")")" --gas-limit 150000
   fi
 done
 if [[ $SEND == 1 ]]; then
