@@ -1,6 +1,6 @@
 // Facilitator ladder: an ordered list of x402 facilitators behind one FacilitatorClient. At boot
 // the first rung whose /supported lists `exact` on the network becomes active. After a run of
-// consecutive settle failures on the facilitator's side (5xx, timeout, unreachable, malformed
+// consecutive verify or settle failures on the facilitator's side (5xx, timeout, unreachable, malformed
 // reply, or a `transaction_failed` answer: its own submit failed, in any status) it moves to the
 // next working rung and calls `onSwitch`, so the resource server can re-read /supported: every 402
 // carries the active rung's fee payer, and a payment built for one rung's fee payer cannot be
@@ -174,8 +174,17 @@ export class FacilitatorLadder implements FacilitatorClient {
     return this.client(this.active).getSupported();
   }
 
-  verify(paymentPayload: PaymentPayload, paymentRequirements: PaymentRequirements): Promise<VerifyResponse> {
-    return this.client(this.active).verify(paymentPayload, paymentRequirements);
+  /** Facilitator-side verify failures count toward failover as settle's do, for a flow that verifies before it settles. */
+  async verify(paymentPayload: PaymentPayload, paymentRequirements: PaymentRequirements): Promise<VerifyResponse> {
+    const rung = this.active;
+    try {
+      return await this.client(rung).verify(paymentPayload, paymentRequirements);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.lastError = `rung ${rung.index}: verify: ${message}`;
+      if (isFacilitatorSideFailure(error)) await this.countFailure(rung, `verify: ${message}`);
+      throw error;
+    }
   }
 
   async settle(paymentPayload: PaymentPayload, paymentRequirements: PaymentRequirements): Promise<SettleResponse> {

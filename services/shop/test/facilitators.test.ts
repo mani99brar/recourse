@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { PrivateKey } from '@hiero-ledger/sdk';
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { FacilitatorTimeoutError } from '@x402/core/server';
-import { SettleError } from '@x402/core/types';
+import { SettleError, type PaymentPayload, type PaymentRequirements } from '@x402/core/types';
 import { createClientHederaSigner } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/client';
 import { memoryLogger } from '@recourse/records';
@@ -135,6 +135,34 @@ describe('ladder', () => {
     const after = await payOnce(url);
     expect(after).toMatchObject({ feePayer: '0.0.990012', status: 200 });
     expect(second.settled).toHaveLength(1);
+  });
+
+  test('three facilitator-side verify failures move to the next rung; a refusal at verify does not count', async () => {
+    // The Hedera exact flow settles without a verify call before the handler; a flow that verifies
+    // first reaches the ladder's verify, as here.
+    const first = fakeFacilitator('0.0.990011');
+    const second = fakeFacilitator('0.0.990012');
+    let failure: Error = new FacilitatorTimeoutError('verify', 30000);
+    first.verify = async () => {
+      throw failure;
+    };
+    let switched = 0;
+    const ladder = new FacilitatorLadder(
+      [
+        { index: 1, url: 'fake://1', create: () => first },
+        { index: 2, url: 'fake://2', create: () => second },
+      ],
+      { network: NETWORK, log: memoryLogger(), onSwitch: async () => void (switched += 1) },
+    );
+    await ladder.select();
+    const verify = () => ladder.verify({} as PaymentPayload, {} as PaymentRequirements);
+    failure = new Error('Facilitator verify failed (400): bad request');
+    for (let i = 0; i < 3; i++) await expect(verify()).rejects.toThrow('400');
+    expect(ladder.state()).toMatchObject({ rung: 1, consecutiveFailures: 0 });
+    failure = new FacilitatorTimeoutError('verify', 30000);
+    for (let i = 0; i < 3; i++) await expect(verify()).rejects.toThrow();
+    expect(ladder.state().rung).toBe(2);
+    expect(switched).toBe(1);
   });
 
   test('payment-side refusals do not count toward failover', async () => {
