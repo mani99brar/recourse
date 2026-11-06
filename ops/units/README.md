@@ -52,6 +52,7 @@ The notifier is the command in `RECOURSE_NOTIFY_CMD`, called as `<cmd> "<title>"
 bash ops/units/install.sh            # dry run: lists what it would write
 bash ops/units/install.sh --verify   # renders to a temp dir and runs systemd-analyze --user verify
 node --test ops/units/units-env.test.mjs   # what each unit's environment can hold (RECOURSE_TEST_SYSTEMD_RUN=1: also through systemd-run)
+node --test ops/units/ctl.test.mjs ops/tunnel/run.test.mjs ops/tunnel/setup.test.mjs   # ctl.sh health, the named tunnel's run.sh and setup.sh, against fakes
 bash ops/units/install.sh --install  # writes ~/.config/systemd/user/recourse-*.service and .timer, and daemon-reloads
 ```
 
