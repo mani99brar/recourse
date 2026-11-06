@@ -521,19 +521,22 @@ export class StatusService {
   async partyBlock(address: Address) {
     const ps = this.d.parties();
     const known: Party | undefined = ps ? partyByAddress(ps, address) : undefined;
-    const v = await this.views(address);
     const lp = await this.liveParams();
     let escrowOpen = 0n;
     let openClaims = 0;
+    let involved = false;
     for (const id of this.d.store.claimIds()) {
       const c = this.foldOf(id);
       if (!c || (c.shop !== address && c.platform !== address)) continue;
+      involved = true;
       if (!isTerminal(c.status)) openClaims++;
-      if (c.shop === address || c.platform === address) {
-        const m = this.moneyFor(c, lp);
-        if (m.escrow.fate === 'held') escrowOpen += m.escrow.amount;
-      }
+      const m = this.moneyFor(c, lp);
+      if (m.escrow.fate === 'held') escrowOpen += m.escrow.amount;
     }
+    // The vault is read only for a known party or an address seen in an indexed claim: these
+    // routes are public, and each new address would otherwise cost eight eth_calls on the Hedera
+    // relay the keeper also uses. Any other address gets the standing fields as null (not read).
+    const v = known || involved ? await this.views(address) : null;
     return {
       address,
       role: known?.role ?? 'unknown',

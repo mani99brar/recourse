@@ -3,7 +3,8 @@
 //   /api/<path>            forwarded to the status API on 127.0.0.1:$STATUS_API_PORT as /<path>
 //   any file under dist    served as is
 //   any other path         index.html, so a refreshed or shared page link loads
-// Env: WEB_PORT (default 8788), WEB_DIST_DIR (default ../../apps/web/dist), STATUS_API_PORT (default 8787).
+// Env: WEB_PORT (default 8788), WEB_DIST_DIR (default ../../apps/web/dist), STATUS_API_PORT (default 8787),
+// WEB_API_RATE_PER_S and WEB_API_BURST (the /api allowance per client, default 5 per second, bursts of 100).
 // Binds 127.0.0.1 only; a reverse proxy faces the internet.
 import http from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
@@ -45,6 +46,46 @@ function parseTarget(target) {
   try { return new URL(`http://localhost${target}`); } catch { return null; }
 }
 
+// /api is public through the tunnel and some of its routes cost chain reads, so each client gets a
+// token bucket. The client is CF-Connecting-IP, which Cloudflare sets on every request it forwards;
+// a request that did not come through it (only local ones can reach this port) counts by its
+// socket address. The defaults leave room for several people behind one address, each with a few
+// pages polling every 5 s. Buckets idle long enough to refill are dropped, and the map is capped.
+// A malformed value falls back to the default, so the limit is never silently off (NaN < 1 is false).
+const numberOr = (v, d) => (Number.isFinite(Number(v)) && v !== undefined && v !== '' ? Number(v) : d);
+const apiRate = Math.max(numberOr(process.env.WEB_API_RATE_PER_S, 5), 0.001);
+const apiBurst = Math.max(numberOr(process.env.WEB_API_BURST, 100), 1);
+const MAX_BUCKETS = 10_000;
+const buckets = new Map();
+
+function clientOf(req) {
+  const cf = req.headers['cf-connecting-ip'];
+  const v = (Array.isArray(cf) ? cf[0] : cf)?.trim();
+  return (v || req.socket.remoteAddress || 'unknown').slice(0, 64);
+}
+
+function sweepBuckets(now) {
+  const idle = (apiBurst / apiRate) * 1000;
+  for (const [k, b] of buckets) if (now - b.at >= idle) buckets.delete(k);
+}
+
+/** Takes one token for the client; false when its bucket is empty. */
+function takeToken(client, now = Date.now()) {
+  let b = buckets.get(client);
+  if (!b) {
+    if (buckets.size >= MAX_BUCKETS) sweepBuckets(now);
+    if (buckets.size >= MAX_BUCKETS) buckets.delete(buckets.keys().next().value);
+    b = { tokens: apiBurst, at: now };
+    buckets.set(client, b);
+  }
+  b.tokens = Math.min(apiBurst, b.tokens + ((now - b.at) / 1000) * apiRate);
+  b.at = now;
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
+setInterval(() => sweepBuckets(Date.now()), 60_000).unref();
+
 const server = http.createServer((req, res) => {
   try {
     handle(req, res);
@@ -63,10 +104,22 @@ function handle(req, res) {
     return;
   }
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+    if (!takeToken(clientOf(req))) {
+      req.resume();
+      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': String(Math.ceil(1 / apiRate)) });
+      res.end('{"error":"rate_limited"}');
+      return;
+    }
     const up = http.request(
       { host: '127.0.0.1', port: apiPort, method: req.method, path: (url.pathname.slice(4) || '/') + url.search,
         headers: { accept: req.headers.accept ?? '*/*' }, timeout: 15000 },
-      (r) => { res.writeHead(r.statusCode ?? 502, r.headers); r.pipe(res); },
+      (r) => {
+        // Hop-by-hop headers describe the upstream connection, not this one: passing on its
+        // `connection: keep-alive` overrode a client's `Connection: close`.
+        const { connection: _c, 'keep-alive': _k, ...headers } = r.headers;
+        res.writeHead(r.statusCode ?? 502, headers);
+        r.pipe(res);
+      },
     );
     up.on('timeout', () => up.destroy(new Error('timeout')));
     up.on('error', () => { if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' }); res.end('{"error":"status API unreachable"}'); });

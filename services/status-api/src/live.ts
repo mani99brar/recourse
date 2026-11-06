@@ -266,21 +266,41 @@ export class ViemReader implements Reader {
   }
 }
 
-/** Time-limited memo for views that change slowly. */
+/**
+ * Time-limited memo for views that change slowly, holding at most `maxEntries` keys: past that,
+ * expired entries go first, then the oldest.
+ */
 export class TtlCache<T> {
   private m = new Map<string, { at: number; value: Promise<T> }>();
   constructor(
     private ttlMs: number,
     private now: () => number = Date.now,
+    private maxEntries = 1000,
   ) {}
   get(key: string, load: () => Promise<T>): Promise<T> {
     const hit = this.m.get(key);
     const t = this.now();
     if (hit && t - hit.at < this.ttlMs) return hit.value;
     const value = load();
-    this.m.set(key, { at: t, value });
-    value.catch(() => this.m.delete(key));
+    const entry = { at: t, value };
+    this.m.delete(key);
+    this.m.set(key, entry);
+    // Only this load's own entry is removed on failure, never a newer one for the same key.
+    value.catch(() => {
+      if (this.m.get(key) === entry) this.m.delete(key);
+    });
+    if (this.m.size > this.maxEntries) this.trim(t);
     return value;
+  }
+  get size(): number {
+    return this.m.size;
+  }
+  private trim(t: number): void {
+    for (const [k, e] of this.m) if (t - e.at >= this.ttlMs) this.m.delete(k);
+    for (const k of this.m.keys()) {
+      if (this.m.size <= this.maxEntries) break;
+      this.m.delete(k);
+    }
   }
   clear(): void {
     this.m.clear();

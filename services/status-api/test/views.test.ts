@@ -3,6 +3,7 @@ import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
 import { FEE, PLATFORM, SHOP, SHOP2, buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
 import { harness } from './helpers/service.js';
+import { TtlCache } from '../src/live.js';
 
 function multi() {
   const sim = new Sim();
@@ -95,5 +96,40 @@ describe('party standing', () => {
     const h = harness({ store });
     expect((await h.svc.party(PLATFORM)).role).toBe('platform');
     expect((await h.svc.party('0x' + '99'.repeat(20))).role).toBe('unknown');
+  });
+
+  it('reads the vault only for known parties and addresses seen in a claim, never for any other address', async () => {
+    const { store } = multi();
+    const reader = fakeReader();
+    const h = harness({ store, reader });
+    for (let i = 0; i < 50; i++) {
+      const stranger = '0x' + (0xa000 + i).toString(16).padStart(40, '0');
+      const p = await h.svc.party(stranger);
+      expect(p).toMatchObject({ role: 'unknown', balance: null, inGoodStanding: null, openClaims: 0 });
+      await h.svc.claimsResponse(stranger);
+    }
+    expect(reader.calls.filter((c) => c.startsWith('party:'))).toEqual([]);
+    expect((await h.svc.party(PLATFORM)).inGoodStanding).toBe(true);
+    // An address that is not in the parties file but filed a claim is still read.
+    const h2 = harness({ store, reader, parties: null });
+    expect((await h2.svc.party(SHOP)).balance).toBe(100_000_000n);
+    expect(reader.calls.filter((c) => c.startsWith('party:')).length).toBe(2);
+  });
+});
+
+describe('the live-read cache is bounded', () => {
+  it('holds at most maxEntries keys, dropping expired ones and then the oldest', async () => {
+    let now = 0;
+    const c = new TtlCache<number>(1000, () => now, 3);
+    for (let i = 0; i < 10; i++) await c.get(`k${i}`, async () => i);
+    expect(c.size).toBe(3);
+    expect(await c.get('k9', async () => -1)).toBe(9);
+    expect(await c.get('k0', async () => -1)).toBe(-1);
+    now = 5000;
+    await c.get('fresh', async () => 1);
+    expect(c.size).toBeLessThanOrEqual(3);
+    // A failed load is not kept, and does not remove a newer entry for the same key.
+    await expect(c.get('bad', async () => Promise.reject(new Error('x')))).rejects.toThrow();
+    expect(await c.get('bad', async () => 2)).toBe(2);
   });
 });
