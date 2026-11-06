@@ -194,6 +194,8 @@ function useStack(o: { mode: 'Both' | 'None'; hederaPort: number; arbPort: numbe
         offRamp: hed.offRamp,
         events: reader('hedera', 'hedera-claims', hClient, hed.startBlock, hed.claims, claimsAbi as Abi, 'claims'),
         sender: hSender,
+        // anvil counts native value in wei, not Hedera's tinybars.
+        weibarPerNativeUnit: 1n,
       },
       arbitrum: {
         client: aClient,

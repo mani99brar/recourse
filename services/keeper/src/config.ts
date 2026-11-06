@@ -3,6 +3,8 @@
 // in an error.
 
 import { parseSendPauseWindows, readEnv, type SendPauseWindow } from '@recourse/shared';
+import { parseUnits } from 'viem';
+import type { FundingFloors } from './machine.js';
 
 export interface KeeperConfig {
   stateDir: string;
@@ -22,6 +24,27 @@ export interface KeeperConfig {
   courtUrlTemplate: string;
   /** Compact the journal once it reaches this many bytes. */
   compactAtBytes: number;
+  /** Balances under which gas_low and link_low fire. */
+  floors: FundingFloors;
+}
+
+/**
+ * Funding floors in whole units, as the operator writes them. ops-hedera's is docs/keys.md's;
+ * docs/keys.md has none for ops-arb, so 0.01 ETH; the claims contract's are 3 sends at the
+ * measured CCIP quotes (2.2 HBAR or 0.013 LINK). Equal to DEFAULT_FLOORS in machine.ts.
+ */
+export const FLOOR_DEFAULTS = {
+  KEEPER_FLOOR_OPS_HEDERA_HBAR: '10',
+  KEEPER_FLOOR_OPS_ARB_ETH: '0.01',
+  KEEPER_FLOOR_CLAIMS_FEE_HBAR: '6.6',
+  KEEPER_FLOOR_CLAIMS_FEE_LINK: '0.04',
+} as const;
+
+/** A non-negative amount in whole units with at most 18 decimals, as 18-decimal base units. */
+function amount(name: string, text: string, max: number): bigint {
+  if (!/^\d+(\.\d{1,18})?$/.test(text)) throw new Error(`${name} must be a plain decimal amount`);
+  if (Number(text) > max) throw new Error(`${name} must be at most ${max}`);
+  return parseUnits(text, 18);
 }
 
 type Env = Record<string, string | undefined>;
@@ -91,5 +114,11 @@ export function loadKeeperConfig(env: Env = process.env): KeeperConfig {
     deploymentsDir: e.DEPLOYMENTS_DIR,
     courtUrlTemplate: e.COURT_URL_TEMPLATE,
     compactAtBytes: whole('KEEPER_COMPACT_MB', local(env, 'KEEPER_COMPACT_MB', '8'), 1, 64) * 1024 * 1024,
+    floors: {
+      opsHederaWeibar: amount('KEEPER_FLOOR_OPS_HEDERA_HBAR', local(env, 'KEEPER_FLOOR_OPS_HEDERA_HBAR', FLOOR_DEFAULTS.KEEPER_FLOOR_OPS_HEDERA_HBAR), 1_000_000),
+      opsArbWei: amount('KEEPER_FLOOR_OPS_ARB_ETH', local(env, 'KEEPER_FLOOR_OPS_ARB_ETH', FLOOR_DEFAULTS.KEEPER_FLOOR_OPS_ARB_ETH), 1000),
+      claimsFeeWeibar: amount('KEEPER_FLOOR_CLAIMS_FEE_HBAR', local(env, 'KEEPER_FLOOR_CLAIMS_FEE_HBAR', FLOOR_DEFAULTS.KEEPER_FLOOR_CLAIMS_FEE_HBAR), 1_000_000),
+      claimsFeeLink: amount('KEEPER_FLOOR_CLAIMS_FEE_LINK', local(env, 'KEEPER_FLOOR_CLAIMS_FEE_LINK', FLOOR_DEFAULTS.KEEPER_FLOOR_CLAIMS_FEE_LINK), 1_000_000),
+    },
   };
 }

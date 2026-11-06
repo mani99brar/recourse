@@ -29,6 +29,7 @@ import type {
   ClaimsParams,
   DisputeInfo,
   KeeperCall,
+  Levels,
   OpenIntentStatus,
   ResolvedCall,
   RulingRead,
@@ -44,6 +45,12 @@ export interface LiveChainsOptions {
     offRamp: Address;
     events: EventSource;
     sender: Sender;
+    /**
+     * Weibar per unit of native value inside the EVM. Hedera's EVM counts HBAR in tinybars
+     * (10^8 per HBAR) while eth_getBalance answers in weibar (10^18), so 10^10 there (the
+     * default); 1 on a plain EVM test chain.
+     */
+    weibarPerNativeUnit?: bigint;
   };
   arbitrum: {
     client: PublicClient;
@@ -288,7 +295,7 @@ export class LiveChains implements Chains {
     return { link, native };
   }
 
-  async levels(): Promise<{ opsHederaWeibar: bigint; opsArbWei: bigint; claimsLink: bigint; caseLink: bigint }> {
+  async levels(): Promise<Levels> {
     const h = this.o.hedera;
     const a = this.o.arbitrum;
     if (this.links === undefined) {
@@ -298,13 +305,25 @@ export class LiveChains implements Chains {
       ]);
       this.links = { hedera: hl, arbitrum: al };
     }
-    const [opsHederaWeibar, opsArbWei, claimsLink, caseLink] = await Promise.all([
+    const [opsHederaWeibar, opsArbWei, claimsLink, caseLink, claimsFeeToken, claimsNativeWeibar] = await Promise.all([
       h.client.getBalance({ address: this.opsHedera }),
       a.client.getBalance({ address: this.opsArb }),
       h.client.readContract({ address: this.links.hedera, abi: erc20Abi, functionName: 'balanceOf', args: [h.claims] }),
       a.client.readContract({ address: this.links.arbitrum, abi: erc20Abi, functionName: 'balanceOf', args: [a.case] }),
+      h.client.readContract({ address: h.claims, abi: claimsAbi, functionName: 'feeToken' }),
+      h.client.getBalance({ address: h.claims }),
     ]);
-    return { opsHederaWeibar, opsArbWei, claimsLink, caseLink };
+    return { opsHederaWeibar, opsArbWei, claimsLink, caseLink, claimsFeeToken, claimsNativeWeibar };
+  }
+
+  async quoteSend(claimId: Hex): Promise<{ native: boolean; amount: bigint }> {
+    const h = this.o.hedera;
+    const [token, fee] = await Promise.all([
+      h.client.readContract({ address: h.claims, abi: claimsAbi, functionName: 'feeToken' }),
+      h.client.readContract({ address: h.claims, abi: claimsAbi, functionName: 'quoteSend', args: [claimId] }),
+    ]);
+    const native = BigInt(token) === 0n;
+    return { native, amount: native ? fee * (h.weibarPerNativeUnit ?? 10n ** 10n) : fee };
   }
 
   // ------------------------------------------------------------------ sends

@@ -210,6 +210,7 @@ async function main(): Promise<void> {
     evidence,
     windows: cfg.windows,
     timing: { refileHoldS: cfg.refileHoldS },
+    floors: cfg.floors,
     log,
     links: { courtCase: courtLink },
     vaultToken: hed.token,

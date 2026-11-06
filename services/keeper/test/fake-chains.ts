@@ -16,7 +16,7 @@ import {
   type CaseView,
   type Claim,
 } from '@recourse/shared';
-import { keccak256, toHex, type Address, type Hex } from 'viem';
+import { keccak256, toHex, zeroAddress, type Address, type Hex } from 'viem';
 import type { JournalRecord } from '../src/journal.js';
 import type {
   CallResult,
@@ -27,6 +27,7 @@ import type {
   ClaimsParams,
   DisputeInfo,
   KeeperCall,
+  Levels,
   OpenIntentStatus,
   ResolvedCall,
   RulingRead,
@@ -69,6 +70,10 @@ export class FakeChains implements Chains {
   feePoolV = 10n ** 17n;
   costV = 10n ** 16n;
   caseLink = 10n ** 19n;
+  /** Balances levels() reports (caseLink above wins for the case contract). */
+  levelsV: Levels = { opsHederaWeibar: 10n ** 20n, opsArbWei: 10n ** 18n, claimsLink: 10n ** 19n, caseLink: 10n ** 19n, claimsFeeToken: zeroAddress, claimsNativeWeibar: 10n ** 20n };
+  /** quoteSend: in weibar when the claims contract pays in HBAR, LINK wei otherwise. */
+  sendQuote = 22n * 10n ** 17n;
   linkShort = false;
   readonly credit = new Map<string, bigint>();
   paramsFail = false;
@@ -161,8 +166,11 @@ export class FakeChains implements Chains {
   async quoteRelay(): Promise<{ link: bigint; native: bigint }> {
     return { link: 10n ** 17n, native: 10n ** 15n };
   }
-  async levels() {
-    return { opsHederaWeibar: 10n ** 20n, opsArbWei: 10n ** 18n, claimsLink: 10n ** 19n, caseLink: this.caseLink };
+  async levels(): Promise<Levels> {
+    return { ...this.levelsV, caseLink: this.caseLink };
+  }
+  async quoteSend(): Promise<{ native: boolean; amount: bigint }> {
+    return { native: BigInt(this.levelsV.claimsFeeToken ?? zeroAddress) === 0n, amount: this.sendQuote };
   }
   hasOpen(chain: Chain, fn: string, claimId: Hex): boolean {
     return this.open.has(`${chain}:${fn}:${claimId.toLowerCase()}`);

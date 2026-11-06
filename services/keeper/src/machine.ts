@@ -18,7 +18,7 @@ import {
   type SendPauseWindow,
   type VaultToken,
 } from '@recourse/shared';
-import type { Hex } from 'viem';
+import { formatUnits, type Hex } from 'viem';
 import type { Alert, AlertKind, Alerter } from './alerts.js';
 import { ClaimBook, currentAttempt, isTerminal, milestoneOf, phaseOf } from './claims.js';
 import { controlWindows, emptyControl, expiryForced, operatorHolds, readControl, releasedSince, type Control } from './control.js';
@@ -37,6 +37,7 @@ import type {
   DisputeInfo,
   KeeperCall,
   KeeperClaim,
+  Levels,
   Phase,
   ResolvedCall,
 } from './types.js';
@@ -60,8 +61,8 @@ export interface KeeperOptions {
   timing?: Partial<Timing>;
   /** Unix seconds. */
   now?: () => number;
-  /** Funding floors for the gas alerts. */
-  floors?: { opsHederaWeibar: bigint; opsArbWei: bigint };
+  /** Funding floors for the gas and fee alerts (DEFAULT_FLOORS when absent). */
+  floors?: FundingFloors;
   log?: (line: string) => void;
   /** Explorer and court link builders for alerts. */
   links?: Partial<Links>;
@@ -72,6 +73,33 @@ export interface KeeperOptions {
 }
 
 export const DEFAULT_COMPACT_AT_BYTES = 8 * 1024 * 1024;
+
+/** Balances under which the keeper raises gas_low or link_low. */
+export interface FundingFloors {
+  /** ops-hedera, weibar (10^18 per HBAR). */
+  opsHederaWeibar: bigint;
+  /** ops-arb, wei. */
+  opsArbWei: bigint;
+  /** HBAR (weibar) the claims contract should hold for CCIP fees when it pays natively. A live quote raises it to 3 sends. */
+  claimsFeeWeibar: bigint;
+  /** LINK (wei) the claims contract should hold when it pays CCIP fees in LINK. A live quote raises it to 3 sends. */
+  claimsFeeLink: bigint;
+}
+
+/**
+ * ops-hedera's floor is the one in docs/keys.md (10 HBAR). docs/keys.md gives ops-arb none; 0.01
+ * ETH covers several openCase and relay sends at testnet prices. The claims contract floors are 3
+ * sends at the measured quotes (2.2 HBAR or 0.013 LINK each).
+ */
+export const DEFAULT_FLOORS: FundingFloors = {
+  opsHederaWeibar: 10n * 10n ** 18n,
+  opsArbWei: 10n ** 16n,
+  claimsFeeWeibar: 66n * 10n ** 17n,
+  claimsFeeLink: 4n * 10n ** 16n,
+};
+
+/** A balance in whole units for an alert (18 decimals: weibar to HBAR, wei to ETH or LINK). */
+const units = (v: bigint): string => formatUnits(v, 18);
 
 export interface Links {
   ccipMessage: (messageId: Hex) => string;
@@ -95,7 +123,17 @@ export interface KeeperHealth {
   cursors: { hedera?: string; arbitrum?: string };
   hederaLagS?: number;
   claimsByPhase: Record<string, number>;
-  levels?: { feePool: string; costNow: string; openCases: number; opsHederaWeibar: string; opsArbWei: string; claimsLink: string; caseLink: string };
+  levels?: {
+    feePool: string;
+    costNow: string;
+    openCases: number;
+    opsHederaWeibar: string;
+    opsArbWei: string;
+    claimsLink: string;
+    caseLink: string;
+    claimsFeeToken?: string;
+    claimsNativeWeibar?: string;
+  };
 }
 
 export class Keeper {
@@ -1032,24 +1070,74 @@ export class Keeper {
       opsArbWei: lv.opsArbWei.toString(),
       claimsLink: lv.claimsLink.toString(),
       caseLink: lv.caseLink.toString(),
+      ...(lv.claimsFeeToken !== undefined ? { claimsFeeToken: lv.claimsFeeToken } : {}),
+      ...(lv.claimsNativeWeibar !== undefined ? { claimsNativeWeibar: lv.claimsNativeWeibar.toString() } : {}),
     };
     if (pool < 3n * cost) this.alert({ kind: 'fee_pool_low', hint: `fee pool ${pool} wei is under 3 x arbitration cost ${cost}` });
     if (this.caseParams && open >= this.caseParams.maxOpenCases - 2) {
       this.alert({ kind: 'open_cases_near_cap', hint: `${open} open cases of ${this.caseParams.maxOpenCases}` });
     }
-    const floors = this.o.floors;
-    if (floors && lv.opsHederaWeibar < floors.opsHederaWeibar) this.alert({ kind: 'gas_low', hint: `ops-hedera has ${lv.opsHederaWeibar} weibar` });
-    if (floors && lv.opsArbWei < floors.opsArbWei) this.alert({ kind: 'gas_low', hint: `ops-arb has ${lv.opsArbWei} wei` });
+    const floors = this.o.floors ?? DEFAULT_FLOORS;
+    if (lv.opsHederaWeibar < floors.opsHederaWeibar) {
+      this.alert({
+        kind: 'gas_low',
+        subject: 'ops-hedera',
+        hint: `ops-hedera holds ${units(lv.opsHederaWeibar)} HBAR, under its floor of ${units(floors.opsHederaWeibar)} HBAR; top it up before the keeper's Hedera sends (sendToCourt, settle, expireClaim) start failing`,
+        detail: { weibar: lv.opsHederaWeibar.toString(), floorWeibar: floors.opsHederaWeibar.toString() },
+      });
+    }
+    if (lv.opsArbWei < floors.opsArbWei) {
+      this.alert({
+        kind: 'gas_low',
+        subject: 'ops-arb',
+        hint: `ops-arb holds ${units(lv.opsArbWei)} ETH, under its floor of ${units(floors.opsArbWei)} ETH; top it up before openCase, evidence and relay sends start failing`,
+        detail: { wei: lv.opsArbWei.toString(), floorWei: floors.opsArbWei.toString() },
+      });
+    }
+    await this.checkClaimsFee(lv, floors);
     const open1 = this.book.open().find((c) => phaseOf(c) === 'RuledArb' || phaseOf(c) === 'Relayed');
     if (open1) {
       const q = await ch.quoteRelay(open1.claimId).catch(() => undefined);
-      if (q && lv.caseLink < 3n * q.link) this.alert({ kind: 'link_low', hint: `case contract LINK ${lv.caseLink} is under 3 x the relay quote ${q.link}` });
+      if (q && lv.caseLink < 3n * q.link) this.alert({ kind: 'link_low', subject: 'case', hint: `case contract LINK ${lv.caseLink} is under 3 x the relay quote ${q.link}` });
     }
     if (ch.hederaLagS) {
       const lag = await ch.hederaLagS();
       this.health.hederaLagS = lag;
       if (lag > 120) this.alert({ kind: 'mirror_lag', hint: `mirror node is ${lag} s behind` });
     }
+  }
+
+  /**
+   * The claims contract pays each sendToCourt and resend's CCIP fee from its own balance, in HBAR
+   * or LINK as its feeToken says, and reverts NativeShort or LinkShort below one send. Alerts
+   * link_low (subject claims) under the floor, raised to 3 sends when a claim can be quoted.
+   */
+  private async checkClaimsFee(lv: Levels, floors: FundingFloors): Promise<void> {
+    if (lv.claimsFeeToken === undefined) return;
+    const native = BigInt(lv.claimsFeeToken) === 0n;
+    const have = native ? lv.claimsNativeWeibar : lv.claimsLink;
+    if (have === undefined) return;
+    let floor = native ? floors.claimsFeeWeibar : floors.claimsFeeLink;
+    const sample = this.book.open()[0] ?? [...this.book.claims.values()].at(-1);
+    let quote: bigint | undefined;
+    if (sample && this.o.chains.quoteSend) {
+      const q = await this.o.chains.quoteSend(sample.claimId).catch(() => undefined);
+      if (q && q.native === native && q.amount > 0n) {
+        quote = q.amount;
+        if (3n * q.amount > floor) floor = 3n * q.amount;
+      }
+    }
+    if (floor === 0n || have >= floor) return;
+    const unit = native ? 'HBAR' : 'LINK';
+    const how = native ? 'fund it with fundNative()' : 'transfer LINK to it';
+    this.alert({
+      kind: 'link_low',
+      subject: 'claims',
+      hint:
+        `the claims contract holds ${units(have)} ${unit} for CCIP fees, under its floor of ${units(floor)} ${unit}` +
+        `${quote !== undefined ? ` (one send costs ${units(quote)} ${unit} now)` : ''}; sendToCourt and resend revert below one send, ${how}`,
+      detail: { feeToken: native ? 'HBAR' : String(lv.claimsFeeToken), have: have.toString(), floor: floor.toString(), ...(quote !== undefined ? { quote: quote.toString() } : {}) },
+    });
   }
 
   /** Journal view of one claim, for GET /claims/:claimId and keeper-ctl status. */

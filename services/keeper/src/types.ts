@@ -141,7 +141,12 @@ export interface Chains {
   /** LINK fee to relay the ruling now, and the native fee. */
   quoteRelay(claimId: Hex): Promise<{ link: bigint; native: bigint }>;
   /** Balances for the funding alerts. */
-  levels(): Promise<{ opsHederaWeibar: bigint; opsArbWei: bigint; claimsLink: bigint; caseLink: bigint }>;
+  levels(): Promise<Levels>;
+  /**
+   * What sending this claim to court would cost now, in what the claims contract pays CCIP fees
+   * with: weibar when it pays in HBAR (`native`), LINK wei otherwise. 0 for an unknown claim.
+   */
+  quoteSend?(claimId: Hex): Promise<{ native: boolean; amount: bigint }>;
   /** Seconds the Hedera event source trails consensus time (mirror node lag); absent locally. */
   hederaLagS?(): Promise<number>;
 
@@ -164,6 +169,20 @@ export interface Chains {
 }
 
 /** A call that was left open and has now been settled. */
+/** Balances the funding alerts compare against their floors. */
+export interface Levels {
+  /** eth_getBalance of the ops keys: weibar on Hedera (10^18 per HBAR), wei on Arbitrum. */
+  opsHederaWeibar: bigint;
+  opsArbWei: bigint;
+  /** LINK (wei) held by the claims and the case contracts. */
+  claimsLink: bigint;
+  caseLink: bigint;
+  /** What the claims contract pays CCIP fees in: its LINK token, or the zero address for HBAR. */
+  claimsFeeToken?: Address;
+  /** HBAR the claims contract holds for fees paid natively, in weibar. */
+  claimsNativeWeibar?: bigint;
+}
+
 export interface ResolvedCall {
   chain: Chain;
   call: string;
