@@ -141,9 +141,35 @@ export function partiesByRole(parties: Parties, role: PartyRole): Party[] {
   return parties.filter((p) => p.role === role);
 }
 
-/** The single party with this role; throws when there is none or more than one. */
-export function partyByRole(parties: Parties, role: PartyRole): Party {
+/**
+ * The env var that names a process's own party when several parties share its role, as the demo
+ * cast's shops and agent companies (platform plus agent) do beside the first ones.
+ */
+export const PARTY_SELECTORS = {
+  shop: 'RECOURSE_SHOP_ADDRESS',
+  platform: 'RECOURSE_PLATFORM_ADDRESS',
+  agent: 'RECOURSE_AGENT_ADDRESS',
+} as const satisfies Partial<Record<PartyRole, string>>;
+
+/**
+ * The party with this role. When `env` sets the role's selector (PARTY_SELECTORS), the party of
+ * that role at that address, or an error naming the variable; otherwise the single party with the
+ * role, and an error when there is none or more than one. With one party of the role and no
+ * selector set, nothing changes.
+ */
+export function partyByRole(parties: Parties, role: PartyRole, env: Record<string, string | undefined> = {}): Party {
+  const selector = (PARTY_SELECTORS as Partial<Record<PartyRole, string>>)[role];
+  const wanted = selector === undefined ? undefined : env[selector]?.trim();
+  if (wanted) {
+    if (!isAddress(wanted, { strict: false })) throw new Error(`${selector}: not an EVM address`);
+    const p = partyWithRole(parties, role, wanted);
+    if (!p) throw new Error(`${selector}: no ${role} at ${getAddress(wanted)} in the party map`);
+    return p;
+  }
   const found = partiesByRole(parties, role);
+  if (found.length > 1 && selector !== undefined) {
+    throw new Error(`parties: ${found.length} parties are ${role}; set ${selector} to this one's address`);
+  }
   if (found.length !== 1) throw new Error(`parties: expected exactly one ${role}, found ${found.length}`);
   return found[0]!;
 }

@@ -88,7 +88,7 @@ export async function discoverShop(
   options: { client?: Pick<ReturnType<typeof rpcClient>, 'readContract'> } = {},
 ): Promise<ShopTarget> {
   const parties = partiesOrNull(env);
-  const shopParty = parties ? partyByRole(parties, 'shop') : null;
+  const shopParty = parties ? partyByRole(parties, 'shop', env) : null;
   const agentId = shopParty?.agentId ?? readH0Ids()?.agents.shop?.agentId;
   let found: { endpoint: ReturnType<typeof x402EndpointOf>; owner: Address };
   try {
@@ -151,7 +151,7 @@ export async function openAgent(
 ): Promise<OpenedAgent> {
   const parties = partiesOrNull(env);
   if (!parties) throw new Error('PARTIES_FILE is not set or missing; the agent needs the party map');
-  const platform = partyByRole(parties, 'platform').evmAddress;
+  const platform = partyByRole(parties, 'platform', env).evmAddress;
   const shop = options.shop ?? (await discoverShop(env, log));
   const records = openRecordsClient({ role: 'agent', journalPath: recordsJournalPath(env), env, log });
   const payer = loadAgentPayer(env);

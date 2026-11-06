@@ -63,7 +63,7 @@ async function main(): Promise<number> {
   const deployment = readHederaDeployment({ env });
   if (!values.local && deployment.chainId !== HEDERA_TESTNET_CHAIN_ID) throw new Error('not a Hedera testnet deployment');
   const parties = readParties(env);
-  const shopParty = partyByRole(parties, 'shop');
+  const shopParty = partyByRole(parties, 'shop', env);
   let account: LocalAccount;
   if (values.local) {
     account = devAccount(4);

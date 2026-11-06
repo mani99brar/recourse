@@ -55,7 +55,7 @@ export function loadShopConfig(env: Env = process.env, defaults: { stateDir: str
     standingCheckSource,
     topicId: topicIdOrNull(env),
     displayName: displayNameOf('shop', env),
-    shopAddress: env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? partyByRole(readParties(env), 'shop').evmAddress : null,
+    shopAddress: env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? partyByRole(readParties(env), 'shop', env).evmAddress : null,
   };
 }
 

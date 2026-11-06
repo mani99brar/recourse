@@ -26,7 +26,7 @@ export function hederaAccountOf(role: HederaRole, env: Env = process.env): Resol
   // back to HEDERA_ACCOUNT_IDS when that is set.
   const partiesReady = !!env.PARTIES_FILE && (existsSync(env.PARTIES_FILE) || !env.HEDERA_ACCOUNT_IDS);
   if (partiesReady) {
-    return { accountId: hederaAccountIdOf(partyByRole(readParties(env), role)), source: 'parties' };
+    return { accountId: hederaAccountIdOf(partyByRole(readParties(env), role, env)), source: 'parties' };
   }
   return { accountId: accountIdOf(accountIdsFromEnv(env), role), source: 'HEDERA_ACCOUNT_IDS' };
 }
@@ -45,7 +45,7 @@ export const DEFAULT_DISPLAY_NAMES = { shop: 'Demo Shop', platform: 'Demo Agent 
 
 /** The party's display name from the party map, or the default while the map does not exist yet. */
 export function displayNameOf(role: 'shop' | 'platform', env: Env = process.env): string {
-  if (env.PARTIES_FILE && existsSync(env.PARTIES_FILE)) return partyByRole(readParties(env), role as PartyRole).displayName;
+  if (env.PARTIES_FILE && existsSync(env.PARTIES_FILE)) return partyByRole(readParties(env), role as PartyRole, env).displayName;
   return DEFAULT_DISPLAY_NAMES[role];
 }
 

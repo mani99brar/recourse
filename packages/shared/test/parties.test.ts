@@ -112,6 +112,33 @@ describe('writers of one order', () => {
   });
 });
 
+describe('partyByRole with several parties of a role', () => {
+  const secondShop = { ...base[2]!, evmAddress: '0x00000000000000000000000000000000000000b3', hederaAccountId: '0.0.2003', hcsWriters: ['0.0.2003'], displayName: 'Second Example Shop' };
+  const one = parseParties(JSON.parse(JSON.stringify(base)));
+  const two = parseParties(JSON.parse(JSON.stringify([...base, secondShop])));
+  if (!one.ok || !two.ok) throw new Error('fixture');
+
+  it('changes nothing with one party of the role, selector set or not', () => {
+    expect(partyByRole(one.value, 'shop', {}).displayName).toBe('Example Shop');
+    expect(partyByRole(one.value, 'shop', { RECOURSE_SHOP_ADDRESS: '' }).displayName).toBe('Example Shop');
+    expect(partyByRole(one.value, 'shop', { RECOURSE_SHOP_ADDRESS: base[2]!.evmAddress }).displayName).toBe('Example Shop');
+  });
+
+  it('takes the party the selector names, in any case', () => {
+    expect(partyByRole(two.value, 'shop', { RECOURSE_SHOP_ADDRESS: secondShop.evmAddress.toUpperCase().replace('0X', '0x') }).displayName).toBe('Second Example Shop');
+    expect(partyByRole(two.value, 'shop', { RECOURSE_SHOP_ADDRESS: base[2]!.evmAddress }).displayName).toBe('Example Shop');
+    // Another role's selector does not pick a shop.
+    expect(partyByRole(two.value, 'platform', { RECOURSE_SHOP_ADDRESS: secondShop.evmAddress }).displayName).toBe('Example Platform');
+  });
+
+  it('refuses several parties without a selector, and a selector that names no party of the role', () => {
+    expect(() => partyByRole(two.value, 'shop')).toThrow(/^parties: 2 parties are shop; set RECOURSE_SHOP_ADDRESS/);
+    expect(() => partyByRole(two.value, 'shop', { RECOURSE_SHOP_ADDRESS: base[0]!.evmAddress })).toThrow(/^RECOURSE_SHOP_ADDRESS: no shop at 0x/);
+    expect(() => partyByRole(one.value, 'shop', { RECOURSE_SHOP_ADDRESS: '0x1234' })).toThrow(/^RECOURSE_SHOP_ADDRESS: not an EVM address$/);
+    expect(() => partyByRole(one.value, 'agent', { RECOURSE_AGENT_ADDRESS: base[0]!.evmAddress })).toThrow(/^RECOURSE_AGENT_ADDRESS: no agent at/);
+  });
+});
+
 describe('parseHederaAccountIds', () => {
   const full =
     'deployer=0.0.1, ops-hedera=0.0.2, precheck-signer=0.0.3, platform=0.0.4, agent=0.0.5, shop=0.0.6, scheme=0.0.7, buyer=0.0.8, facilitator=0.0.9';

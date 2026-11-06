@@ -96,7 +96,7 @@ async function main(): Promise<number> {
   const parties = partiesOrNull(env);
   if (!parties) throw new Error('PARTIES_FILE is not set or missing');
   const merchant = displayNameOf('shop', env);
-  const shopParty = partyByRole(parties, 'shop');
+  const shopParty = partyByRole(parties, 'shop', env);
   const { assertShopJournal, shopStateDir, startShop } = await import('../../shop/src/boot.js');
   const shopState = shopStateDir(env);
   const ordersJournal = ordersJournalPath(env);
@@ -117,7 +117,7 @@ async function main(): Promise<number> {
   try {
     // Checks every step needs, before anything is written.
     const mirror = new MirrorClient(env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl);
-    const agentParty = partyByRole(parties, 'agent');
+    const agentParty = partyByRole(parties, 'agent', env);
     // 1 HBAR covers the agent's record fees (the facilitator pays the transfer's fee). Until the
     // order's payment is signed the agent must also hold its price, in HBAR (and then no USDC) when
     // paying in HBAR. A rerun with --order prices the journaled basket, and once a payment is signed

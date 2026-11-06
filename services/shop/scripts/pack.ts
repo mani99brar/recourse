@@ -29,7 +29,7 @@ type Env = Record<string, string | undefined>;
 function confirmFrom(env: Env): PackConfirm | undefined {
   if (!env.PARTIES_FILE || !existsSync(env.PARTIES_FILE)) return undefined;
   const parties = readParties(env);
-  return { reader: new TopicReader(mirrorFromEnv(env), recordsTopicId(env)), parties, shop: partyByRole(parties, 'shop').evmAddress };
+  return { reader: new TopicReader(mirrorFromEnv(env), recordsTopicId(env)), parties, shop: partyByRole(parties, 'shop', env).evmAddress };
 }
 
 const ATTRS = ['brand', 'size', 'colour', 'quantity', 'price', 'merchant'] as const;
