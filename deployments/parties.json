@@ -71,5 +71,86 @@
     "evmAddress": "0xa16eC81150F648aC59f39d11aaB2dAdB1db84e32",
     "hcsWriters": [],
     "displayName": "Recourse Payment Relay"
+  },
+  {
+    "role": "shop",
+    "evmAddress": "0xb4C740B6774c79EeCD37775F61fbD509ED76C042",
+    "hederaAccountId": "0.0.11345369",
+    "hcsWriters": [
+      "0.0.11345369"
+    ],
+    "agentId": "171",
+    "displayName": "Kestrel Outfitters"
+  },
+  {
+    "role": "shop",
+    "evmAddress": "0x980c2FEe3C8F5E9221688A372B3ECD81D1984baB",
+    "hederaAccountId": "0.0.11345370",
+    "hcsWriters": [
+      "0.0.11345370"
+    ],
+    "agentId": "172",
+    "displayName": "Fernhill Market"
+  },
+  {
+    "role": "shop",
+    "evmAddress": "0x2B0F99829Ee41c5e23bb378be36672c2564223d3",
+    "hederaAccountId": "0.0.11345372",
+    "hcsWriters": [
+      "0.0.11345372"
+    ],
+    "agentId": "173",
+    "displayName": "Quillon Data"
+  },
+  {
+    "role": "platform",
+    "evmAddress": "0x5bdda3774E8D25d9B96e2a032aeaeD91aB1b7C04",
+    "hederaAccountId": "0.0.11345374",
+    "hcsWriters": [
+      "0.0.11345375"
+    ],
+    "agentId": "174",
+    "displayName": "Wren Errands"
+  },
+  {
+    "role": "agent",
+    "evmAddress": "0x08b2Cf878bFcb7A390e1a7C3685220B6820Dd0C9",
+    "hederaAccountId": "0.0.11345375",
+    "hcsWriters": [],
+    "displayName": "Wren Errands Shopping Agent"
+  },
+  {
+    "role": "platform",
+    "evmAddress": "0x9fA8b40E2d31EBe2249077a38a3ca5Cf570c4173",
+    "hederaAccountId": "0.0.11345377",
+    "hcsWriters": [
+      "0.0.11345379"
+    ],
+    "agentId": "175",
+    "displayName": "Tallyhouse Procurement"
+  },
+  {
+    "role": "agent",
+    "evmAddress": "0xab558313DB4CAD0038a2c0F6a4951ccf109DE133",
+    "hederaAccountId": "0.0.11345379",
+    "hcsWriters": [],
+    "displayName": "Tallyhouse Procurement Agent"
+  },
+  {
+    "role": "platform",
+    "evmAddress": "0x62504F96e82A095c87A34912cC6cE11ec00F4bBb",
+    "hederaAccountId": "0.0.11345380",
+    "hcsWriters": [
+      "0.0.11345381"
+    ],
+    "agentId": "176",
+    "displayName": "Lumen Metrics"
+  },
+  {
+    "role": "agent",
+    "evmAddress": "0xD68fe9a7410eC0B98f23DaC4851C4251cd6B7A06",
+    "hederaAccountId": "0.0.11345381",
+    "hcsWriters": [],
+    "displayName": "Lumen Metrics Data Agent"
   }
 ]
