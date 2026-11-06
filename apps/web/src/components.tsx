@@ -18,7 +18,7 @@ export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; err
           : 'The status service cannot be reached. What you see may be out of date.',
     );
   }
-  if (fresh?.degraded?.length) notes.push(`Some sources are running late (${fresh.degraded.join(', ')}). Figures may lag the chain.`);
+  if (fresh?.degraded?.length) notes.push(`Some sources are running late: ${fresh.degraded.map((d) => lateWords(d, fresh.asOf)).join(', ')}. Figures may lag the chain.`);
   const text = notes.filter(Boolean);
   if (!text.length) return null;
   return (
@@ -28,6 +28,19 @@ export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; err
       ))}
     </div>
   );
+}
+
+const SOURCE_WORDS: Record<string, string> = { hedera: 'Hedera', arbitrum: 'Arbitrum', hcs: 'the records topic', params: 'the contract parameters' };
+
+/** One late source and how far behind it is: "Hedera (4 min behind)", "the records topic (not read through yet)". */
+export function lateWords(source: string, asOf: Fresh['asOf'], nowMs: number = Date.now()): string {
+  const name = SOURCE_WORDS[source] ?? source;
+  if (source === 'params') return `${name} (not read yet)`;
+  const through = asOf?.[source as 'hedera' | 'arbitrum' | 'hcs'];
+  if (through === undefined) return name;
+  if (through === null) return `${name} (not read through yet)`;
+  const s = Math.max(0, Math.round(nowMs / 1000 - through));
+  return `${name} (${s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`} behind)`;
 }
 
 export function Card({ title, children, id }: { title: string; children: ReactNode; id?: string }) {

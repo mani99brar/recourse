@@ -2,7 +2,7 @@ import { CIRCLE_VAULT_TOKEN, STATUS_KEYS, vaultTokenOf } from '@recourse/shared'
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { Shell, route } from '../src/App.js';
-import { Banner } from '../src/components.js';
+import { Banner, lateWords } from '../src/components.js';
 import { ApiFailure } from '../src/lib/api.js';
 import { mockNote, parseUsdc, usdc } from '../src/lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS } from '../src/lib/words.js';
@@ -90,6 +90,14 @@ describe('pages render', () => {
     expect(renderToString(<Banner fresh={{ configLock: { allLocked: false, notice } }} />)).toContain('Not every contract is locked yet');
     expect(renderToString(<Banner fresh={{ configLock: { allLocked: true, notice: null } }} />)).toBe('');
     expect(renderToString(<CaseView d={detail('at_court')} />)).not.toContain('locked');
+  });
+  it('names each late source and how far behind it is', () => {
+    const now = 1_700_000_000_000;
+    const asOf = { hedera: 1_700_000_000 - 240, arbitrum: 1_700_000_000 - 30, hcs: null };
+    expect(lateWords('hedera', asOf, now)).toBe('Hedera (4 min behind)');
+    expect(lateWords('arbitrum', asOf, now)).toBe('Arbitrum (30 s behind)');
+    expect(lateWords('hcs', asOf, now)).toBe('the records topic (not read through yet)');
+    expect(renderToString(<Banner fresh={{ degraded: ['hcs'], asOf }} />)).toContain('the records topic (not read through yet)');
   });
   it('degraded and unreachable states show a banner, not a crash', () => {
     expect(renderToString(<Banner fresh={{ degraded: ['hedera'] }} />)).toContain('running late');

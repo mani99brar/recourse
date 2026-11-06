@@ -3,7 +3,8 @@ import { Indexer } from '../src/indexer.js';
 import { DocFetcher } from '../src/ipfs.js';
 import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
-import { CLAIMS, VAULT, buildClaim } from './helpers/fixtures.js';
+import { CLAIMS, TOPIC, VAULT, buildClaim } from './helpers/fixtures.js';
+import type { FetchLike } from '../src/http.js';
 import { FakeMirror } from './helpers/mirror.js';
 import { harness, testConfig, testDeployments, testParties } from './helpers/service.js';
 
@@ -67,5 +68,44 @@ describe('lag on a quiet source', () => {
     r.setHead();
     await r.indexer.pollOnce();
     expect(r.h.svc.degraded()).toEqual([]);
+  });
+});
+
+describe('the rebuild gate', () => {
+  function fresh(opts: { topicFails: boolean }) {
+    const m = new FakeMirror();
+    const sim = new Sim(1_700_000_000n);
+    buildClaim(sim, 'finding_made', 1);
+    m.addLogs(CLAIMS, sim.logs.filter((l) => l.contract === 'claims'));
+    m.addLogs(VAULT, sim.logs.filter((l) => l.contract === 'vault'));
+    const now = 1_700_000_100;
+    m.headTs = `${now}.000000000`;
+    const fetch: FetchLike = async (url, init) =>
+      opts.topicFails && url.includes('/topics/') ? { ok: false, status: 400, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) } : m.fetch(url, init);
+    const store = new Store();
+    store.rebuilding = true; // no snapshot
+    const cfg = testConfig({ recordsTopic: TOPIC, viewCacheMs: 0 });
+    const deployments = testDeployments({ caseAddress: undefined });
+    const docs = new DocFetcher({ fetch: async () => new Response(null, { status: 503 }), ipfs: null, ratePerMin: 10, timeoutMs: 100 });
+    const indexer = new Indexer({ store, cfg, deployments, fetch, arbRpc: null, reader: null, parties: () => testParties(), docs, nowS: () => now });
+    const h = harness({ store, now, reader: null, cfg: { recordsTopic: TOPIC }, deployments: { caseAddress: undefined } });
+    return { m, store, indexer, h };
+  }
+
+  it('a fresh store serves once the claims have caught up, even while the records topic keeps failing', async () => {
+    const r = fresh({ topicFails: true });
+    await r.indexer.pollOnce();
+    expect(r.store.status.hcs.failing).toBe(true);
+    expect(r.store.rebuilding).toBe(false);
+    expect(r.h.svc.degraded()).toContain('hcs');
+    expect(r.h.svc.degraded()).not.toContain('hedera');
+    expect((await r.h.svc.claimRows()).length).toBe(1);
+  });
+
+  it('stays rebuilding while the claims source itself has not read through', async () => {
+    const r = fresh({ topicFails: false });
+    r.m.failNext = 100;
+    await r.indexer.pollOnce();
+    expect(r.store.rebuilding).toBe(true);
   });
 });

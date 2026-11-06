@@ -80,14 +80,17 @@ export class Indexer {
     if (store.rebuilding && this.caughtUp()) store.rebuilding = false;
   }
 
+  /**
+   * A fresh store answers once the source that defines the claims has read through to its head:
+   * Hedera when configured (else Arbitrum, else the topic). Waiting for every source made one
+   * failing source, such as the records topic, hide all data indefinitely; the other sources'
+   * lag shows in `degraded`, and records the topic has not been read to yet read as unknown.
+   */
   private caughtUp(): boolean {
     const dep = this.d.deployments;
     const st = this.d.store.status;
-    const need: SourceName[] = [];
-    if (dep.claims || dep.vault) need.push('hedera');
-    if (dep.caseAddress) need.push('arbitrum');
-    if (this.d.cfg.recordsTopic !== '') need.push('hcs');
-    return need.every((n) => st[n].indexedThrough !== null && !st[n].failing);
+    const lead: SourceName | null = dep.claims || dep.vault ? 'hedera' : dep.caseAddress ? 'arbitrum' : this.d.cfg.recordsTopic !== '' ? 'hcs' : null;
+    return lead === null || (st[lead].indexedThrough !== null && !st[lead].failing);
   }
 
   private async evidence(arb: ArbDeps): Promise<void> {
