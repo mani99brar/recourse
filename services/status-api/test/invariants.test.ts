@@ -1,11 +1,15 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { Indexer } from '../src/indexer.js';
 import { plain } from '../src/json.js';
-import { Store } from '../src/store.js';
+import { Store, identityOf, sameIdentity } from '../src/store.js';
 import { pollHedera } from '../src/sources/hedera.js';
 import { Sim } from './helpers/encode.js';
-import { CLAIMS, SHOP2, STAGES, VAULT, buildClaim, ingest } from './helpers/fixtures.js';
+import { CLAIMS, SHOP2, STAGES, TOPIC, VAULT, buildClaim, ingest } from './helpers/fixtures.js';
 import { FakeMirror } from './helpers/mirror.js';
-import { harness } from './helpers/service.js';
+import { harness, testDeployments } from './helpers/service.js';
 
 function world() {
   const sim = new Sim();
@@ -91,5 +95,33 @@ describe('rebuild equals incremental', () => {
   it('a corrupt snapshot is refused so the caller rebuilds', () => {
     expect(Store.fromJSON('{not json')).toBeNull();
     expect(Store.fromJSON('{"v":2}')).toBeNull();
+  });
+
+  it('a snapshot keeps its deployment and rebuilding flag, and one from another deployment or topic is not loaded', () => {
+    const { sim } = world();
+    const identity = identityOf(testDeployments(), TOPIC);
+    const a = new Store();
+    ingest(a, sim);
+    a.identity = identity;
+    a.rebuilding = true; // written before the first full read finished
+    const dir = mkdtempSync(join(tmpdir(), 'status-snap-'));
+    writeFileSync(join(dir, 'snapshot.json'), a.toJSON());
+
+    const same = Indexer.loadSnapshot(dir, identity);
+    expect(same?.identity).toEqual(identity);
+    expect(same?.rebuilding).toBe(true);
+    expect(same?.events.size).toBe(a.events.size);
+    expect(Indexer.loadSnapshot(dir, identityOf(testDeployments({ claims: SHOP2 }), TOPIC))).toBeNull();
+    expect(Indexer.loadSnapshot(dir, identityOf(testDeployments(), '0.0.999'))).toBeNull();
+    expect(Indexer.loadSnapshot(dir, identityOf(testDeployments({ arbitrumStartBlock: 5n }), TOPIC))).toBeNull();
+
+    // One written before identities were kept cannot be told apart from another deployment's.
+    const old = JSON.parse(a.toJSON()) as Record<string, unknown>;
+    delete old.identity;
+    delete old.rebuilding;
+    writeFileSync(join(dir, 'snapshot.json'), JSON.stringify(old));
+    expect(Store.fromJSON(JSON.stringify(old))?.rebuilding).toBe(false);
+    expect(Indexer.loadSnapshot(dir, identity)).toBeNull();
+    expect(sameIdentity(null, identity)).toBe(false);
   });
 });

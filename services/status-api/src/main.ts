@@ -16,7 +16,7 @@ import { ViemActionReads, type ActionReads } from './chain.js';
 import { ViemReader, type Reader } from './live.js';
 import { StatusService } from './service.js';
 import { viemArbRpc } from './sources/viem-arb.js';
-import { Store } from './store.js';
+import { Store, identityOf } from './store.js';
 
 /** How often the live values a request may wait on are read again in the background (about 20 eth_calls a run). */
 const WARM_EVERY_MS = 30_000;
@@ -24,9 +24,12 @@ const WARM_EVERY_MS = 30_000;
 function main(): void {
   const cfg = loadConfig();
   const deployments = loadDeployments(cfg.deploymentsDir);
-  const loaded = Indexer.loadSnapshot(cfg.stateDir);
+  const identity = identityOf(deployments, cfg.recordsTopic);
+  const loaded = Indexer.loadSnapshot(cfg.stateDir, identity);
   const store = loaded ?? new Store();
-  store.rebuilding = loaded === null;
+  store.identity = identity;
+  // A snapshot saved before the first full read finished still says rebuilding.
+  store.rebuilding = loaded === null || loaded.rebuilding;
 
   let parties: Parties | null = null;
   const loadParties = () => {

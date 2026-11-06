@@ -12,7 +12,7 @@ import { refreshLive, refreshPreChecks, type Reader } from './live.js';
 import { pollArbitrum, pollEvidence, type ArbDeps, type ArbRpc } from './sources/arbitrum.js';
 import { pollHcs } from './sources/hcs.js';
 import { pollHedera, type MirrorDeps } from './sources/hedera.js';
-import { Store } from './store.js';
+import { Store, sameIdentity, type SnapshotIdentity } from './store.js';
 import type { SourceName } from './types.js';
 
 export interface IndexerDeps {
@@ -143,14 +143,24 @@ export class Indexer {
     renameSync(tmp, this.snapshotPath());
   }
 
-  /** Loads the snapshot into the store's place; returns the loaded store or null (rebuild). */
-  static loadSnapshot(stateDir: string): Store | null {
+  /**
+   * Loads the snapshot into the store's place; returns the loaded store or null (rebuild). With
+   * `identity`, a snapshot built from another deployment or records topic (or one that does not say)
+   * is null too.
+   */
+  static loadSnapshot(stateDir: string, identity?: SnapshotIdentity): Store | null {
     if (stateDir === '') return null;
+    let s: Store | null;
     try {
-      return Store.fromJSON(readFileSync(join(stateDir, 'snapshot.json'), 'utf8'));
+      s = Store.fromJSON(readFileSync(join(stateDir, 'snapshot.json'), 'utf8'));
     } catch {
       return null;
     }
+    if (s && identity && !sameIdentity(s.identity, identity)) {
+      console.log('status-api: the snapshot was read from another deployment or records topic; rebuilding');
+      return null;
+    }
+    return s;
   }
 
   start(): void {

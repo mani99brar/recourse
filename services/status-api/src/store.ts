@@ -74,6 +74,42 @@ export interface EvidenceItem {
   time: bigint;
 }
 
+/**
+ * What a snapshot was built from. One built from other contracts, chains, start points or records
+ * topic is not loaded: its events and cursors belong to that deployment.
+ */
+export interface SnapshotIdentity {
+  claims: string | null;
+  vault: string | null;
+  caseAddress: string | null;
+  hederaChainId: number;
+  arbitrumChainId: number;
+  hederaStart: string | null;
+  arbitrumStartBlock: string;
+  recordsTopic: string;
+}
+
+export function identityOf(
+  dep: { claims?: string; vault?: string; caseAddress?: string; hederaChainId: number; arbitrumChainId: number; hederaStart?: string; arbitrumStartBlock: bigint },
+  recordsTopic: string,
+): SnapshotIdentity {
+  return {
+    claims: dep.claims?.toLowerCase() ?? null,
+    vault: dep.vault?.toLowerCase() ?? null,
+    caseAddress: dep.caseAddress?.toLowerCase() ?? null,
+    hederaChainId: dep.hederaChainId,
+    arbitrumChainId: dep.arbitrumChainId,
+    hederaStart: dep.hederaStart ?? null,
+    arbitrumStartBlock: dep.arbitrumStartBlock.toString(),
+    recordsTopic,
+  };
+}
+
+/** False for a snapshot from before identities were kept (null): it cannot be told apart from another deployment's. */
+export function sameIdentity(a: SnapshotIdentity | null, b: SnapshotIdentity): boolean {
+  return a !== null && (Object.keys(b) as (keyof SnapshotIdentity)[]).every((k) => a[k] === b[k]);
+}
+
 function emptyStatus(): SourceStatus {
   return {
     cursor: '',
@@ -98,6 +134,8 @@ export class Store {
   evidenceCursor: Record<string, bigint> = {};
   status: Record<SourceName, SourceStatus> = { hedera: emptyStatus(), arbitrum: emptyStatus(), hcs: emptyStatus() };
   rebuilding = false;
+  /** The deployment and topic this state was read from; kept in the snapshot. */
+  identity: SnapshotIdentity | null = null;
   /** Newest Arbitrum block at the finalized tag, when known. */
   arbFinalized: bigint | null = null;
   /**
@@ -188,6 +226,9 @@ export class Store {
     return JSON.stringify(
       {
         v: 1,
+        identity: this.identity,
+        // A snapshot written before the first full read still answers `rebuilding` after a restart.
+        rebuilding: this.rebuilding,
         events: [...this.events.values()],
         hcs: [...this.hcs.values()],
         cursors: this.cursors,
@@ -204,6 +245,8 @@ export class Store {
     try {
       const o = JSON.parse(text, snapshotReviver) as {
         v: number;
+        identity?: SnapshotIdentity | null;
+        rebuilding?: boolean;
         events: IndexedEvent[];
         hcs: HcsRecord[];
         cursors: Cursors;
@@ -219,6 +262,8 @@ export class Store {
       s.live = new Map(o.live);
       s.addEvidence(o.evidence);
       s.evidenceCursor = o.evidenceCursor;
+      s.identity = o.identity ?? null;
+      s.rebuilding = o.rebuilding === true;
       return s;
     } catch {
       return null;
