@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { hcsWritersFor, type Parties } from '@recourse/shared';
 import type { Config } from './config.js';
 import type { Deployments } from './deployments.js';
-import type { FetchLike } from './http.js';
+import { safeError, type FetchLike } from './http.js';
 import type { DocFetcher } from './ipfs.js';
 import { refreshLive, refreshPreChecks, type Reader } from './live.js';
 import { pollArbitrum, pollEvidence, type ArbDeps, type ArbRpc } from './sources/arbitrum.js';
@@ -108,8 +108,12 @@ export class Indexer {
         if (attempt !== 1 && attempt !== 2) continue;
         try {
           await pollEvidence(store, arb, dep.outside.evidenceModule, dep.arbitrumChainId, dep.caseAddress, id as `0x${string}`, attempt, e.block);
-        } catch {
-          // evidence is shown when readable; the case itself does not depend on it
+        } catch (err) {
+          // Evidence is shown when readable and the case itself does not depend on it, so the
+          // source is not failing; the error still shows in /health. The next poll goes on from the
+          // last range read.
+          store.status.arbitrum.lastError = `evidence: ${safeError(err)}`;
+          store.status.arbitrum.lastErrorAt = this.d.nowS();
         }
       }
     }

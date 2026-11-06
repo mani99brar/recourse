@@ -95,7 +95,8 @@ export async function pollArbitrum(
 /**
  * Evidence submitted to the EvidenceModule for this claim's court attempts. The module serves
  * every dispute on the chain, so the query filters on our external ids and starts at the block
- * where the case was opened.
+ * where the case was opened. Read in ARB_LOG_CHUNK ranges, the cursor kept after each, as the case
+ * logs are: an RPC that caps the range of eth_getLogs would otherwise refuse an older case's query.
  */
 export async function pollEvidence(
   store: Store,
@@ -111,28 +112,31 @@ export async function pollEvidence(
   const key = ext.toString();
   const head = await d.rpc.blockNumber();
   const to = head - BigInt(d.confirmations);
-  const from = store.evidenceCursor[key] ?? fromBlock;
-  if (from > to) return;
+  let from = store.evidenceCursor[key] ?? fromBlock;
   const topic = ('0x' + ext.toString(16).padStart(64, '0')) as Hex;
   // topics[0] is the event signature; build it from the ABI.
   const sig = toEventSelector(evidenceAbi[0]);
-  const rows = await d.rpc.logs({ address: evidenceModule, fromBlock: from, toBlock: to, topics: [sig, topic] });
-  const items = [];
-  for (const row of rows) {
-    try {
-      const dec = decodeEventLog({ abi: evidenceAbi, topics: row.topics as [Hex], data: row.data });
-      items.push({
-        externalId: key,
-        party: (dec.args as { _party: string })._party,
-        uri: (dec.args as { _evidence: string })._evidence,
-        tx: row.transactionHash,
-        logIndex: row.logIndex,
-        time: await d.rpc.blockTime(row.blockNumber),
-      });
-    } catch {
-      store.status.arbitrum.decodeFailures++;
+  while (from <= to) {
+    const chunkTo = from + BigInt(d.chunk) - 1n < to ? from + BigInt(d.chunk) - 1n : to;
+    const rows = await d.rpc.logs({ address: evidenceModule, fromBlock: from, toBlock: chunkTo, topics: [sig, topic] });
+    const items = [];
+    for (const row of rows) {
+      try {
+        const dec = decodeEventLog({ abi: evidenceAbi, topics: row.topics as [Hex], data: row.data });
+        items.push({
+          externalId: key,
+          party: (dec.args as { _party: string })._party,
+          uri: (dec.args as { _evidence: string })._evidence,
+          tx: row.transactionHash,
+          logIndex: row.logIndex,
+          time: await d.rpc.blockTime(row.blockNumber),
+        });
+      } catch {
+        store.status.arbitrum.decodeFailures++;
+      }
     }
+    store.addEvidence(items);
+    store.evidenceCursor[key] = chunkTo + 1n;
+    from = chunkTo + 1n;
   }
-  store.addEvidence(items);
-  store.evidenceCursor[key] = to + 1n;
 }
