@@ -60,6 +60,6 @@ const header = [
   `- Results: pass ${counts.pass}, fail ${counts.fail}, blocked ${counts.blocked}, dry-only ${counts['dry-only']}`,
   '',
 ];
-writeFileSync(join(dir, 'results.md'), `${header.join('\n')}${testTable(rows)}\n`);
+writeFileSync(join(dir, 'results.md'), `${header.join('\n')}\n${testTable(rows)}\n`);
 console.log(`${header.join('\n')}\nresults: ${join(dir, 'results.md')}`);
 process.exit(counts.fail ? 1 : 0);
