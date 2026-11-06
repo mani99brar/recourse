@@ -11,12 +11,14 @@ import {MockEvidenceModule} from "../../test/arbitrum/mocks/MockEvidenceModule.s
 import {MockOffRamp} from "../../test/arbitrum/mocks/MockOffRamp.sol";
 import {MockTemplateRegistry} from "../../test/arbitrum/mocks/MockTemplateRegistry.sol";
 import {CaseScript} from "./CaseScript.sol";
+import {CaseTimeouts} from "./CaseTimeouts.sol";
 
 /// @notice LOCAL ONLY. Stands up the Arbitrum side on an anvil node with test mocks: the chainlink-local CCIP router
 /// and LINK, a MockArbitrator in place of KlerosCore (`giveRuling(disputeId, ruling)` delivers a ruling), a mock
 /// template registry and evidence module, and a MockOffRamp on this node and on the Hedera node (fixed addresses,
 /// placed with `anvil_setCode`). Then RecourseCase with the start parameters, template text and policy, a funded
-/// fee pool and LINK. Nothing is locked. Writes `deployments/arbitrum.local.json` (gitignored), never
+/// fee pool and LINK. Its claim timeout is Hedera's locked one less the relay budget (CaseTimeouts), as the testnet
+/// deploy gives it. Nothing is locked. Writes `deployments/arbitrum.local.json` (gitignored), never
 /// `arbitrum.json`.
 ///
 ///   anvil --port 8560 &
@@ -37,6 +39,7 @@ import {CaseScript} from "./CaseScript.sol";
 ///   LOCAL_FEE_POOL          wei put in the fee pool (default 0.05 ether)
 ///   LOCAL_TRUSTED_RELAY     address allowed to call relayClaim (default none)
 ///   LOCAL_ARB_RPC_URL       URL of this node, recorded as `rpcUrl` (default http://127.0.0.1:8560)
+///   CASE_RELAY_BUDGET       seconds the case's claim timeout stays below Hedera's (default 7200, as the testnet deploy)
 ///   ARBITRUM_LOCAL_FILE     output file name inside deployments/, must end in .local.json
 ///
 /// Messages between the two nodes are carried by packages/court's local relay, which reads each send on one node
@@ -82,7 +85,8 @@ contract DeployLocal is CaseScript {
         d.owner = sender;
         d.params = _sharedParams();
         d.relayGas = _relayGas();
-        d.claimTimeout = _claimTimeout();
+        uint64 budget = uint64(vm.envOr("CASE_RELAY_BUDGET", uint256(CaseTimeouts.RELAY_BUDGET)));
+        d.claimTimeout = CaseTimeouts.caseClaimTimeout(_claimTimeout(), budget);
         d.variant = variant;
         d.parts = _parts(variant);
         d.policyURI = _policyURI();

@@ -49,6 +49,8 @@ const dev = (i: number) => mnemonicToAccount(DEV_MNEMONIC, { addressIndex: i });
 const ACCOUNT0 = dev(0).address;
 const OPS_HEDERA = dev(1); // the claims rulingRelayer in the local stack
 const OPS_ARB = dev(6); // set as the case contract's trusted relay; the CCIP relay process uses account 7
+/** DeployLocal gives the case Hedera's locked claim timeout less this (CaseTimeouts.RELAY_BUDGET), as on testnet. */
+const RELAY_BUDGET_S = 7200;
 
 const claimsJson = JSON.parse(readFileSync(join(DEPLOYMENTS, 'abi', 'RecourseClaims.json'), 'utf8')) as Abi;
 const erc20 = parseAbi(['function approve(address spender, uint256 amount) returns (bool)']);
@@ -402,15 +404,18 @@ describe('keeper on two anvil nodes, no CCIP (bridge mode None)', () => {
   it('marks an expired case stale on Arbitrum (slot freed) before Hedera may expire the claim, then expires it there', async () => {
     const rig = st.makeKeeper();
     await st.syncClocks();
-    // The pre-check lands 10 min after filing, so Hedera's expiry comes 10 min after Arbitrum's.
+    // The case's timeout is Hedera's less the 2 h relay budget, and the pre-check lands 10 min after
+    // filing, so Hedera's expiry comes 2 h 10 min after Arbitrum's.
     const id = await st.toWatchingNone(rig, 2, { precheckDelayS: 600 });
     expect(await st.openCases()).toBe(1);
     const expiresAt = Number(await st.s.aClient.readContract({ address: st.s.arb.case, abi: caseAbi, functionName: 'expiresAt', args: [id] }));
+    const caseTimeout = Number(await st.s.aClient.readContract({ address: st.s.arb.case, abi: caseAbi, functionName: 'claimTimeout' }));
     const claim = await st.getClaim(id);
     const claimTimeout = await claimTimeoutOf();
-    expect(expiresAt).toBe(Number(claim.filedAt) + claimTimeout);
+    expect(caseTimeout).toBe(claimTimeout - RELAY_BUDGET_S);
+    expect(expiresAt).toBe(Number(claim.filedAt) + caseTimeout);
     const hederaExpiresAfter = Number(claim.preCheckedAt) + claimTimeout;
-    expect(hederaExpiresAfter - expiresAt).toBeGreaterThanOrEqual(600);
+    expect(hederaExpiresAfter - expiresAt).toBeGreaterThanOrEqual(RELAY_BUDGET_S + 600);
 
     // Arbitrum just past expiresAt; Hedera 5 min short of its own expiry.
     await st.mineAt(st.s.A_URL, expiresAt + 1);
