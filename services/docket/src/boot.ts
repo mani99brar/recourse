@@ -13,7 +13,7 @@ import { acquireLock } from './lock.js';
 import { ReviewWriter, type ReviewRow } from './reviews.js';
 import { viemReviewChain } from './reviewsChain.js';
 import { ArbitrumCaseSource, MirrorLogSource, RpcLogSource, type ArbReader } from './sources.js';
-import { readAbi, readArbitrumDeployment, readHederaDeployment } from './deployments.js';
+import { readAbi, readArbitrumDeployment, readHederaDeployment, type HederaDeployment } from './deployments.js';
 import { ArkivStore } from './store/arkiv.js';
 import { SdkArkivIo, arkivChain } from './store/arkivSdk.js';
 import { LocalStore } from './store/local.js';
@@ -57,9 +57,10 @@ export async function startDocket(env: Record<string, string | undefined> = proc
     retryMax: cfg.retryMax,
   });
 
-  const pollers = buildPollers(cfg, env, log);
+  const hedera = cfg.deploymentsDir === undefined ? null : readHederaDeployment(cfg.deploymentsDir, env.HEDERA_LOCAL_FILE);
+  const pollers = buildPollers(cfg, env, log, hedera);
   let lastError: string | null = null;
-  const app = createDocketApp({ docket, store: store.kind, rate: { publishThreshold: cfg.publishThreshold, sampleMode: cfg.sampleMode, z: cfg.z } });
+  const app = createDocketApp({ docket, store: store.kind, rate: { publishThreshold: cfg.publishThreshold, sampleMode: cfg.sampleMode, z: cfg.z }, vaultToken: hedera?.token ?? null });
   app.get('/sources', (_req, res) => res.json({ sources: pollers.map((p) => p.name), lastError }));
   app.listen(cfg.port, '127.0.0.1', () => log.info('listening', { port: cfg.port, store: store.kind, sources: pollers.length }));
 
@@ -95,7 +96,7 @@ function buildStore(cfg: DocketConfig): DocketStore {
   );
 }
 
-function buildPollers(cfg: DocketConfig, env: Record<string, string | undefined>, log: ReturnType<typeof createLogger>): Poller[] {
+function buildPollers(cfg: DocketConfig, env: Record<string, string | undefined>, log: ReturnType<typeof createLogger>, hedera: HederaDeployment | null): Poller[] {
   const out: Poller[] = [];
   if (cfg.deploymentsDir === undefined) {
     log.warn('no_deployments', { note: 'DEPLOYMENTS_DIR not set; no chain sources' });
@@ -104,7 +105,6 @@ function buildPollers(cfg: DocketConfig, env: Record<string, string | undefined>
   const dir = cfg.deploymentsDir;
   const claimsAbi = readAbi(dir, 'RecourseClaims');
   const vaultAbi = readAbi(dir, 'DepositVault');
-  const hedera = readHederaDeployment(dir, env.HEDERA_LOCAL_FILE);
   if (hedera) {
     if (hedera.local) {
       const rpc = env.HEDERA_RPC_URL_1;

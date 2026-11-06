@@ -620,8 +620,9 @@ export class StatusService {
         evidenceModule: dep.outside.evidenceModule,
         routerHedera: addressBook.hedera.router,
         routerArbitrum: addressBook.arbitrum.router,
-        usdc: addressBook.hedera.usdc.facade,
+        usdc: dep.token.address,
       },
+      vaultToken: dep.token,
       chains: { hedera: dep.hederaChainId, arbitrum: dep.arbitrumChainId },
       recordsTopic: this.d.cfg.recordsTopic || null,
       params: {

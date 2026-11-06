@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { PrecheckResult } from '@recourse/shared';
+import type { PrecheckResult, VaultToken } from '@recourse/shared';
 import { Banner, Card, Loading, Pill, Row } from '../components.js';
 import { ApiFailure, getApi, usePoll } from '../lib/api.js';
 import { parseUsdc, usdc } from '../lib/format.js';
@@ -14,6 +14,7 @@ interface OrderRecords {
 }
 interface ParamsBody {
   params: { claims: { courtFeeUsdc: string; contestWindow: string; handlingBase: string; handlingBps: string; handlingCap: string } };
+  vaultToken?: VaultToken;
 }
 interface PartyBody {
   role: string;
@@ -71,13 +72,14 @@ export function FilePage() {
 
   const outcome = state.data ? precheckFromRecords(state.data.orderId, state.data.records) : null;
   const p = params.data?.params.claims;
+  const token = params.data?.vaultToken;
   return (
     <>
       <h1>Check an order before filing</h1>
       <p className="lead">
         Load the records of an order and see what the pre-check would say. This page only checks. It does not sign, send or file anything; a shop files through its own service.
       </p>
-      <Banner error={params.error} />
+      <Banner error={params.error} token={token} />
       <Card title="1. The order">
         <label htmlFor="oid">Order id</label>
         <input id="oid" value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="0x…" spellCheck={false} />
@@ -122,11 +124,11 @@ export function FilePage() {
       <Card title="3. The amounts">
         <div className="fields">
           <div>
-            <label htmlFor="bk">Basket (USDC)</label>
+            <label htmlFor="bk">Basket ({token?.symbol ?? 'USDC'})</label>
             <input id="bk" inputMode="decimal" value={basket} onChange={(e) => setBasket(e.target.value)} placeholder="60.00" />
           </div>
           <div>
-            <label htmlFor="nl">Net loss (USDC)</label>
+            <label htmlFor="nl">Net loss ({token?.symbol ?? 'USDC'})</label>
             <input id="nl" inputMode="decimal" value={netLoss} onChange={(e) => setNetLoss(e.target.value)} placeholder="50.00" />
           </div>
           <div>
@@ -136,11 +138,11 @@ export function FilePage() {
         </div>
         {lossProblem && <p className="error">{lossProblem}</p>}
         <dl>
-          <Row label="Court fee you escrow">{p ? usdc(p.courtFeeUsdc) : 'loading'}</Row>
+          <Row label="Court fee you escrow">{p ? usdc(p.courtFeeUsdc, token) : 'loading'}</Row>
           <Row label="Contest window">{p ? `${Number(p.contestWindow) / 60} minutes after the pre-check` : 'loading'}</Row>
           {standing.data && (
             <Row label="Agent company deposit">
-              {standing.data.inGoodStanding ? 'in good standing' : 'not in good standing'}; holds {usdc(standing.data.balance)} of {usdc(standing.data.required)} required
+              {standing.data.inGoodStanding ? 'in good standing' : 'not in good standing'}; holds {usdc(standing.data.balance, token)} of {usdc(standing.data.required, token)} required
             </Row>
           )}
           {standing.data && standing.data.role === 'unknown' && <Row label="Note">This address is not on Recourse. A claim against it can still be filed, but any payout may be short (nothing is held for it).</Row>}

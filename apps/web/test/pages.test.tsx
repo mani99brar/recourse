@@ -1,10 +1,10 @@
-import { STATUS_KEYS } from '@recourse/shared';
+import { CIRCLE_VAULT_TOKEN, STATUS_KEYS, vaultTokenOf } from '@recourse/shared';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { Shell, route } from '../src/App.js';
 import { Banner } from '../src/components.js';
 import { ApiFailure } from '../src/lib/api.js';
-import { parseUsdc, usdc } from '../src/lib/format.js';
+import { mockNote, parseUsdc, usdc } from '../src/lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS } from '../src/lib/words.js';
 import { CaseView, type CaseDetail } from '../src/pages/Case.js';
 import { Finding } from '../src/pages/File.js';
@@ -54,6 +54,17 @@ describe('pages render', () => {
     expect(html).toContain('48.00 USDC');
     expect(html).toContain('20.00 USDC');
   });
+  it('labels every vault amount with the deployment token, and the mock as a testnet mock', () => {
+    const mock = vaultTokenOf({ usdc: { mode: 'mock', address: '0x' + '11'.repeat(20), decimals: 6, tokenId: null } });
+    const money = { owed: '68000000', paid: '20000000', credited: '20000000', notCovered: '48000000', escrow: { amount: '3000000', fate: 'kept_by_pool' }, projected: false };
+    const html = renderToString(<CaseView d={detail('settled', { money, vaultToken: mock })} />);
+    for (const amount of ['60.00', '50.00', '68.00', '48.00', '20.00', '3.00']) expect(html).toContain(`${amount} mUSDC (testnet mock)`);
+    expect(html).not.toMatch(/\d USDC/);
+    expect(renderToString(<CaseView d={detail('settled', { money, vaultToken: CIRCLE_VAULT_TOKEN })} />)).toContain('48.00 USDC');
+    expect(renderToString(<Banner fresh={{ vaultToken: mock }} />)).toContain('testnet mock of USDC');
+    expect(renderToString(<Banner token={mock} />)).toContain('worth nothing');
+    expect(renderToString(<Banner fresh={{ vaultToken: CIRCLE_VAULT_TOKEN }} />)).toBe('');
+  });
   it('degraded and unreachable states show a banner, not a crash', () => {
     expect(renderToString(<Banner fresh={{ degraded: ['hedera'] }} />)).toContain('running late');
     expect(renderToString(<Banner error={new ApiFailure(0, 'unreachable')} />)).toContain('cannot be reached');
@@ -92,6 +103,12 @@ describe('helpers', () => {
   });
   it('formats and parses amounts', () => {
     expect(usdc('3000000')).toBe('3.00 USDC');
+    expect(usdc('3000000', CIRCLE_VAULT_TOKEN)).toBe('3.00 USDC');
+    expect(usdc(1_234_560_000n, { label: 'mUSDC (testnet mock)' })).toBe('1,234.56 mUSDC (testnet mock)');
+    expect(usdc(null, { label: 'mUSDC (testnet mock)' })).toBe('not yet known');
+    expect(mockNote({ mode: 'mock' })).toContain('mUSDC');
+    expect(mockNote({ mode: 'circle' })).toBeNull();
+    expect(mockNote(undefined)).toBeNull();
     expect(parseUsdc('12.5')).toBe(12_500_000n);
     expect(parseUsdc('-1')).toBeNull();
     expect(parseUsdc('1.1234567')).toBeNull();

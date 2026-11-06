@@ -19,13 +19,19 @@
 // is set; otherwise an inline `data:application/json;base64,` document, changed later with
 // `--update-uris`. The inline shop document names the x402 asset of PRICE_ASSET, so a change of
 // asset needs `--update-uris` too. The agent company's is inline until a pinned document exists.
+//
+// The shop's and platform's USDC is the vault's token, the one deployments/hedera.json records
+// (Circle USDC on the mirror node, or the testnet mock by balanceOf on HEDERA_RPC_URL_1); with no
+// deployment yet it is Circle's, and a record whose usdc object does not validate stops the script.
+// The agent's USDC is the x402 asset, Circle's.
 
 import { parseArgs } from 'node:util';
 import { Client, PrivateKey, TopicCreateTransaction } from '@hiero-ledger/sdk';
 import { createPublicClient, createWalletClient, http, parseEventLogs, type Address, type Hex, type PrivateKeyAccount } from 'viem';
 import { hederaTestnet } from 'viem/chains';
-import { accountIdOf, addressBook, erc8004IdentityAbi, priceAssetIdOf, priceAssetOf } from '@recourse/shared';
+import { CIRCLE_VAULT_TOKEN, accountIdOf, addressBook, erc8004IdentityAbi, priceAssetIdOf, priceAssetOf } from '@recourse/shared';
 import { loadKeyBytes, loadSigner } from '@recourse/shared/node';
+import { DeploymentMissingError, balanceReader, publicClientFor, readHederaDeployment } from '../../shop/src/chain.js';
 import {
   MirrorClient,
   RECORDS_TOPIC_MEMO,
@@ -106,6 +112,16 @@ async function main(): Promise<number> {
   const agentAddress = loadSigner('AGENT_KEY_FILE', env).address;
   const facilitatorAddress = facilitatorId === undefined ? undefined : loadSigner('FACILITATOR_KEY_FILE', env).address;
 
+  // No deployment yet is Circle's USDC, as for a record with no usdc object; a bad record stops here.
+  let vault: ReturnType<typeof readHederaDeployment> | null = null;
+  try {
+    vault = readHederaDeployment({ env });
+  } catch (error) {
+    if (!(error instanceof DeploymentMissingError)) throw error;
+    console.log(`info  vault token: ${error.message}; shop and platform checked for Circle USDC`);
+  }
+  const vaultUsdc = vault ? { token: vault.token, balanceOf: balanceReader(publicClientFor(rpcUrl, vault.chainId)) } : { token: CIRCLE_VAULT_TOKEN };
+
   // Accounts this script sends from must pass; the others are reported for the payment check.
   const fatal = await Promise.all([
     checkAccount(mirror, { role: 'ops-hedera', accountId: ids['ops-hedera'], minTinybar: 1n * HBAR }),
@@ -115,8 +131,8 @@ async function main(): Promise<number> {
   const report = await Promise.all([
     // Paying for orders in HBAR, the agent needs no USDC.
     checkAccount(mirror, { role: 'agent', accountId: ids.agent, minTinybar: 1n * HBAR, evmAddress: agentAddress, ...(priceAssetOf(env) === 'hbar' ? {} : { usdc: { minBalance: 1n } }) }),
-    checkAccount(mirror, { role: 'shop (usdc)', accountId: ids.shop, usdc: {} }),
-    checkAccount(mirror, { role: 'platform (usdc)', accountId: ids.platform, usdc: {} }),
+    checkAccount(mirror, { role: `shop (${vaultUsdc.token.symbol})`, accountId: ids.shop, usdc: vaultUsdc }),
+    checkAccount(mirror, { role: `platform (${vaultUsdc.token.symbol})`, accountId: ids.platform, usdc: vaultUsdc }),
     ...(facilitatorId !== undefined && facilitatorAddress !== undefined
       ? [checkAccount(mirror, { role: 'facilitator', accountId: facilitatorId, minTinybar: 1n * HBAR, evmAddress: facilitatorAddress })]
       : []),

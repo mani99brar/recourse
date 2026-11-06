@@ -1,5 +1,6 @@
 // status-api entry point: `tsx src/main.ts`. Starts with whatever is configured; a missing
-// deployments directory or party file is reported by /health, never fatal.
+// deployments directory or party file is reported by /health, never fatal. A malformed `usdc`
+// object in the Hedera file stops startup: the vault token is never guessed.
 
 import { readParties } from '@recourse/shared/node';
 import type { Parties } from '@recourse/shared';

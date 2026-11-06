@@ -2,7 +2,7 @@ import { Banner, Card, Loading, Pill, Row } from '../components.js';
 import { usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when } from '../lib/format.js';
 import { GROUP_WORDS, STATUS_WORDS } from '../lib/words.js';
-import type { StatusKey } from '@recourse/shared';
+import type { StatusKey, VaultToken } from '@recourse/shared';
 
 interface RowT {
   claimId: string;
@@ -55,7 +55,7 @@ export function PartyPage({ address }: { address: string }) {
       <Banner fresh={data ?? undefined} error={error} />
       {error?.status === 400 && <p>That does not look like an address.</p>}
       {!data && !error && <Loading what="worklist" />}
-      {data?.standing && <Standing s={data.standing} address={address} />}
+      {data?.standing && <Standing s={data.standing} address={address} token={data.vaultToken} />}
       {data?.groups &&
         Object.entries(GROUP_WORDS).map(([k, label]) => {
           const ids = new Set(data.groups?.[k] ?? []);
@@ -69,7 +69,7 @@ export function PartyPage({ address }: { address: string }) {
   );
 }
 
-function Standing({ s, address }: { s: Standing; address: string }) {
+function Standing({ s, address, token }: { s: Standing; address: string; token: VaultToken | undefined }) {
   return (
     <Card title="Standing">
       <h1>{s.displayName ?? short(address)}</h1>
@@ -77,13 +77,13 @@ function Standing({ s, address }: { s: Standing; address: string }) {
         <Row label="Role">{s.role === 'unknown' ? 'Not a known party' : s.role === 'platform' ? 'Agent company' : s.role === 'shop' ? 'Shop' : s.role}</Row>
         {s.role !== 'shop' && (
           <>
-            <Row label="Deposit">{usdc(s.balance)} of {usdc(s.required)} required</Row>
+            <Row label="Deposit">{usdc(s.balance, token)} of {usdc(s.required, token)} required</Row>
             <Row label="Good standing">{s.inGoodStanding === null ? 'not read' : s.inGoodStanding ? 'yes' : 'no'}</Row>
             <Row label="Top-up due">{s.topUpDeadline && s.topUpDeadline !== '0' ? when(s.topUpDeadline) : 'nothing due'}</Row>
           </>
         )}
-        <Row label="Credit to withdraw">{usdc(s.credit)}</Row>
-        <Row label="Court fees held in escrow">{usdc(s.escrowOpen)}</Row>
+        <Row label="Credit to withdraw">{usdc(s.credit, token)}</Row>
+        <Row label="Court fees held in escrow">{usdc(s.escrowOpen, token)}</Row>
         <Row label="Open claims">{s.openClaims}</Row>
         {s.exitRequestedAt && <Row label="Exit requested">{when(s.exitRequestedAt)}</Row>}
       </dl>

@@ -8,6 +8,7 @@ import {
   createPublicClient,
   createWalletClient,
   defineChain,
+  erc20Abi,
   getAddress,
   http,
   type Abi,
@@ -18,7 +19,7 @@ import {
   type WalletClient,
 } from 'viem';
 import { hederaTestnet } from 'viem/chains';
-import { HEDERA_TESTNET_CHAIN_ID, addressBook } from '@recourse/shared';
+import { HEDERA_TESTNET_CHAIN_ID, vaultTokenOf, type VaultToken } from '@recourse/shared';
 
 type Env = Record<string, string | undefined>;
 
@@ -32,16 +33,27 @@ export interface HederaDeployment {
   chainId: number;
   claims: Address;
   vault: Address;
-  /** The USDC ERC-20 facade (the HTS token's EVM address, or the local mock). */
+  /** The vault's token, from the record's `usdc` object (none: Circle USDC). */
+  token: VaultToken;
+  /** The address every vault-side USDC read and approve uses: the token's, or a local file's `local.usdc`. */
   usdc: Address;
   /** Present in a local file only: the anvil accounts that play each role. */
   roles: { platform?: Address; shop?: Address } | null;
   file: string;
 }
 
+/** The deployment file is not there yet: as for a record with no `usdc` object, its vault token is Circle's. */
+export class DeploymentMissingError extends Error {
+  constructor(readonly file: string) {
+    super(`deployment: ${file} does not exist yet`);
+    this.name = 'DeploymentMissingError';
+  }
+}
+
 /**
  * Reads `hedera.json` from the deployments directory, or the `*.local.json` written for anvil that
- * `file` or HEDERA_LOCAL_FILE names (a bare file name).
+ * `file` or HEDERA_LOCAL_FILE names (a bare file name). A file that is not there yet throws
+ * DeploymentMissingError; a bad one, a plain Error.
  */
 export function readHederaDeployment(options: { env?: Env; file?: string } = {}): HederaDeployment {
   const name = options.file ?? (options.env ?? process.env).HEDERA_LOCAL_FILE ?? 'hedera.json';
@@ -49,20 +61,28 @@ export function readHederaDeployment(options: { env?: Env; file?: string } = {})
     throw new Error(`deployment: ${name} must be hedera.json or a bare *.local.json name`);
   }
   const file = join(deploymentsDir(options.env), name);
-  if (!existsSync(file)) throw new Error(`deployment: ${file} does not exist yet`);
+  if (!existsSync(file)) throw new DeploymentMissingError(file);
   const raw = JSON.parse(readFileSync(file, 'utf8')) as {
     chainId: number;
     contracts: { claims: { address: string }; vault: { address: string } };
     roles?: { platform?: string; shop?: string } | null;
     local?: { usdc?: string } | null;
+    usdc?: unknown;
   };
   const isLocal = file.endsWith('.local.json');
   if (!isLocal && raw.chainId !== HEDERA_TESTNET_CHAIN_ID) throw new Error(`deployment: ${file} is not for Hedera testnet`);
+  const token = vaultTokenOf(raw);
+  // A local file's mock sits at `local.usdc`; a record that also names a token must name the same one.
+  const localUsdc = isLocal && raw.local?.usdc ? getAddress(raw.local.usdc) : null;
+  if (localUsdc && raw.usdc !== undefined && localUsdc !== token.address) {
+    throw new Error(`deployment: ${file} has local.usdc ${localUsdc} but usdc.address ${token.address}`);
+  }
   return {
     chainId: raw.chainId,
     claims: getAddress(raw.contracts.claims.address),
     vault: getAddress(raw.contracts.vault.address),
-    usdc: getAddress(raw.local?.usdc ?? addressBook.hedera.usdc.facade),
+    token,
+    usdc: localUsdc ?? token.address,
     roles:
       isLocal && raw.roles
         ? {
@@ -72,6 +92,11 @@ export function readHederaDeployment(options: { env?: Env; file?: string } = {})
         : null,
     file,
   };
+}
+
+/** `balanceOf(holder)` on an ERC-20 by eth_call: the account checks' reader for a token with no mirror rows. */
+export function balanceReader(client: PublicClient): (token: Address, holder: Address) => Promise<bigint> {
+  return (token, holder) => client.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [holder] });
 }
 
 /** An ABI array from `deployments/abi/<name>.json`. */

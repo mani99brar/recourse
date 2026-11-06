@@ -1,8 +1,12 @@
 import type { ReactNode } from 'react';
+import type { VaultToken } from '@recourse/shared';
 import type { ApiFailure, Fresh } from './lib/api.js';
+import { mockNote } from './lib/format.js';
 
-export function Banner({ fresh, error }: { fresh?: Fresh | undefined; error?: ApiFailure | null }) {
+export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; error?: ApiFailure | null; token?: VaultToken | undefined }) {
   const notes: string[] = [];
+  const mock = mockNote(token ?? fresh?.vaultToken);
+  if (mock) notes.push(mock);
   if (error) {
     notes.push(
       error.code === 'rebuilding'

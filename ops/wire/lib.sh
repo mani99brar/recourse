@@ -19,6 +19,9 @@
 #   WIRE_LOCAL=1            local rehearsal: both chains must be local, and the three file names above must
 #                           be their own *.local.json names (never hedera.local.json or arbitrum.local.json)
 #   HEDERA_LINK, ARB_LINK   LINK token addresses (default: the testnet ones; a local run reads them from the files)
+#
+# The vault's USDC is the token the Hedera file records (load_deployed sets VAULT_USDC_MODE, VAULT_USDC and
+# the rest, see ops/lib/vault-token.sh): Circle's 0.0.429274, or the testnet mock mUSDC, which has no HTS id.
 set -euo pipefail
 
 WIRE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -39,7 +42,8 @@ HEDERA_RPC=${HEDERA_RPC_URL_1:-https://testnet.hashio.io/api}
 ARB_RPC=${ARB_RPC_URL:-https://sepolia-rollup.arbitrum.io/rpc}
 MIRROR=${HEDERA_MIRROR_URL:-https://testnet.mirrornode.hedera.com}
 MIRROR=${MIRROR%/}; MIRROR=${MIRROR%/api/v1}
-USDC_ID=0.0.429274
+# shellcheck source=../lib/vault-token.sh
+. "$ROOT/ops/lib/vault-token.sh"
 H_LINK_TESTNET=0x90a386d59b9A6a4795a011e8f032Fc21ED6FEFb6
 A_LINK_TESTNET=0xb1D4538B4571d411F07960EF2838Ce337FE1E80E
 PARAMS_JSON=$ROOT/packages/shared/vectors/params.json
@@ -98,6 +102,7 @@ load_deployed() {
   CLAIMS=$(jq -er .contracts.claims.address "$DEPLOY_DIR/$HEDERA_FILE")
   VAULT=$(jq -er .contracts.vault.address "$DEPLOY_DIR/$HEDERA_FILE")
   CASE=$(jq -er .contracts.case.address "$DEPLOY_DIR/$ARBITRUM_FILE")
+  vault_token "$DEPLOY_DIR/$HEDERA_FILE" || die "the usdc object in $HEDERA_FILE does not validate"
   if [ "$WIRE_LOCAL" = 1 ]; then
     HLINK=${HEDERA_LINK:-$(jq -er .local.link "$DEPLOY_DIR/$HEDERA_FILE")}
     ALINK=${ARB_LINK:-$(jq -er .mocks.link "$DEPLOY_DIR/$ARBITRUM_FILE")}

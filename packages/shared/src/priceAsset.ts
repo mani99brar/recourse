@@ -1,6 +1,7 @@
 // The asset x402 orders are priced and paid in, chosen by PRICE_ASSET. List prices and the agent's
 // spend limits are micro-USDC; in HBAR mode the shop asks for tinybar at a fixed rate, and the agent
-// compares the micro-USDC equivalent with its limits. The vault's money is always USDC.
+// compares the micro-USDC equivalent with its limits. The vault's money is the deployment's own
+// token, never the price asset (vaultToken.ts).
 
 import { addressBook } from './addresses.js';
 

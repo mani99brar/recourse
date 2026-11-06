@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { vaultTokenOf, type VaultToken } from '@recourse/shared';
 import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
 import { buildClaim, fakeReader, ingest } from './helpers/fixtures.js';
@@ -7,14 +8,16 @@ import { harness, serve } from './helpers/service.js';
 const closers: (() => void)[] = [];
 afterEach(() => closers.splice(0).forEach((c) => c()));
 
-async function boot(opts: { rebuilding?: boolean; origin?: string } = {}) {
+const MOCK_TOKEN = vaultTokenOf({ usdc: { mode: 'mock', address: '0x' + '11'.repeat(20), decimals: 6, tokenId: null } });
+
+async function boot(opts: { rebuilding?: boolean; origin?: string; token?: VaultToken } = {}) {
   const sim = new Sim();
   const b = buildClaim(sim, 'settled', 1);
   const store = new Store();
   ingest(store, sim);
   store.rebuilding = opts.rebuilding ?? false;
   for (const s of ['hedera', 'arbitrum', 'hcs'] as const) store.status[s].indexedThrough = Number(b.now);
-  const h = harness({ store, now: Number(b.now), reader: fakeReader(), ...(opts.origin ? { cfg: { webOrigin: opts.origin } } : {}) });
+  const h = harness({ store, now: Number(b.now), reader: fakeReader(), ...(opts.origin ? { cfg: { webOrigin: opts.origin } } : {}), ...(opts.token ? { deployments: { token: opts.token } } : {}) });
   const s = await serve(h.svc);
   closers.push(s.close);
   return { b, url: s.url, h };
@@ -80,6 +83,18 @@ describe('http api', () => {
     expect(p.disclosedPowers.map((x: { name: string }) => x.name)).toContain('setRequired');
     expect(p.addresses.offRampArbitrum.toLowerCase()).toContain('c93218eb');
     expect(p.schemeWallet).toMatch(/^0x/);
+    expect(p.addresses.usdc).toBe('0x0000000000000000000000000000000000068cDa');
+    expect(p.vaultToken).toMatchObject({ mode: 'circle', label: 'USDC' });
+  });
+
+  it('names the deployment token on every response, and the mock as a testnet mock', async () => {
+    const { url, b } = await boot({ token: MOCK_TOKEN });
+    const p = (await (await fetch(`${url}/params`)).json()) as any;
+    expect(p.addresses.usdc).toBe(MOCK_TOKEN.address);
+    for (const path of ['/params', '/claims', `/claims/${b.claimId}`, `/claims?party=${'0x' + '22'.repeat(20)}`, `/parties/${'0x' + '22'.repeat(20)}`]) {
+      const body = (await (await fetch(`${url}${path}`)).json()) as any;
+      expect(body.vaultToken, path).toEqual({ mode: 'mock', address: MOCK_TOKEN.address, decimals: 6, tokenId: null, symbol: 'mUSDC', label: 'mUSDC (testnet mock)' });
+    }
   });
 
   it('serves /parties/:address and /search', async () => {

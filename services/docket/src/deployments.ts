@@ -3,6 +3,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { vaultTokenOf, type VaultToken } from '@recourse/shared';
 
 function readJson(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return null;
@@ -25,6 +26,8 @@ export interface HederaDeployment {
   chainId: number;
   claims: `0x${string}`;
   vault: `0x${string}`;
+  /** The vault's token, from the file's `usdc` object (none: Circle USDC). */
+  token: VaultToken;
   /** Mirror-node cursor start, "secs.nanos". */
   startTimestamp: string | undefined;
   startBlock: bigint | undefined;
@@ -32,7 +35,8 @@ export interface HederaDeployment {
 
 /**
  * `localFile` is a bare `*.local.json` name in the deployments directory; when set, that file is
- * the Hedera deployment and events are read over RPC instead of the mirror node.
+ * the Hedera deployment and events are read over RPC instead of the mirror node. A `usdc` object
+ * that does not validate throws: the token is never guessed.
  */
 export function readHederaDeployment(dir: string, localFile?: string): HederaDeployment | null {
   const name = localFile ? basename(localFile) : 'hedera.json';
@@ -46,6 +50,7 @@ export function readHederaDeployment(dir: string, localFile?: string): HederaDep
     chainId: Number(j.chainId),
     claims,
     vault,
+    token: vaultTokenOf(j),
     startTimestamp: typeof j.startTimestamp === 'string' ? j.startTimestamp : undefined,
     startBlock: typeof j.startBlock === 'number' ? BigInt(j.startBlock) : undefined,
   };

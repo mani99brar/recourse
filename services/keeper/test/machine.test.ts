@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BridgeMode, CaseState, ClaimStatus, ExecutionState, externalIdUint } from '@recourse/shared';
+import { BridgeMode, CIRCLE_VAULT_TOKEN, CaseState, ClaimStatus, ExecutionState, externalIdUint, vaultTokenOf } from '@recourse/shared';
 import { keccak256, toHex, type Hex } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Alerter } from '../src/alerts.js';
@@ -44,7 +44,7 @@ function rig(opts: { fake?: FakeChains; dir?: string; keeper?: Partial<KeeperOpt
       return { ok: true, text, sha256: keccak256(toHex(text)) };
     },
   };
-  const k = new Keeper({ chains: fake, journal, alerter, stateDir: dir, evidence, now: () => fake.t, ...opts.keeper });
+  const k = new Keeper({ chains: fake, journal, alerter, stateDir: dir, evidence, now: () => fake.t, vaultToken: CIRCLE_VAULT_TOKEN, ...opts.keeper });
   k.start();
   return { dir, fake, journal, alerter, k, built };
 }
@@ -142,6 +142,19 @@ describe('happy path, both legs over CCIP', () => {
     expect(kinds(r).filter((k) => k === 'withdraw_due')).toHaveLength(1);
     await run(r, 3600, 300);
     expect(kinds(r).filter((k) => k === 'withdraw_due')).toHaveLength(1);
+    expect(r.alerter.pending().find((a) => a.kind === 'withdraw_due')?.hint).toContain('5000000 µUSDC of credit; run');
+  });
+
+  it('names the testnet mock in the withdraw_due alert when the vault runs on it', async () => {
+    const vaultToken = vaultTokenOf({ usdc: { mode: 'mock', address: `0x${'11'.repeat(20)}`, decimals: 6, tokenId: null } });
+    const r = rig({ keeper: { vaultToken } });
+    const id = await toWatching(r);
+    r.fake.rule(id, 1);
+    await run(r, 30);
+    r.fake.credit.set(SHOP.toLowerCase(), 5_000_000n);
+    r.fake.arrive(id);
+    await run(r, 60);
+    expect(r.alerter.pending().find((a) => a.kind === 'withdraw_due')?.hint).toContain('5000000 µmUSDC of credit (testnet mock); run');
   });
 });
 

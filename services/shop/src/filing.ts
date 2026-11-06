@@ -9,12 +9,15 @@
 // Local refusals come first: `net_loss_above_basket`, `no_order_record` (no ordered record in the
 // refs). The caller checks the shop's own payment record (`not_paid`) before calling. `exit_due`:
 // the platform's exit from the deposit vault is due, and the vault takes no new claim against it.
+// `token_mismatch`: the vault holds a token other than the deployment's, so nothing is approved.
 
 import {
   decodeEventLog,
   encodeFunctionData,
   erc20Abi,
+  getAddress,
   keccak256,
+  parseAbi,
   type Abi,
   type Address,
   type Hex,
@@ -33,6 +36,7 @@ export type FilingErrorCode =
   | 'approve_failed'
   | 'escrow_failed'
   | 'exit_due'
+  | 'token_mismatch'
   | 'reverted'
   | 'tx_pending';
 
@@ -76,6 +80,7 @@ export interface ClaimFilerDeps {
   clients: ChainClients;
   claims: Address;
   vault: Address;
+  /** The deployment's vault token (`HederaDeployment.usdc`); checked against `vault.usdc()`. */
   usdc: Address;
   claimsAbi: Abi;
   /** The vault's ABI, so reverts raised in the fee escrow (`ExitDue`, say) decode by name. */
@@ -86,6 +91,7 @@ export interface ClaimFilerDeps {
   receiptTimeoutMs?: number;
 }
 
+const VAULT_TOKEN_ABI = parseAbi(['function usdc() view returns (address)']);
 const GAS_MARGIN_NUM = 13n;
 const GAS_MARGIN_DEN = 10n;
 
@@ -165,7 +171,11 @@ export class ClaimFiler {
     if ((await this.statusOf(claimId)) !== 0) return this.markFiled(claimId, orderId, null, null);
     await this.refuseIfExitDue(input.platform);
 
-    // Exact allowance for the court fee; never unlimited.
+    // Exact allowance for the court fee, never unlimited, and only on the token the vault holds.
+    const held = await this.deps.clients.publicClient.readContract({ address: this.deps.vault, abi: VAULT_TOKEN_ABI, functionName: 'usdc' });
+    if (getAddress(held) !== getAddress(this.deps.usdc)) {
+      throw new FilingError('token_mismatch', `the vault holds ${getAddress(held)}, the deployment names ${getAddress(this.deps.usdc)}`);
+    }
     const fee = await this.courtFee();
     const allowance = await this.deps.clients.publicClient.readContract({
       address: this.deps.usdc,

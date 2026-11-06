@@ -18,6 +18,12 @@ S_EXTRA="https://sepolia.gateway.tenderly.co https://eth-sepolia-testnet.api.poc
 
 ADDRS=${ADDRS_FILE:-$HOME/.config/recourse/addresses.txt}
 
+# The vault's token, from the Hedera deployment record: Circle USDC (also with no usdc object, or no record),
+# or the testnet mock mUSDC, which has no HTS token id and so no mirror-node token row.
+. "$(dirname "$0")/../lib/vault-token.sh"
+HEDERA_RECORD="$(dirname "$0")/../../deployments/${HEDERA_FILE:-hedera.json}"
+vault_token "$HEDERA_RECORD" || exit 1
+
 # --- constants (public) ---
 HSEL=222782988166878823;  ASEL=3478487238524512106
 H_ROUTER=0x802C5F84eAD128Ff36fD6a3f8a418e339f467Ce4
@@ -36,7 +42,7 @@ PNK=0x34B944D42cAcfC8266955D07A80181D2054aa225
 PNKF=0x9f6ffc13B685A68ae359fCA128dfE776458Df464
 IDREG=0x8004A818BFB912233c491871b3d84c89A494BD9e
 REPREG=0x8004B663056A597Dffe9eCcC1965A193B7388713
-USDC_FACADE=0x0000000000000000000000000000000000068cda
+USDC_FACADE=$CIRCLE_USDC
 IMPL_SLOT=0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
 XD=0x$(printf '%064x%064x%064x' 8 3 1)
 BUDGET_MS=5000
@@ -88,11 +94,19 @@ if [[ -n $T ]]; then
   ok=PASS; [[ $mf == *payer_account_id* && $mf == *consensus_timestamp* ]] || ok="FAIL (field missing)"
   row MIRROR-3 "mirror: topic messages page (topic $T, sequencenumber=gte:1)" "fields: $mf" "$ok"
 else row MIRROR-3 "mirror: topic messages page" "no topic found to read" "NOT READ"; fi
-tk=$(curl -s -m 15 "$MIRROR/api/v1/tokens/0.0.429274" | jq -c '{symbol,decimals,type,deleted,pause_status,freeze_default}')
-ok=FAIL; [[ $tk == *'"symbol":"USDC"'* && $tk == *'"decimals":"6"'* && $tk == *'"deleted":false'* ]] && ok=PASS
-row USDC-1 "mirror: token 0.0.429274" "$tk" "$ok"
-r=$(cc $USDC_FACADE "symbol()(string)" --rpc-url "$H1"); d=$(cc $USDC_FACADE "decimals()(uint8)" --rpc-url "$H1")
-row USDC-2 "USDC EVM facade 0x...068cda: symbol, decimals" "$r, $d" "$([[ $r == '"USDC"' && $d == 6* ]] && echo PASS || echo FAIL)"
+if [[ $VAULT_USDC_MODE == mock ]]; then
+  c=$(timeout 20 cast code "$VAULT_USDC" --rpc-url "$H1" 2>&1 | head -c 200000)
+  if [[ $c == 0x?* ]]; then v="$(( (${#c} - 2) / 2 )) bytes of code"; ok=PASS; else v=$(echo "${c:-no answer}" | cl 100); ok=FAIL; fi
+  row USDC-1 "vault token: $VAULT_USDC_LABEL at $VAULT_USDC (from the deployment record; no HTS token, no mirror row)" "$v" "$ok"
+  r=$(cc "$VAULT_USDC" "symbol()(string)" --rpc-url "$H1"); d=$(cc "$VAULT_USDC" "decimals()(uint8)" --rpc-url "$H1")
+  row USDC-2 "$VAULT_USDC_LABEL by eth_call: symbol, decimals" "$r, $d" "$([[ $r == '"mUSDC"' && $d == 6* ]] && echo PASS || echo FAIL)"
+else
+  tk=$(curl -s -m 15 "$MIRROR/api/v1/tokens/$CIRCLE_USDC_ID" | jq -c '{symbol,decimals,type,deleted,pause_status,freeze_default}')
+  ok=FAIL; [[ $tk == *'"symbol":"USDC"'* && $tk == *'"decimals":"6"'* && $tk == *'"deleted":false'* ]] && ok=PASS
+  row USDC-1 "mirror: token $CIRCLE_USDC_ID" "$tk" "$ok"
+  r=$(cc $USDC_FACADE "symbol()(string)" --rpc-url "$H1"); d=$(cc $USDC_FACADE "decimals()(uint8)" --rpc-url "$H1")
+  row USDC-2 "USDC EVM facade 0x...068cda: symbol, decimals" "$r, $d" "$([[ $r == '"USDC"' && $d == 6* ]] && echo PASS || echo FAIL)"
+fi
 
 # Hedera network status
 st=$(curl -s -m 15 https://status.hedera.com/api/v2/summary.json)

@@ -28,16 +28,17 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 | Record hash | SHA-256 over the exact pinned bytes. Buyer fields are salted. |
 | `orderId`, `claimId` | `keccak256(abi.encode("recourse.order.v1", platform, shop, orderNonce))`. `claimId = keccak256(abi.encode(296, claims, orderId))`. One claim per order. |
 | `packHash` | SHA-256 of the pinned `precheck-result` document. |
-| Court fee | 1 USDC on the testnet demo, read from a parameter. |
+| Court fee | 1 USDC on the testnet demo (1 mUSDC while the vault runs on the testnet mock), read from a parameter. |
 | Exit | `requestExit` plus `exitDelay`. |
 | Stuck claims | `claimTimeout` is 18 h. On Hedera, `expireClaim` works on a Filed claim after `claimTimeout` from `filedAt`, and on a Contested or AtCourt claim after `claimTimeout` from `preCheckedAt`. A PreChecked claim never expires: it closes uncontested once its contest window ends. A later ruling is ignored, with an event. |
 | Stale cases | On Arbitrum, anyone can call `markStale` once `filedAt + claimTimeout` has passed; it frees the open-case slot. Arbitrum counts from `filedAt` and Hedera from `preCheckedAt`, so a ruling that lands in the few minutes between the two is ignored on Arbitrum, and the claim then expires on Hedera with the court fee refunded. Accepted. |
 | Exit and new claims | Once a requested exit is due, `escrowFee` and `fileClaim` revert with `ExitDue()`. |
 | Payout | `netLossUsdc ≤ basketUsdc`, checked at filing. The shop attests alone (disclosed). |
 | CCIP finality | Full finality, plain receivers. |
-| USDC association | Explicit, after deploy, checked on the mirror node. |
+| USDC association | Explicit, after deploy. On Circle USDC it is checked on the mirror node; the testnet mock is a plain ERC-20 with no token row, checked by `Vault.usdcAssociated()` and `Vault.usdc()`. |
 | Facilitator | x402.org first, then Blocky402, then self-hosted. |
-| Order payments | x402 orders on the testnet demo are priced and paid in HBAR (1 HBAR per 1 USDC of list price), set by PRICE_ASSET=hbar. Agent spend limits stay in USDC and the HBAR amount is converted before comparison. The deposit, court fee and payouts stay in Circle USDC on the vault. |
+| Order payments | x402 orders on the testnet demo are priced and paid in HBAR (1 HBAR per 1 USDC of list price), set by PRICE_ASSET=hbar. Agent spend limits stay in USDC and the HBAR amount is converted before comparison. The deposit, court fee and payouts stay in the vault's token (see Vault token). |
+| Vault token | The testnet demo's vault runs on a mock 6-decimal USDC (mUSDC, owner-minted) because the Circle faucet did not deliver to our accounts. deployments/hedera.json records usdc.mode; every reader takes the token from that record, so one deployment never mixes tokens. The first deployment, on Circle USDC, is retired (deployments/retired.json). |
 | Privacy | Record docs are public by CID (disclosed). Buyer fields are salted. The docket is de-identified. |
 | Contest | The losing side contests, within a 30-minute window. |
 | Good standing | The shop checks `inGoodStanding` before it accepts an order. |
@@ -59,7 +60,7 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 ## Waiting on the operator
 
 - Testnet HBAR, Arbitrum Sepolia ETH and LINK. Every faucet needs a human check.
-- Circle testnet USDC, after the accounts are associated.
+- Circle testnet USDC is no longer needed for the demo: the faucet did not deliver, so the vault runs on the mock mUSDC (see Vault token). Moving to Circle's token later is a new deployment recorded with `usdc.mode` `circle`, after the accounts are associated.
 - An Arkiv Hub access key. Until then, the docket writes to the local store.
 - An LLM key for the intake classifier. Until then, intake runs the shared rule only.
 - A public HTTPS URL for the shop and status API (tunnel by default).

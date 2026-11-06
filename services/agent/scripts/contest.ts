@@ -45,11 +45,11 @@ const ANSWER_NAMES: Record<number, string> = {
 };
 const ESCROW_STATES = ['none', 'open', 'closed'];
 
-function describe(label: string, claim: ClaimView, params: ClaimParams, escrow: EscrowView, now: bigint): string[] {
+function describe(label: string, claim: ClaimView, params: ClaimParams, escrow: EscrowView, now: bigint, u: string): string[] {
   const lines = [`${label}: claim ${claim.claimId}, status ${statusName(claim.status)}`];
   if (claim.status === ClaimStatus.None) return lines;
   lines.push(`  order ${claim.orderId}, shop ${claim.shop}, platform ${claim.platform}`);
-  lines.push(`  basket ${claim.basketUsdc} µUSDC, net loss ${claim.netLossUsdc} µUSDC`);
+  lines.push(`  basket ${claim.basketUsdc} ${u}, net loss ${claim.netLossUsdc} ${u}`);
   if (claim.preCheckedAt > 0n) {
     lines.push(
       `  pre-check ${isoOf(claim.preCheckedAt)}: answer ${ANSWER_NAMES[claim.answer] ?? claim.answer}, gap ${claim.gap}; losing side: ${contestingSide(claim.answer)}`,
@@ -63,7 +63,7 @@ function describe(label: string, claim: ClaimView, params: ClaimParams, escrow: 
     }
   }
   lines.push(
-    `  court fee ${params.courtFeeUsdc} µUSDC; escrow ${ESCROW_STATES[escrow.state] ?? escrow.state}, ${escrow.amount} µUSDC from the shop, taken at filing`,
+    `  court fee ${params.courtFeeUsdc} ${u}; escrow ${ESCROW_STATES[escrow.state] ?? escrow.state}, ${escrow.amount} ${u} from the shop, taken at filing`,
   );
   const expiry = expiresAt(claim, params);
   if (expiry !== null) {
@@ -94,7 +94,8 @@ async function main(): Promise<number> {
   const { deployment, contracts, clients } = await openPartyChain(process.env, side);
   const client = clients.publicClient;
   const claimId: Hex = values.claim ? (id as Hex) : claimIdOf(BigInt(deployment.chainId), deployment.claims, id as Hex);
-  console.log(`deployment ${deployment.file} (chain ${deployment.chainId}), claims ${deployment.claims}, vault ${deployment.vault}`);
+  const u = `µ${deployment.token.symbol}`;
+  console.log(`deployment ${deployment.file} (chain ${deployment.chainId}), claims ${deployment.claims}, vault ${deployment.vault}, token ${deployment.token.label}`);
   console.log(`contesting as the ${side}: ${clients.account.address}`);
 
   const params = await readClaimParams(client, contracts);
@@ -103,7 +104,7 @@ async function main(): Promise<number> {
     return { claim, escrow, now };
   };
   const before = await read();
-  for (const line of describe('before', before.claim, params, before.escrow, before.now)) console.log(line);
+  for (const line of describe('before', before.claim, params, before.escrow, before.now, u)) console.log(line);
   console.log('  contesting moves no USDC (the fee is already in escrow), so there is nothing to approve');
 
   const refusal = contestRefusal({ ...before, params, side, caller: clients.account.address });
@@ -130,7 +131,7 @@ async function main(): Promise<number> {
   console.log(`contested in ${receipt.transactionHash} (block ${receipt.blockNumber})`);
   if (deployment.chainId === HEDERA_TESTNET_CHAIN_ID) console.log(`https://hashscan.io/testnet/transaction/${receipt.transactionHash}`);
   const after = await read();
-  for (const line of describe('after', after.claim, params, after.escrow, after.now)) console.log(line);
+  for (const line of describe('after', after.claim, params, after.escrow, after.now, u)) console.log(line);
   return 0;
 }
 

@@ -1,10 +1,22 @@
-/** µUSDC (decimal text or bigint) as "12.50 USDC". */
-export function usdc(v: string | bigint | null | undefined): string {
+import type { VaultToken } from '@recourse/shared';
+
+/**
+ * A vault amount in micro-units (decimal text or bigint) with the deployment's token label:
+ * "12.50 USDC", or "12.50 mUSDC (testnet mock)" on the testnet mock. USDC when no token is known.
+ */
+export function usdc(v: string | bigint | null | undefined, token?: Pick<VaultToken, 'label'> | null): string {
   if (v === null || v === undefined) return 'not yet known';
   const n = BigInt(v);
   const whole = n / 1_000_000n;
   const frac = (n % 1_000_000n).toString().padStart(6, '0').slice(0, 2);
-  return `${whole.toLocaleString('en-US')}.${frac} USDC`;
+  return `${whole.toLocaleString('en-US')}.${frac} ${token?.label ?? 'USDC'}`;
+}
+
+/** The note a page carries when the vault runs on the testnet mock; null on Circle USDC. */
+export function mockNote(token: Pick<VaultToken, 'mode'> | null | undefined): string | null {
+  return token?.mode === 'mock'
+    ? "This deployment's vault runs on mUSDC, a testnet mock of USDC: it is not Circle's USDC and is worth nothing. Circle's testnet faucet did not deliver."
+    : null;
 }
 
 export function when(sec: string | number | bigint | null | undefined): string {

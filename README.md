@@ -26,7 +26,7 @@ Built at ETHGlobal Mumbai, 5-7 Nov 2026. Testnets only. All shop and agent-compa
 flowchart LR
   subgraph H["Hedera testnet (296)"]
     HCS[("HCS records topic")]
-    USDC[("USDC 0.0.429274")]
+    USDC[("Vault token: mUSDC, testnet mock<br/>(Circle USDC 0.0.429274 in circle mode)")]
     CL["RecourseClaims"]
     V["DepositVault"]
     CL --- V
@@ -72,7 +72,7 @@ sequenceDiagram
   Sh->>HCS: record D (packed)
   Note over Ag,Sh: the wrong goods arrive
   Ag->>HCS: record R (arrived), signed by the buyer
-  Sh->>CL: fileClaim + court fee (1 USDC on the testnet demo) into the vault escrow
+  Sh->>CL: fileClaim + court fee (1 USDC on the testnet demo, in mUSDC while it runs on the mock) into the vault escrow
   PC->>HCS: read the six records, run the fault rule
   PC->>CL: recordPreCheck (gap, answer, hash of the result document)
   alt nobody contests in the window
@@ -102,7 +102,7 @@ sequenceDiagram
 |---|---|---|
 | **Hedera x402 payments** | The agent pays the shop with the x402 `exact` scheme on `hedera:testnet`. On the testnet demo orders are priced and paid in HBAR, 1 HBAR per 1 USDC of list price, when `PRICE_ASSET=hbar`; unset or `usdc`, they are paid in USDC `0.0.429274`. Set it in the shared `~/.config/recourse/recourse.env`, which the shop unit, the agent commands and `ops/fund` all read, not in `shop.env`: a shop asking for HBAR from an agent that expects USDC is refused as `wrong_asset`. The agent reads the price and `payTo` from the shop's 402 response; below its spend limit it pays without a human, above it a buyer approval is needed. The spend limits are in USDC, and an HBAR amount is converted at that rate before it is compared. A public facilitator is tried first, then a second public one, then a self-hosted one. The settlement transaction id goes into the "ordered" record. | `services/shop`, `services/agent` |
 | **Hedera Consensus Service** | One records topic holds the six records of every order. The pre-check and the court evidence read the topic through the mirror node and accept only messages from the right payer. | `packages/records`, `services/precheck` |
-| **HTS USDC** | The platform deposit, the court-fee escrow and the shop's payout are all Circle's testnet USDC `0.0.429274`, used through its ERC-20 facade; with `PRICE_ASSET=hbar` the x402 order payments are in HBAR. The vault associates the token explicitly after deploy, and nothing moves before the mirror node shows the association. | `contracts/src/hedera`, `contracts/script/hedera` |
+| **HTS USDC, or the testnet mock** | The platform deposit, the court-fee escrow and the shop's payout are all in the vault's token, which `deployments/hedera.json` records as `usdc.mode`; every reader takes it from that record, so one deployment never mixes tokens. In `circle` mode it is Circle's testnet USDC `0.0.429274`, used through its ERC-20 facade: the vault associates the token explicitly after deploy, and nothing moves before the mirror node shows the association. The current deployment is in `mock` mode, because Circle's faucet did not deliver: the token is `mUSDC`, a plain 6-decimal ERC-20 minted by the deployer, with no HTS token id and no mirror row, so the checks are `Vault.usdcAssociated()` and `Vault.usdc()` equal to the recorded address. With `PRICE_ASSET=hbar` the x402 order payments are in HBAR. | `contracts/src/hedera`, `contracts/script/hedera`, `contracts/src/testnet/MockUsdc.sol`, `packages/shared/src/vaultToken.ts`, `ops/lib/vault-token.sh` |
 | **Chainlink CCIP, both ways** | `RecourseClaims` sends `ClaimToCourt` to `RecourseCase`; `RecourseCase` sends `RulingBack`. Each contract is its own receiver and sender, with V2 extra args, out-of-order execution on and full finality. Fees are paid in LINK (or HBAR on the Hedera side). Resend is open to anyone, capped in count and spacing, so a lost message costs a bounded amount of LINK. | `contracts/src/hedera/RecourseClaims.sol`, `contracts/src/arbitrum/RecourseCase.sol`, `contracts/src/shared` |
 | **Kleros court on Arbitrum Sepolia** | `RecourseCase` creates the dispute on the live KlerosCore in court 8 (testnet), registers the dispute template, and receives the ruling through `rule`. The keeper pays the arbitration cost from the case's fee pool and posts the evidence. | `contracts/src/arbitrum`, `packages/court`, `services/keeper` |
 | **Arkiv docket** | The docket service writes one de-identified `case` entity per ruled claim and a monthly count, from one writer wallet. The docket page reads them back and computes fault rates (Wilson 95% interval) in the browser. | `services/docket`, `arkiv/`, `apps/web/src/pages/Docket.tsx` |
@@ -200,18 +200,18 @@ Ten roles, each with its own Foundry keystore kept outside the repo ([docs/keys.
 
 | Part | State |
 |---|---|
-| Solidity contracts (Claims, Vault, Case) | Written. Unit, fuzz and invariant tests pass locally. DepositVault (`0.0.11329716`) and RecourseClaims (`0.0.11329717`) are deployed on Hedera testnet, on USDC `0.0.429274`, config not locked yet; see `deployments/hedera.json`. RecourseCase is **not deployed** on Arbitrum Sepolia yet. |
-| Deploy and wiring scripts | Written and rehearsed on local anvils. The Hedera deploy, USDC association and parameter steps have run on testnet; the Arbitrum deploy and the wiring between the chains have not. |
+| Solidity contracts (Claims, Vault, Case) | Written. Unit, fuzz and invariant tests pass locally. DepositVault (`0.0.11336129`) and RecourseClaims (`0.0.11336130`) are deployed on Hedera testnet on a testnet mock USDC (`mUSDC`), because Circle's testnet USDC faucet did not deliver; config not locked yet; see `deployments/hedera.json` (`usdc.mode` is `mock`, with the mock's address). The first deployment (`0.0.11329716`, `0.0.11329717`, on Circle USDC `0.0.429274`) is retired and listed in `deployments/retired.json`. RecourseCase (`0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8`) is deployed on Arbitrum Sepolia; see `deployments/arbitrum.json`. |
+| Deploy and wiring scripts | Written and rehearsed on local anvils. The Hedera deploy, USDC association and parameter steps have run on testnet, and so has the Arbitrum deploy; the wiring steps run so far are listed in `deployments/wiring.json`. |
 | TypeScript services (shop, agent, pre-check, keeper, docket, intake, status API) | Written and tested against local chains and fakes. **Not running anywhere**; unit files are written but not installed. |
 | Web app | Builds. Not hosted. |
-| Funding | Small. Five Hedera roles hold a few HBAR from the faucet (at most 10 HBAR per address). No role holds Arbitrum Sepolia ETH or LINK yet. Testnet USDC has been requested for the platform, shop and agent and has not arrived yet. With orders paid in HBAR (`PRICE_ASSET=hbar`) the agent needs no USDC; its HBAR floor is then 8 (`ops/fund/lib.sh`). |
+| Funding | Small. Five Hedera roles hold a few HBAR from the faucet (at most 10 HBAR per address). No role holds Arbitrum Sepolia ETH or LINK yet. Circle testnet USDC was requested for the platform, shop and agent and never arrived; the vault's `mUSDC` is minted by the deployer, the mock's owner. With orders paid in HBAR (`PRICE_ASSET=hbar`) the agent needs no USDC; its HBAR floor is then 8 (`ops/fund/lib.sh`). |
 | CCIP lanes | Public lanes exist on both testnets; no message from this project has been sent. |
 | Kleros dispute | No dispute has been created by this project. |
 | Arkiv docket | Reads and writes work against a local store; no entity has been written to the Arkiv testnet. |
 | ERC-8004 identities | Not registered. |
 | Hedera testnet upgrade | Scheduled Fri 6 Nov 2026, 18:00-18:40 UTC; no Hedera sends are planned in that window. |
 
-What is mocked, and only in tests and local runs: HTS and the PRNG system contract, the USDC token, the CCIP router (a local simulator with a relay that can drop and delay), and KlerosCore (a mock arbitrator that accepts a chosen ruling). Nothing in this repository fabricates a ruling, a payment or a transaction hash for display.
+What is mocked in tests and local runs, which deploy their own mocks: HTS and the PRNG system contract, the USDC token, the CCIP router (a local simulator with a relay that can drop and delay), and KlerosCore (a mock arbitrator that accepts a chosen ruling). One mock is live: the testnet demo's current Hedera deployment runs on a testnet mock USDC (`mUSDC`, "Mock USD Coin (testnet)", 6 decimals, minted only by its owner) because Circle's testnet USDC faucet did not deliver to our accounts. It is not Circle's token and is worth nothing; the status API and the web app label its amounts "mUSDC (testnet mock)". The first deployment, on Circle USDC, is retired and listed in `deployments/retired.json`. Order payments (x402) are in HBAR and never touch the vault token. Nothing in this repository fabricates a ruling, a payment or a transaction hash for display.
 
 ## Deployed addresses and transactions
 

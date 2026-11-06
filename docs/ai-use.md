@@ -58,7 +58,8 @@ never a key or a password.
 | Files | How it was made | Checked by |
 |---|---|---|
 | `contracts/src/hedera/DepositVault.sol`, `RecourseClaims.sol`, `SettleMath.sol`, `interfaces/*.sol` | Written by the agent on top of the shared types and codec in `contracts/src/shared/` | `contracts/test/hedera/*.t.sol`: unit tests per module, fuzzed receive paths, the shared settle vectors, two invariant suites (vault alone, and the whole path through Claims and the local CCIP router), `forge build --sizes` |
-| `contracts/test/hedera/mocks/*.sol` | Written by the agent. Test mocks for the HTS system contract, the PRNG and the USDC facade; never deployed to a live chain | used by every Hedera test; the two mock modes of the token (revert, return false) each have tests |
+| `contracts/test/hedera/mocks/*.sol` | Written by the agent. Test mocks for the HTS system contract, the PRNG and the USDC facade; never deployed to a live chain (the testnet mock USDC that is live is a separate contract, next row) | used by every Hedera test; the two mock modes of the token (revert, return false) each have tests |
+| `contracts/src/testnet/MockUsdc.sol`, `contracts/script/hedera/DeployMockUsdc.s.sol` | Written by the agent. The testnet demo's mock USDC (`mUSDC`, "Mock USD Coin (testnet)", 6 decimals, minted only by its owner, the deployer). It is deployed on Hedera testnet and the current Hedera deployment holds it, because Circle's testnet USDC faucet did not deliver; it is not Circle's token and is worth nothing | its tests are `contracts/test/hedera/MockUsdc.t.sol` and `DeployUsdcMode.t.sol` |
 | `contracts/test/hedera/*.t.sol`, `handlers/*.sol` | Written by the agent | `Probe.t.sol` must fail (it does), so a green run is not a harness that passes everything; deliberate one-line mutations in the vectors test and the invariant handler were seen to fail them |
 | `contracts/script/hedera/DeployLocal.s.sol`, `Proofs.s.sol` | Written by the agent; local anvil only | run on anvil: the stack deploys, both proof stages pass, and the vault's books equal its balance |
 | `contracts/script/hedera/Deploy.s.sol`, `Wire.s.sol`, `Lock.s.sol`, `Check.s.sol`, `hedera.sh` | Written by the agent | `hedera.sh rehearse <port>` runs every step on anvil with throwaway keystores (made in a temp directory and deleted); `Deploy.s.sol` was also simulated against Hedera testnet with only the deployer's public address (no key, no broadcast) |
@@ -72,17 +73,18 @@ Keys: no real keystore was decrypted for this area. Local runs sign with anvil's
 or with throwaway keystores whose password is passed through the environment, never the command
 line.
 
-### Operations (`ops/fund`, `ops/wire`, `ops/units`, `ops/checks`, `README.md`, `docs/keys.md`, `docs/checks.md`, `docs/ai-use.md`)
+### Operations (`ops/fund`, `ops/wire`, `ops/units`, `ops/checks`, `ops/lib`, `README.md`, `docs/keys.md`, `docs/checks.md`, `docs/ai-use.md`)
 
 Written by Claude Sonnet 5.5 as a coding agent.
 
 | Files | How it was made | Checked by |
 |---|---|---|
-| `ops/wire/*.sh` | Written by the agent. Dry run is the default; `--send` broadcasts; every step reads its result back and stops on a mismatch | `ops/wire/rehearse.sh` runs the whole order on two local anvil nodes with throwaway keystores (made in a temp directory, password through the environment, deleted on exit) and the local mock stacks; it passed |
+| `ops/wire/*.sh` | Written by the agent. Dry run is the default; `--send` broadcasts; every step reads its result back and stops on a mismatch | `ops/wire/rehearse.sh` runs the whole order on two local anvil nodes with throwaway keystores (made in a temp directory, password through the environment, deleted on exit) and the local mock stacks; it passed before the scripts took the vault token from the deployment record, and has not been rerun since. The new `Vault.usdc()` check in `00-readback.sh` and `07-deposit.sh` and their mock-mode branches are checked by `bash -n` only; a read-only `eth_call` on the live vault read `usdc()` equal to the recorded mock and `usdcAssociated()` true |
 | `ops/wire/order.md` | Written by the agent from the Hedera deploy runbook and the Arbitrum deploy script | read against the scripts it names |
 | `ops/units/*.service`, `install.sh`, `ctl.sh` | Written by the agent from each service's `package.json` and entry point | `install.sh --verify` runs `systemd-analyze --user verify` on the rendered units; nothing is installed or started |
 | `ops/units/web-server.mjs` | Written by the agent | run against a stand-in API on loopback: health, a file, a client-side route, the `/api` forward and a path-escape attempt |
-| `ops/fund/*`, `ops/checks/readonly.sh` | Written by the agent | dry-run output by default; the read-only checks were run against public endpoints |
+| `ops/fund/*`, `ops/checks/readonly.sh` | Written by the agent | dry-run output by default; the read-only checks were run against public endpoints, and again with the live mock record and with a record that has no `usdc` key: the USDC rows passed in both modes. `04-associate-usdc.sh` was dry-run on the live mock record (it exits 0, nothing to associate) and on a refused record (it stops); `has_usdc` and `balances.sh` in mock mode are checked by `bash -n` only |
+| `ops/lib/vault-token.sh` | Written by the agent. Reads the vault's token from the Hedera deployment record with `jq`, with the checks of `vaultTokenOf` in `packages/shared`; sourced by `ops/fund`, `ops/wire` and `ops/checks/readonly.sh` | a parity run over 24 hand-made records (no `usdc` key, circle, mock, and refused shapes: a string or missing `tokenId`, `decimals` as text, Circle's facade or the zero address under mock, a bad mode, a non-object) gave the same verdict as `vaultTokenOf` on every record, and so did `ops/fund/associate-usdc.mjs`; `bash -n` |
 | `README.md`, `docs/keys.md`, `docs/checks.md` | Written by the agent from the code and from values it read | the README's claims about contract powers were checked against the contract source; `docs/checks.md` holds only values read by `ops/checks/readonly.sh` |
 
 Keys: the rehearsal signs only with throwaway keystores. Real keystores were not used for any signing.

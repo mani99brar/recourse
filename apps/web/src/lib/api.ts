@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { VaultToken } from '@recourse/shared';
 
 const BASE = (import.meta.env?.VITE_STATUS_API_URL as string | undefined) ?? '/api';
 export const POLL_MS = Number(import.meta.env?.VITE_POLL_MS ?? 5000);
@@ -22,6 +23,8 @@ export async function getApi<T>(path: string, signal?: AbortSignal): Promise<T> 
 export interface Fresh {
   asOf?: { hedera: number | null; arbitrum: number | null; hcs: number | null };
   degraded?: string[];
+  /** The deployment's vault token: every vault amount in the body is in it. */
+  vaultToken?: VaultToken;
 }
 
 export interface PollState<T> {

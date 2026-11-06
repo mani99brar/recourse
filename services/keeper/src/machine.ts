@@ -16,6 +16,7 @@ import {
   tryDecodeClaimToCourt,
   ClaimStatus,
   type SendPauseWindow,
+  type VaultToken,
 } from '@recourse/shared';
 import type { Hex } from 'viem';
 import type { Alert, AlertKind, Alerter } from './alerts.js';
@@ -64,6 +65,8 @@ export interface KeeperOptions {
   log?: (line: string) => void;
   /** Explorer and court link builders for alerts. */
   links?: Partial<Links>;
+  /** The vault's token, from the Hedera deployment record: alerts name vault amounts in it. */
+  vaultToken: VaultToken;
 }
 
 export interface Links {
@@ -811,7 +814,8 @@ export class Keeper {
     if (c.terminal === 'Settled' && c.shop && !c.done.includes('withdraw-due')) {
       const credit = await this.o.chains.creditOf(c.shop);
       if (credit > 0n) {
-        this.alertClaim(c, 'withdraw_due', `shop ${c.shop} has ${credit} µUSDC of credit; run the shop's withdraw-credit`);
+        const t = this.o.vaultToken;
+        this.alertClaim(c, 'withdraw_due', `shop ${c.shop} has ${credit} µ${t.symbol} of credit${t.mode === 'mock' ? ' (testnet mock)' : ''}; run the shop's withdraw-credit`);
       }
       this.once(c, 'withdraw-due');
     }

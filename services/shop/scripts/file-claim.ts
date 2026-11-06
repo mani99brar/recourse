@@ -1,6 +1,6 @@
 // The shop files its claim for an order on RecourseClaims. Dry run by default: reads the shop's
 // payment record, the records topic and the chain, and prints the claim id, the refs, the basket,
-// the court fee and the shop's USDC; nothing is signed. `--send` approves exactly the court fee and
+// the court fee and the shop's balance of the vault's token (the deployment's USDC); nothing is signed. `--send` approves exactly the court fee and
 // files, once (a rerun finds the claim and sends nothing).
 //
 //   pnpm --filter @recourse/shop file-claim --order <orderId> [--net-loss 1.50] [--send] [--state <dir>]
@@ -87,15 +87,17 @@ async function main(): Promise<number> {
         filer.courtFee(),
         clients.publicClient.readContract({ address: deployment.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] }),
       ]);
+      const u = `µ${deployment.token.symbol}`;
       console.log(`claim ${claimId} on ${deployment.claims} (chain ${deployment.chainId}), status ${status}`);
+      console.log(`vault token ${deployment.token.label} at ${deployment.usdc}`);
       console.log(`order ${input.orderId}: nonce ${input.orderNonce}, platform ${input.platform}, settlement ${input.settlement}`);
-      console.log(`basket ${input.basketUsdc} µUSDC, net loss ${input.netLossUsdc} µUSDC, court fee ${fee} µUSDC, shop holds ${balance} µUSDC`);
+      console.log(`basket ${input.basketUsdc} ${u}, net loss ${input.netLossUsdc} ${u}, court fee ${fee} ${u}, shop holds ${balance} ${u}`);
       console.log(`refs: topic ${input.refs.topicNum}, seq [${input.refs.seq.join(', ')}]`);
       if (!values.send) {
         console.log(status === 0 ? 'dry run: nothing signed; rerun with --send' : 'already filed; nothing to send');
         return 0;
       }
-      if (status === 0 && balance < fee) throw new Error('the shop holds less USDC than the court fee');
+      if (status === 0 && balance < fee) throw new Error(`the shop holds less ${deployment.token.symbol} than the court fee`);
       const filed = await filer.fileClaim(input);
       console.log(JSON.stringify(filed));
       if (deployment.chainId === HEDERA_TESTNET_CHAIN_ID && filed.txHash) console.log(`https://hashscan.io/testnet/transaction/${filed.txHash}`);

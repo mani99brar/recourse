@@ -206,6 +206,7 @@ async function main(): Promise<void> {
     timing: { refileHoldS: cfg.refileHoldS },
     log,
     links: { courtCase: courtLink },
+    vaultToken: hed.token,
   });
   keeper.start();
 

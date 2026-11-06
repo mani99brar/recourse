@@ -10,10 +10,14 @@
 #   02-fund-hedera-roles.sh deployer sends HBAR to every other Hedera role (creates the account),
 #                           then each role pays for one self tx (completes it)
 #   03-fund-arbitrum.sh     deployer sends Arbitrum Sepolia ETH to ops-arb
-#   04-associate-usdc.sh    associate USDC 0.0.429274 for the seven roles that hold or move it
+#   04-associate-usdc.sh    associate USDC 0.0.429274 for the seven roles that hold or move it (Circle
+#                           mode only: the testnet mock the deployment record may name needs none)
 #   05-write-ids.sh         read account ids from the mirror node, write HEDERA_ACCOUNT_IDS and
 #                           deployments/parties.json
 #   balances.sh             read-only table of every role's HBAR, USDC, LINK and Arbitrum ETH
+#
+# The vault's USDC is the token deployments/$HEDERA_FILE (default hedera.json) records: Circle's
+# 0.0.429274, or the testnet mock mUSDC (usdc.mode mock), a plain ERC-20 with no association.
 
 set -euo pipefail
 
@@ -28,8 +32,12 @@ ARB_RPC_URL=${ARB_RPC_URL:-https://sepolia-rollup.arbitrum.io/rpc}
 MIRROR=${HEDERA_MIRROR_URL:-https://testnet.mirrornode.hedera.com}
 MIRROR=${MIRROR%/}; MIRROR=${MIRROR%/api/v1}
 
-USDC_TOKEN=0.0.429274
-USDC_FACADE=0x0000000000000000000000000000000000068cda   # HTS token facade (ERC-20 view of 0.0.429274)
+# shellcheck source=../lib/vault-token.sh
+source "$REPO_ROOT/ops/lib/vault-token.sh"
+HEDERA_RECORD=$REPO_ROOT/deployments/${HEDERA_FILE:-hedera.json}
+vault_token "$HEDERA_RECORD" || exit 1
+USDC_TOKEN=$VAULT_USDC_ID    # HTS token id; empty for the mock
+USDC_FACADE=$VAULT_USDC      # the ERC-20 address: Circle's facade (EVM view of 0.0.429274), or the mock
 H_LINK=0x90a386d59b9A6a4795a011e8f032Fc21ED6FEFb6
 A_LINK=0xb1D4538B4571d411F07960EF2838Ce337FE1E80E
 
@@ -76,7 +84,9 @@ mirror_account() {
 account_id() { mirror_account "$1" | jq -r '.account // empty'; }
 # complete = an ECDSA key is set on the account (hollow accounts have no key yet)
 is_complete() { [[ $(mirror_account "$1" | jq -r '.key._type // empty') == ECDSA_SECP256K1 ]]; }
+# The mock needs no association, so every account holds it.
 has_usdc() {
+  [[ $VAULT_USDC_MODE == mock ]] && return 0
   local id; id=$(account_id "$1"); [[ -n $id ]] || return 1
   [[ $(curl -s -m 20 "$MIRROR/api/v1/accounts/$id/tokens?token.id=$USDC_TOKEN" | jq -r '.tokens | length') -ge 1 ]]
 }

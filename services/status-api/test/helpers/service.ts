@@ -8,7 +8,7 @@ import { StatusService } from '../../src/service.js';
 import { Store } from '../../src/store.js';
 import { createApp } from '../../src/app.js';
 import { CASE, CLAIMS, PLATFORM, SHOP, SHOP2, TOPIC, VAULT, fakeReader } from './fixtures.js';
-import { addressBook } from '@recourse/shared';
+import { CIRCLE_VAULT_TOKEN, addressBook } from '@recourse/shared';
 
 export function testParties(): Parties {
   const r = parseParties([
@@ -26,6 +26,7 @@ export function testDeployments(over: Partial<Deployments> = {}): Deployments {
   return {
     claims: CLAIMS,
     vault: VAULT,
+    token: CIRCLE_VAULT_TOKEN,
     caseAddress: CASE,
     hederaChainId: 296,
     arbitrumChainId: 31338,

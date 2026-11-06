@@ -6,8 +6,11 @@
 // Dry run by default: checks the accounts, the records topic, the keys, the claims deployment and
 // the court fee, and shows the approval text and how the spend limits decide it; nothing is
 // journaled, written or paid. `--send` runs it for real, step by step; a rerun with `--order <id>`
-// carries on where it stopped (every step is journaled and idempotent). The court fee is USDC from
-// the shop in either mode.
+// carries on where it stopped (every step is journaled and idempotent). The court fee is the vault's
+// token from the shop in either mode: the USDC deployments/hedera.json records, Circle's (checked on
+// the mirror node; also while there is no record yet) or the testnet mock (checked by balanceOf over
+// HEDERA_RPC_URL_1). The shop's vault token is checked only when the run goes on to the claim; with
+// --through order|pack|report it needs none, and with PRICE_ASSET=usdc its Circle USDC is still checked.
 //
 //   pnpm --filter @recourse/agent live-order [--sku tee-navy-l] [--local-shop [--facilitator N]]
 //                                           [--through order|pack|report|claim] [--send] [--order <id>]
@@ -19,7 +22,7 @@
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { erc20Abi, getAddress, type Hex } from 'viem';
-import { addressBook, claimIdOf, hederaAccountIdOf, partyByRole, priceAssetOf, type Attrs } from '@recourse/shared';
+import { CIRCLE_VAULT_TOKEN, addressBook, claimIdOf, hederaAccountIdOf, partyByRole, priceAssetOf, type Attrs, type VaultToken } from '@recourse/shared';
 import { loadSigner } from '@recourse/shared/node';
 import {
   Journal,
@@ -39,7 +42,7 @@ import {
 } from '@recourse/records';
 import type { RunningShop } from '../../shop/src/boot.js';
 import { basketPrice, itemBySku } from '../../shop/src/catalog.js';
-import { chainClients, loadAbi, readHederaDeployment } from '../../shop/src/chain.js';
+import { DeploymentMissingError, balanceReader, chainClients, loadAbi, publicClientFor, readHederaDeployment } from '../../shop/src/chain.js';
 import { claimInputFor } from '../../shop/src/claim-input.js';
 import { ClaimFiler, type FilingJournalRow } from '../../shop/src/filing.js';
 import type { ShopJournalRow } from '../../shop/src/orders.js';
@@ -104,9 +107,30 @@ async function main(): Promise<number> {
     const priceAsset = priceAssetOf(env);
     const toPay = orderRows.some((r) => r.type === 'pay_signed' || r.type === 'paid') ? 0n : BigInt(basketPrice(item, basket.quantity, priceAsset).amount);
     const agentNeeds = priceAsset === 'hbar' ? { minTinybar: 1n * HBAR + toPay } : { minTinybar: 1n * HBAR, usdc: { minBalance: toPay } };
+    // No deployment yet is Circle's USDC, as for a record with no usdc object; a bad record names no
+    // token, so the shop's is not checked (and --send stops).
+    let deployment: ReturnType<typeof readHederaDeployment> | null = null;
+    let vaultToken: VaultToken | null = null;
+    if (upTo('claim')) {
+      try {
+        deployment = readHederaDeployment({ env });
+        vaultToken = deployment.token;
+      } catch (error) {
+        console.log(`claims deployment: ${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof DeploymentMissingError) vaultToken = CIRCLE_VAULT_TOKEN;
+        if (send) return 2;
+      }
+    }
+    const rpcUrl = env.HEDERA_RPC_URL_1;
+    if (deployment && !rpcUrl) throw new Error('HEDERA_RPC_URL_1 is not set');
+    // The shop's court fee is in the vault's token; an x402 payment in USDC reaches it in Circle's.
+    const shopId = hederaAccountIdOf(shopParty);
+    const vaultUsdc = vaultToken && { token: vaultToken, ...(deployment ? { balanceOf: balanceReader(publicClientFor(rpcUrl!, deployment.chainId)) } : {}) };
+    const x402Usdc = priceAsset === 'usdc' && vaultToken?.mode !== 'circle';
     const checks = await Promise.all([
       checkAccount(mirror, { role: 'agent', accountId: hederaAccountIdOf(agentParty), ...agentNeeds }),
-      checkAccount(mirror, { role: 'shop', accountId: hederaAccountIdOf(shopParty), minTinybar: 1n * HBAR, usdc: {} }),
+      checkAccount(mirror, { role: 'shop', accountId: shopId, minTinybar: 1n * HBAR, ...(vaultUsdc ? { usdc: vaultUsdc } : {}) }),
+      ...(x402Usdc ? [checkAccount(mirror, { role: 'shop (x402 USDC)', accountId: shopId, usdc: {} })] : []),
     ]);
     for (const c of checks) console.log(describeCheck(c));
     const topicId = recordsTopicId(env);
@@ -115,17 +139,6 @@ async function main(): Promise<number> {
     const shopAccount = loadSigner('SHOP_KEY_FILE', env);
     if (getAddress(shopParty.evmAddress) !== shopAccount.address) throw new Error('SHOP_KEY_FILE is not the party map\'s shop');
     const buyerAccount = upTo('report') ? loadBuyer(env, parties) : null;
-    let deployment: ReturnType<typeof readHederaDeployment> | null = null;
-    if (upTo('claim')) {
-      try {
-        deployment = readHederaDeployment({ env });
-      } catch (error) {
-        console.log(`claims deployment: ${error instanceof Error ? error.message : String(error)}`);
-        if (send) return 2;
-      }
-    }
-    const rpcUrl = env.HEDERA_RPC_URL_1;
-    if (deployment && !rpcUrl) throw new Error('HEDERA_RPC_URL_1 is not set');
     const clients = deployment ? chainClients({ rpcUrl: rpcUrl!, chainId: deployment.chainId, account: shopAccount }) : null;
     if (checks.some((c) => !c.ok) || !topic) {
       if (send) {
@@ -146,7 +159,8 @@ async function main(): Promise<number> {
           filer.courtFee(),
           clients.publicClient.readContract({ address: deployment.usdc, abi: erc20Abi, functionName: 'balanceOf', args: [shopAccount.address] }),
         ]);
-        console.log(`claims ${deployment.claims}: court fee ${fee} µUSDC; the shop holds ${balance} µUSDC${balance < fee ? ' (NOT ENOUGH)' : ''}`);
+        const u = `µ${deployment.token.symbol}`;
+        console.log(`claims ${deployment.claims}: court fee ${fee} ${u}; the shop holds ${balance} ${u} of ${deployment.token.label} ${deployment.usdc}${balance < fee ? ' (NOT ENOUGH)' : ''}`);
       }
       const agent = await openAgent(env, log, shop ? { shop: { x402Base: `${shop.url}/x402/`, apiBase: shop.url, payTo: hederaAccountIdOf(shopParty), shopAddress: getAddress(shopParty.evmAddress), source: 'in-process shop' } } : {});
       try {

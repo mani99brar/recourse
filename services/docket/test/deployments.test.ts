@@ -23,6 +23,16 @@ describe('deployment files', () => {
     expect(readHederaDeployment(d, 'x.local.json')).toMatchObject({ local: true, chainId: 31337 });
   });
 
+  it('reads the vault token: circle without a usdc key, mock from the record, and refuses a bad one', () => {
+    const body = { chainId: 296, contracts: { claims: { address: A }, vault: { address: B } } };
+    const mock = { mode: 'mock', address: '0x1111111111111111111111111111111111111111', decimals: 6, tokenId: null };
+    const circle = { mode: 'circle', address: '0x0000000000000000000000000000000000068cDa', decimals: 6, tokenId: '0.0.429274' };
+    expect(readHederaDeployment(dir({ 'hedera.json': body }))?.token).toMatchObject({ mode: 'circle', label: 'USDC' });
+    expect(readHederaDeployment(dir({ 'hedera.json': { ...body, usdc: circle } }))?.token.mode).toBe('circle');
+    expect(readHederaDeployment(dir({ 'hedera.json': { ...body, usdc: mock } }))?.token).toMatchObject({ mode: 'mock', symbol: 'mUSDC', label: 'mUSDC (testnet mock)' });
+    expect(() => readHederaDeployment(dir({ 'hedera.json': { ...body, usdc: { ...mock, tokenId: '0.0.429274' } } }))).toThrow('tokenId must be null');
+  });
+
   it('refuses a local file that is not a bare *.local.json name', () => {
     expect(() => readHederaDeployment(dir({}), 'hedera.json')).toThrow(/local\.json/);
   });

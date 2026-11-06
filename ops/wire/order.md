@@ -17,12 +17,13 @@ Rules that apply to every step:
 - The wiring scripts write `deployments/wiring.json` (one row per transaction: id, chain, call, role, tx, time, result, who). A dry run writes nothing.
 - After a send, commit the changed `deployments/` files through `ops/scripts/commit.sh`.
 - Hedera testnet has a scheduled upgrade on Fri 6 Nov, 18:00-18:40 UTC. Send nothing to Hedera in that window.
+- The vault's USDC is the token `deployments/hedera.json` records as `usdc.mode` (no `usdc` object: circle). `circle` is Circle's USDC `0.0.429274`, with a mirror-node association row. `mock` (the current deployment) is `mUSDC`, a plain ERC-20 that only the deployer mints: it has no HTS token id and no mirror row, and the checks that stand in for the row are `Vault.usdcAssociated()` true and `Vault.usdc()` equal to the recorded `usdc.address`. Steps below say where mock mode differs.
 
 ## Before any deploy
 
 | # | Command | Expect |
 |---|---|---|
-| 0.1 | `bash ops/fund/balances.sh` | each address is faucet-funded directly (at most 10 HBAR per address, so there is no pooled balance). HBAR floors: deployer 12 before the Hedera deploy (the deploy costs about 8.4 HBAR) and at least 2 after it for wiring, `setParams`, `setRequired` and the lock; ops-hedera 10; precheck-signer 3; shop 3; agent 2, or 8 with `PRICE_ASSET=hbar` (it then pays orders in HBAR); platform 1; scheme 1; buyer and facilitator 0. The deployer also holds some Arbitrum Sepolia ETH; ops-hedera and ops-arb hold LINK; platform holds USDC (20 per faucet claim, 18 of it deposited) |
+| 0.1 | `bash ops/fund/balances.sh` | each address is faucet-funded directly (at most 10 HBAR per address, so there is no pooled balance). HBAR floors: deployer 12 before the Hedera deploy (the deploy costs about 8.4 HBAR) and at least 2 after it for wiring, `setParams`, `setRequired` and the lock; ops-hedera 10; precheck-signer 3; shop 3; agent 2, or 8 with `PRICE_ASSET=hbar` (it then pays orders in HBAR); platform 1; scheme 1; buyer and facilitator 0. The deployer also holds some Arbitrum Sepolia ETH; ops-hedera and ops-arb hold LINK; platform holds USDC (20 per faucet claim, 18 of it deposited). Mock mode: the USDC column is headed `mUSDC`, read by `balanceOf`; the platform needs its mUSDC only by step 4.1, minted by the deployer (`hedera.sh mint platform <micro-usdc>`) |
 | 0.2 | `(cd contracts && forge test --jobs 1)` under the suite lock | green on the commit being deployed |
 | 0.3 | `bash ops/wire/rehearse.sh` under the suite lock | `rehearsal complete` (local anvils only) |
 
@@ -30,10 +31,11 @@ Rules that apply to every step:
 
 | Step | Command | Read-back |
 |---|---|---|
-| 1.1 | `contracts/script/hedera/hedera.sh preflight` | `preflight OK` (chain 296, deployer at least 12 HBAR, USDC token on the mirror, router code, inputs set) |
+| 1.0 | mock mode only, with `HEDERA_USDC_MODE=mock` exported for the rest of this section: `hedera.sh mock-usdc`, then `hedera.sh mock-usdc --broadcast` | `mock USDC <address> kept in ...`: the token the deploy takes |
+| 1.1 | `contracts/script/hedera/hedera.sh preflight` | `preflight OK` (chain 296, deployer at least 12 HBAR, USDC token on the mirror, router code, inputs set). Mock mode: no mirror token; the mock answers `eth_call` with code, 6 decimals and symbol `mUSDC` |
 | 1.2 | `hedera.sh deploy`, then `hedera.sh deploy --broadcast` | vault and claims addresses logged; transactions in `contracts/broadcast/Deploy.s.sol/296/run-latest.json` |
-| 1.3 | `hedera.sh associate --broadcast` | prints `USDC steps may proceed` after the mirror lists the vault's USDC row. **No USDC moves before this.** |
-| 1.4 | `hedera.sh record` | writes `deployments/hedera.json` (contract ids come from the mirror; rerun if it says not indexed) |
+| 1.3 | `hedera.sh associate --broadcast` | prints `USDC steps may proceed` after the mirror lists the vault's USDC row (mock mode: after `Vault.usdcAssociated()` reads true; there is no row to wait for). **No USDC moves before this.** |
+| 1.4 | `hedera.sh record` | writes `deployments/hedera.json` (contract ids come from the mirror; rerun if it says not indexed), with `usdc.mode`; in mock mode `usdc.address` is the vault's `usdc()` and `usdc.tokenId` is null |
 
 Commit `deployments/hedera.json` and `contracts/broadcast/Deploy.s.sol/296` together.
 
@@ -54,7 +56,7 @@ Each script is run as `ops/wire/NN-name.sh` first without a flag, then with `--s
 
 | Step | Script | Signs as | What it does | Read-back |
 |---|---|---|---|---|
-| 3.0 | `00-readback.sh` with `EXPECT_PEERS=0` | none | checks the roles, owners, binding, association | all `ok` |
+| 3.0 | `00-readback.sh` with `EXPECT_PEERS=0` | none | checks the roles, owners, binding, association: `Vault.usdc()` is the recorded token, `usdcAssociated()` is true and, in circle mode, the mirror lists the vault's USDC row (mock mode: no row, and none is asked for) | all `ok` |
 | 3.1 | `01-peer-hedera.sh` | deployer (owner) | `Claims.setPeer(RecourseCase)` | `Claims.peer()` equals the case address |
 | 3.2 | `02-peer-arbitrum.sh` | deployer (owner) | `RecourseCase.setPeer(Claims)` | `RecourseCase.peer()` equals the claims address |
 | 3.3 | `03-fund-claims.sh` | ops-hedera | LINK to Claims (or `fundNative()` if `feeToken()` is zero), up to `CLAIMS_LINK_TARGET` (1 LINK before the lock) | balance at or above the target |
@@ -71,8 +73,8 @@ Commit `deployments/wiring.json`, then pull it where the services run and start 
 
 | Step | Script | Signs as | What it does | Read-back |
 |---|---|---|---|---|
-| 4.1 | `07-deposit.sh <micro-usdc>` | platform | `hedera.sh deposit`: USDC `approve`, then `postDeposit` | `depositOf(platform)` rose by the amount |
-| 4.2 | `08-set-required.sh <micro-usdc>` | deployer (owner) | `hedera.sh required`: `setRequired(platform, amount)`, amounts set from the USDC that actually arrived | `inGoodStanding(platform)` is true |
+| 4.1 | `07-deposit.sh <micro-usdc>` | platform | `hedera.sh deposit`: USDC `approve`, then `postDeposit`; it first checks `Vault.usdc()` is the recorded token (mock mode: `mUSDC`) | `depositOf(platform)` rose by the amount |
+| 4.2 | `08-set-required.sh <micro-usdc>` | deployer (owner) | `hedera.sh required`: `setRequired(platform, amount)`, amounts set from the USDC that actually arrived (mock mode: that the deployer minted) | `inGoodStanding(platform)` is true |
 
 No order may be taken before 4.2 reads true.
 

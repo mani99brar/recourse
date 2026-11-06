@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Journal, memoryLogger, readJournal } from '@recourse/records';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CIRCLE_VAULT_TOKEN, vaultTokenOf, type VaultToken } from '@recourse/shared';
 import { createDocketApp } from '../src/app.js';
 import { Docket, type JournalRow } from '../src/docket.js';
 import { LocalStore } from '../src/store/local.js';
@@ -12,12 +13,12 @@ import { E, NOV, PLATFORM, SHOP, cid } from './helpers.js';
 const servers: { close(): void }[] = [];
 afterEach(() => servers.splice(0).forEach((s) => s.close()));
 
-async function boot() {
+async function boot(vaultToken?: VaultToken) {
   const dir = mkdtempSync(join(tmpdir(), 'docket-app-'));
   const store = LocalStore.open(join(dir, 'store.jsonl'));
   const path = join(dir, 'docket.jsonl');
   const docket = new Docket({ store, journal: Journal.open<JournalRow>(path), history: readJournal<JournalRow>(path).rows, now: () => NOV + 100_000, log: memoryLogger() });
-  const app = createDocketApp({ docket, store: 'local', rate: { publishThreshold: 20, sampleMode: true, z: 1.96 } });
+  const app = createDocketApp({ docket, store: 'local', rate: { publishThreshold: 20, sampleMode: true, z: 1.96 }, ...(vaultToken ? { vaultToken } : {}) });
   const server = app.listen(0);
   servers.push(server);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -62,5 +63,20 @@ describe('docket http', () => {
 
     const health = await (await fetch(`${base}/health`)).json();
     expect(health).toMatchObject({ ok: true, store: 'local', rateConfig: { publishThreshold: 20, sampleMode: true, z: 1.96 } });
+    expect(cases.vaultToken).toBeNull();
+    expect(health.vaultToken).toBeNull();
+  });
+
+  it('names the vault token beside case amounts, and leaves the rows as written', async () => {
+    const mock = vaultTokenOf({ usdc: { mode: 'mock', address: '0x1111111111111111111111111111111111111111', decimals: 6, tokenId: null } });
+    for (const token of [CIRCLE_VAULT_TOKEN, mock]) {
+      const { docket, base } = await boot(token);
+      docket.ingest([E.filed(1), E.precheck(1, 2, 1), E.ruling(1, 1)]);
+      await docket.flush();
+      const cases = await (await fetch(`${base}/docket/cases`)).json();
+      expect(cases.vaultToken).toEqual(token);
+      expect(Object.keys(cases.rows[0])).not.toContain('vaultToken');
+      expect((await (await fetch(`${base}/health`)).json()).vaultToken.label).toBe(token.label);
+    }
   });
 });

@@ -118,14 +118,14 @@ export function CaseView({ d }: { d: CaseDetail }) {
         </Card>
         <Card title="Money">
           <dl>
-            <Row label="Basket">{usdc(d.basketUsdc)}</Row>
-            <Row label="Net loss claimed">{usdc(d.netLossUsdc)}</Row>
-            <Row label={d.money.projected ? 'Owed (projected)' : 'Owed'}>{usdc(d.money.owed)}</Row>
-            <Row label="Paid from deposit">{usdc(d.money.paid)}</Row>
-            <Row label="Not covered">{usdc(d.money.notCovered)}</Row>
-            <Row label="Credited to the shop">{usdc(d.money.credited)}</Row>
+            <Row label="Basket">{usdc(d.basketUsdc, d.vaultToken)}</Row>
+            <Row label="Net loss claimed">{usdc(d.netLossUsdc, d.vaultToken)}</Row>
+            <Row label={d.money.projected ? 'Owed (projected)' : 'Owed'}>{usdc(d.money.owed, d.vaultToken)}</Row>
+            <Row label="Paid from deposit">{usdc(d.money.paid, d.vaultToken)}</Row>
+            <Row label="Not covered">{usdc(d.money.notCovered, d.vaultToken)}</Row>
+            <Row label="Credited to the shop">{usdc(d.money.credited, d.vaultToken)}</Row>
             <Row label="Court fee escrow">
-              {usdc(d.money.escrow.amount)}: {FATE_WORDS[d.money.escrow.fate] ?? d.money.escrow.fate}
+              {usdc(d.money.escrow.amount, d.vaultToken)}: {FATE_WORDS[d.money.escrow.fate] ?? d.money.escrow.fate}
             </Row>
           </dl>
         </Card>

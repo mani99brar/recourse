@@ -217,6 +217,7 @@ function useStack(o: { mode: 'Both' | 'None'; hederaPort: number; arbPort: numbe
       evidence: evidenceAssembler({ fetchDoc: async (cid) => docs.get(cid) ?? null, rawCidOfHash, build: buildEvidence as unknown as BuildEvidence }),
       timing: { refileHoldS: 0 },
       now: () => chainNow,
+      vaultToken: hed.token,
     });
     keeper.start();
     const tick = async () => {

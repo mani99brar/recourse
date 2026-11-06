@@ -1,10 +1,11 @@
 // Reads the two deployment files the keeper runs against. Testnet runs read `hedera.json` and
 // `arbitrum.json` from DEPLOYMENTS_DIR; local runs name `*.local.json` files there instead, whose
-// `outside` block replaces the third-party addresses (OffRamps, arbitrator, evidence module).
+// `outside` block replaces the third-party addresses (OffRamps, arbitrator, evidence module). The vault's
+// token comes from the Hedera file's `usdc` object (none: Circle USDC); a bad one stops startup.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { addressBook } from '@recourse/shared';
+import { addressBook, vaultTokenOf, type VaultToken } from '@recourse/shared';
 import { getAddress, isAddress, type Address } from 'viem';
 
 const LOCAL_FILE = /^[A-Za-z0-9_.-]+\.local\.json$/;
@@ -17,6 +18,8 @@ export interface HederaDeployment {
   /** Hedera contract id "0.0.N"; null in a local file (no mirror node there). */
   claimsId: string | null;
   vault: Address;
+  /** The token the vault holds, named in operator alerts about vault amounts. */
+  token: VaultToken;
   /** Consensus timestamp "secs.nanos" of the first deploy transaction: the mirror cursor start. */
   startTimestamp: string;
   startBlock: number;
@@ -98,6 +101,7 @@ export function readHederaDeployment(dir: string, name = 'hedera.json', outsideF
     claims: addr(claims.address, 'contracts.claims.address'),
     claimsId: id as string | null,
     vault: addr(vault.address, 'contracts.vault.address'),
+    token: vaultTokenOf(j),
     startTimestamp: j.startTimestamp,
     startBlock: int(j.startBlock, 'startBlock'),
     offRamp,

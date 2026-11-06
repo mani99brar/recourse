@@ -1,15 +1,18 @@
 // Deployment files: where the contracts this repo deploys live. The testnet files are read unless
 // HEDERA_LOCAL_FILE / ARBITRUM_LOCAL_FILE name a `*.local.json` (written by local runs), which may
-// also replace the outside addresses. A local file is never picked up just because it exists.
+// also replace the outside addresses. A local file is never picked up just because it exists. The
+// vault's token comes from the Hedera file's `usdc` object (none: Circle USDC); a bad one stops startup.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { addressBook, ARBITRUM_SEPOLIA_CHAIN_ID, HEDERA_TESTNET_CHAIN_ID } from '@recourse/shared';
+import { addressBook, ARBITRUM_SEPOLIA_CHAIN_ID, HEDERA_TESTNET_CHAIN_ID, vaultTokenOf, type VaultToken } from '@recourse/shared';
 import { getAddress, isAddress, type Address } from 'viem';
 
 export interface Deployments {
   claims?: Address;
   vault?: Address;
+  /** The token the vault holds; its label goes beside every vault amount the API serves. */
+  token: VaultToken;
   caseAddress?: Address;
   hederaChainId: number;
   arbitrumChainId: number;
@@ -65,6 +68,7 @@ export function loadDeployments(dir: string): Deployments {
   return {
     claims: addr(dig(h?.json, 'contracts.claims.address')),
     vault: addr(dig(h?.json, 'contracts.vault.address')),
+    token: vaultTokenOf(h?.json),
     caseAddress: addr(dig(a?.json, 'contracts.case.address')),
     hederaChainId: Number(dig(h?.json, 'chainId') ?? HEDERA_TESTNET_CHAIN_ID),
     arbitrumChainId: Number(dig(a?.json, 'chainId') ?? ARBITRUM_SEPOLIA_CHAIN_ID),
