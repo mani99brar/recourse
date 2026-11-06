@@ -265,11 +265,41 @@ contract DepositVaultTest is HederaBase {
         assertEq(vault.topUpDeadline(platform), 0);
     }
 
+    function test_standing_row3_partialDepositBeforeFirstRequirement() public {
+        _deposit(platform, 1); // posted before the owner first sets a requirement
+        vm.recordLogs();
+        _require(platform, 500 * USDC); // the deposit never met a requirement: no clock
+        assertEq(vm.getRecordedLogs().length, 1, "only RequiredSet");
+        assertEq(vault.topUpStartedAt(platform), 0);
+        assertEq(vault.topUpDeadline(platform), 0);
+        assertFalse(vault.inGoodStanding(platform));
+        _require(platform, 400 * USDC); // nor does a second requirement it never met
+        assertEq(vault.topUpStartedAt(platform), 0);
+        assertFalse(vault.inGoodStanding(platform));
+    }
+
+    function test_standing_row3_requirementRemovedThenSetAgainStartsNoClock() public {
+        _deposit(platform, 100 * USDC);
+        _require(platform, 100 * USDC);
+        _require(platform, 500 * USDC);
+        assertEq(vault.topUpStartedAt(platform), T0);
+        vm.warp(T0 + 7 days + 1);
+        assertFalse(vault.inGoodStanding(platform));
+
+        // Removing the requirement and setting it again does not give the lapsed platform a new window.
+        _require(platform, 0);
+        _require(platform, 500 * USDC);
+        assertEq(vault.topUpStartedAt(platform), 0);
+        assertEq(vault.topUpDeadline(platform), 0);
+        assertFalse(vault.inGoodStanding(platform));
+    }
+
     function test_standing_rows4and5_clockRunsThenLapses() public {
         _deposit(platform, 100 * USDC);
+        _require(platform, 100 * USDC); // in good standing
         vm.expectEmit(address(vault));
         emit IDepositVault.TopUpClockStarted(platform, T0 + 7 days);
-        _require(platform, 500 * USDC);
+        _require(platform, 500 * USDC); // raised above the deposit: the clock starts
         assertEq(vault.topUpStartedAt(platform), T0);
         assertEq(vault.topUpDeadline(platform), T0 + 7 days);
         assertTrue(vault.inGoodStanding(platform));
@@ -295,6 +325,7 @@ contract DepositVaultTest is HederaBase {
 
     function test_setRequired_clearsClockWhenLowered() public {
         _deposit(platform, 100 * USDC);
+        _require(platform, 100 * USDC);
         _require(platform, 500 * USDC);
         assertEq(vault.topUpStartedAt(platform), T0);
         vm.expectEmit(address(vault));
@@ -311,6 +342,7 @@ contract DepositVaultTest is HederaBase {
 
     function test_setRequired_doesNotRestartRunningClock() public {
         _deposit(platform, 100 * USDC);
+        _require(platform, 100 * USDC);
         _require(platform, 500 * USDC);
         vm.warp(T0 + 1 days);
         _require(platform, 700 * USDC);
@@ -563,6 +595,7 @@ contract DepositVaultTest is HederaBase {
         vault.requestExit();
 
         _deposit(platform, 300 * USDC);
+        _require(platform, 300 * USDC);
         _require(platform, 500 * USDC); // clock running
         vm.prank(platform);
         vm.expectRevert(IDepositVault.ExitNotRequested.selector);

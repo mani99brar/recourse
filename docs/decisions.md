@@ -42,7 +42,7 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 | Privacy | Record docs are named by CID and SHA-256 on the public HCS topic and are meant to be public by CID (disclosed). Until a public pin (Filebase) is configured they sit in the demo host's own content store, so nobody off the host can fetch them. Buyer fields are salted. The docket is de-identified. |
 | Contest | The losing side contests within the contest window, counted from `preCheckedAt`: 600 s (10 minutes) on the live contract until the config lock, 1,800 s (30 minutes) after it (`params.json`, `preLock` and `locked`). Read it from `params().contestWindow`; the lock changes it for claims already pre-checked, so lock only when none is open. |
 | Good standing | The shop checks `inGoodStanding` before it accepts an order. |
-| Top-up | Derived on every read, with a `topUpDeadline` view and a `TopUpCleared` event. |
+| Top-up | Derived on every read, with a `topUpDeadline` view and a `TopUpCleared` event. The grace clock starts only when a payout or a raised requirement takes a platform that met its requirement below it. A deposit that never met one, such as a partial deposit posted before the first `setRequired`, starts no clock and is not in good standing. |
 | Unknown platform | Claims against a platform with no deposit are allowed. The `Shortfall` is shown. |
 | Ruling 0 twice | Treated as a ruling equal to the pre-check answer, fee included. |
 | Batch draw | Not built unless the contract suite is green early. Every weight is 1. |

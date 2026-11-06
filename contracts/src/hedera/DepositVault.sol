@@ -118,18 +118,20 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     }
 
     /// @notice Sets the deposit a platform must hold to be in good standing (0 removes it).
-    /// @dev Stays callable after the lock; it changes standing only, never balances. Raising the
-    ///      requirement above a non-zero deposit starts the top-up clock if none is running.
+    /// @dev Stays callable after the lock; it changes standing only, never balances. As with a payout, the
+    ///      top-up clock starts only when the new requirement takes a platform that met its old one below
+    ///      it. A deposit that never met a requirement (a first partial deposit) starts none.
     function setRequired(address platform, uint256 amount) external onlyOwner {
         if (platform == address(0)) revert ZeroAddress();
         if (amount != 0 && amount < _minDeposit) revert BelowMinDeposit(amount, _minDeposit);
+        uint256 prev = _required[platform];
         _required[platform] = amount;
         emit RequiredSet(platform, amount);
 
         uint256 held = _deposit[platform];
         if (amount == 0 || held >= amount) {
             _clearClock(platform);
-        } else if (held > 0 && _topUpStart[platform] == 0) {
+        } else if (prev != 0 && held >= prev && _topUpStart[platform] == 0) {
             _startClock(platform);
         }
     }
