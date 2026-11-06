@@ -17,6 +17,14 @@
 //
 //   pnpm --filter @recourse/agent live-order [--sku tee-navy-l] [--local-shop [--facilitator N]]
 //                                           [--through order|pack|report|claim] [--send] [--order <id>]
+//                                           [--fault ordered-size=<S>]
+//
+// `--fault ordered-size=<S>` stages an agent-company mistake, for a demonstration only: the agent's
+// ordered record (written after payment, so the shop cannot check it before it settles) states size
+// S although the buyer asked for, and was shown, the item's own size. The shop packs and ships what
+// the ordered record says, and the buyer reports size S. The fault rule is unchanged; it answers 1
+// (the agent company) at step 2a-ii, so the shop's claim is paid from the agent company's deposit.
+// Use an item whose size is the asked M (tee-navy-m) and a different S. Repeat it on a rerun.
 //
 // `--local-shop` runs the shop in this process (its own journal) on the facilitator rung N of
 // X402_FACILITATOR_URLS; otherwise the agent finds the running shop through its ERC-8004
@@ -26,7 +34,7 @@
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { getAddress, type Hex } from 'viem';
-import { CIRCLE_VAULT_TOKEN, addressBook, claimIdOf, hederaAccountIdOf, partyByRole, priceAssetOf, type Attrs, type VaultToken } from '@recourse/shared';
+import { CIRCLE_VAULT_TOKEN, RecordKind, addressBook, claimIdOf, hederaAccountIdOf, partyByRole, priceAssetOf, type Attrs, type VaultToken } from '@recourse/shared';
 import { loadSigner } from '@recourse/shared/node';
 import {
   Journal,
@@ -43,6 +51,7 @@ import {
   readJournal,
   recordsTopicId,
   withFileLock,
+  type RecordsClient,
 } from '@recourse/records';
 import type { RunningShop } from '../../shop/src/boot.js';
 import { basketPrice, itemBySku } from '../../shop/src/catalog.js';
@@ -54,6 +63,7 @@ import { packOrder } from '../../shop/src/pack.js';
 import { courtFeeOf, fileClaimRun, openHedera, type HederaSide } from '../src/act.js';
 import type { AgentRow } from '../src/buy.js';
 import { hashscanLink, loadBuyer, withOrdersLock } from '../src/cli.js';
+import { orderedDoc } from '../src/docs.js';
 import { openAgent, ordersJournalPath, partiesOrNull } from '../src/setup.js';
 
 const STEPS = ['order', 'pack', 'report', 'claim'] as const;
@@ -69,10 +79,14 @@ async function main(): Promise<number> {
       through: { type: 'string', default: 'claim' },
       order: { type: 'string' },
       send: { type: 'boolean', default: false },
+      fault: { type: 'string' },
     },
   });
   const through = values.through as Step;
   if (!STEPS.includes(through)) throw new Error(`--through: one of ${STEPS.join(', ')}`);
+  const faultMatch = values.fault === undefined ? null : /^ordered-size=([A-Za-z0-9]{1,8})$/.exec(values.fault);
+  if (values.fault !== undefined && !faultMatch) throw new Error('--fault: ordered-size=<S> is the one staged fault');
+  const faultSize = faultMatch ? faultMatch[1]! : null;
   const upTo = (s: Step) => STEPS.indexOf(s) <= STEPS.indexOf(through);
   const send = values.send ?? false;
   const env = process.env;
@@ -114,6 +128,10 @@ async function main(): Promise<number> {
     const basket = drafted ? { sku: drafted.sku, quantity: drafted.quantity } : { sku: values.sku!, quantity: 1 };
     const item = itemBySku(basket.sku);
     if (!item) throw new Error(`--sku: no item ${basket.sku}`);
+    if (faultSize !== null) {
+      if (item.size.toLowerCase() === faultSize.toLowerCase()) throw new Error(`--fault: ${basket.sku} is already size ${item.size}; stage a size it does not have`);
+      console.log(`staged fault: the ordered record will say size ${faultSize}; asked M, shown ${item.size}; the shop ships ${faultSize}`);
+    }
     const priceAsset = priceAssetOf(env);
     const toPay = orderRows.some((r) => r.type === 'pay_signed' || r.type === 'paid') ? 0n : BigInt(basketPrice(item, basket.quantity, priceAsset).amount);
     const agentNeeds = priceAsset === 'hbar' ? { minTinybar: 1n * HBAR + toPay } : { minTinybar: 1n * HBAR, usdc: { minBalance: toPay } };
@@ -171,7 +189,10 @@ async function main(): Promise<number> {
 
     return await withFileLock(join(shopState, 'claims.jsonl.lock'), () => withOrdersLock(async () => {
       const claimsJournal = Journal.open<FilingJournalRow>(join(shopState, 'claims.jsonl'));
-      const agent = await openAgent(env, log, shop ? { shop: { x402Base: `${shop.url}/x402/`, apiBase: shop.url, payTo: hederaAccountIdOf(shopParty), shopAddress: getAddress(shopParty.evmAddress), source: 'in-process shop' } } : {});
+      const agent = await openAgent(env, log, {
+        ...(shop ? { shop: { x402Base: `${shop.url}/x402/`, apiBase: shop.url, payTo: hederaAccountIdOf(shopParty), shopAddress: getAddress(shopParty.evmAddress), source: 'in-process shop' } } : {}),
+        ...(faultSize !== null ? { records: (client: RecordsClient) => withOrderedSize(client, faultSize) } : {}),
+      });
       try {
         const { buyer } = agent;
         const target = agent.shop;
@@ -212,7 +233,9 @@ async function main(): Promise<number> {
           const packed = await withFileLock(join(shopState, 'records.jsonl.lock'), async () => {
             const records = openRecordsClient({ role: 'shop', journalPath: join(shopState, 'records.jsonl'), env, log });
             try {
-              return await packOrder({ records: records.client, journal: shopJournal, orderId: orderId!, merchant, log });
+              // With a staged fault the shop ships what the agent's ordered record says.
+              const attrs = faultSize !== null ? await orderedAttrsOf(ordersJournal, orderId!, env) : undefined;
+              return await packOrder({ records: records.client, journal: shopJournal, orderId: orderId!, merchant, log, ...(attrs ? { attrs } : {}) });
             } finally {
               records.close();
             }
@@ -222,7 +245,7 @@ async function main(): Promise<number> {
 
           // 3. What arrived (the size the shop sent, not the size asked for), and the complaint.
           const report = await buyer.report(orderId, {
-            attrs: { brand: 'Northwind', size: 'L', colour: 'Navy', quantity: '1', merchant },
+            attrs: { brand: 'Northwind', size: faultSize ?? 'L', colour: 'Navy', quantity: '1', merchant },
             buyerAccount: buyerAccount!,
           });
           console.log(`arrived: seq ${report.seq}, cid ${report.cid}; shop ${report.shopAccepted ? 'took the complaint' : `refused it: ${report.shopError}`}`);
@@ -247,6 +270,32 @@ async function main(): Promise<number> {
   } finally {
     await shop?.close();
   }
+}
+
+/** The records client with the ordered record's size replaced: the staged agent-company mistake of `--fault`. */
+function withOrderedSize(client: RecordsClient, size: string): RecordsClient {
+  return new Proxy(client, {
+    get(target, prop) {
+      if (prop === 'commitRecord') {
+        return (kind: RecordKind, orderId: Hex, bytes: Uint8Array) => {
+          if (kind !== RecordKind.Ordered) return target.commitRecord(kind, orderId, bytes);
+          const doc = JSON.parse(new TextDecoder().decode(bytes)) as { orderId: Hex; attrs: Attrs; x402TxId: string; amount: string; asset: string; payTo: string };
+          return target.commitRecord(kind, orderId, orderedDoc({ ...doc, attrs: { ...doc.attrs, size } }));
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
+/** The attributes of the order's ordered record, read back from the topic's document. */
+async function orderedAttrsOf(journalPath: string, orderId: Hex, env: NodeJS.ProcessEnv): Promise<Attrs> {
+  const row = readJournal<AgentRow>(journalPath).rows.find(
+    (r): r is Extract<AgentRow, { type: 'committed' }> => r.type === 'committed' && r.orderId === orderId && r.kind === RecordKind.Ordered,
+  );
+  if (!row) throw new Error(`no ordered record for ${orderId} in ${journalPath}`);
+  return (JSON.parse(new TextDecoder().decode(await fetchDocument(row.cid, row.hash, ipfsOptionsFromEnv(env)))) as { attrs: Attrs }).attrs;
 }
 
 main().then(

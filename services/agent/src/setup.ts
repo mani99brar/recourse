@@ -16,6 +16,7 @@ import {
   x402EndpointOf,
   type Logger,
   type MirrorClient,
+  type RecordsClient,
 } from '@recourse/records';
 import { Buyer, type AgentRow, type ShopTarget } from './buy.js';
 import { loadAgentPayer } from './hedera-signer.js';
@@ -139,8 +140,15 @@ export interface OpenedAgent {
   close(): void;
 }
 
-/** Builds the agent. `options.shop` names the shop directly (an in-process one) instead of discovering it. */
-export async function openAgent(env: Env, log: Logger, options: { shop?: ShopTarget } = {}): Promise<OpenedAgent> {
+/**
+ * Builds the agent. `options.shop` names the shop directly (an in-process one) instead of discovering it.
+ * `options.records` wraps the records client the buyer writes through; live-order's `--fault` uses it.
+ */
+export async function openAgent(
+  env: Env,
+  log: Logger,
+  options: { shop?: ShopTarget; records?: (client: RecordsClient) => RecordsClient } = {},
+): Promise<OpenedAgent> {
   const parties = partiesOrNull(env);
   if (!parties) throw new Error('PARTIES_FILE is not set or missing; the agent needs the party map');
   const platform = partyByRole(parties, 'platform').evmAddress;
@@ -152,7 +160,7 @@ export async function openAgent(env: Env, log: Logger, options: { shop?: ShopTar
   const buyer = new Buyer({
     platform,
     shop,
-    records: records.client,
+    records: options.records ? options.records(records.client) : records.client,
     pin: (bytes) => records.pins.pin(bytes),
     payer: payer.signer,
     agentAccount: loadSigner('AGENT_KEY_FILE', env),
