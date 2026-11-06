@@ -276,6 +276,143 @@ describe('the shop reply after payment', () => {
     expect(w.fake.settled).toHaveLength(1);
   });
 
+  /**
+   * Has the fake facilitator answer with bare Hedera ids, as a real one does, and shows each transfer
+   * it settles on the world's mirror node, after `edit`.
+   */
+  function onMirror(x: World, edit: (s: World['fake']['settled'][number]) => void = () => {}) {
+    x.fake.bareIds = true;
+    const settle = x.fake.settle.bind(x.fake);
+    x.fake.settle = async (payload, requirements) => {
+      const r = await settle(payload, requirements);
+      const s = x.fake.settled.at(-1);
+      if (r.success && s) {
+        s.landed = true;
+        edit(s);
+      }
+      return r;
+    };
+  }
+
+  const rowsOf = (x: World, orderId: string) => readJournal<AgentRow>(join(x.dir, 'orders.jsonl')).rows.filter((r) => 'orderId' in r && r.orderId === orderId);
+  const kindsOf = (x: World, orderId: string) => messages(x).filter((m) => m.orderId === orderId).map((m) => m.kind);
+  const FOREIGN_TX = '0.0.990999@1700000000.000000001';
+
+  test('a settlement is taken once the mirror node shows the approved transfer from the agent to payTo', async () => {
+    w = await world();
+    onMirror(w);
+    const { buyer } = w.open();
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'done', txId: w.fake.settled[0]!.hederaTxId });
+    const ordered = messages(w).find((m) => m.orderId === orderId && m.kind === RecordKind.Ordered)!;
+    expect((await docAt(w, ordered.cid)).x402TxId).toBe(w.fake.settled[0]!.hederaTxId);
+    expect(rowsOf(w, orderId).find((r) => r.type === 'paid')).toMatchObject({ source: 'settlement' });
+  });
+
+  test('a settlement that moved another amount stops the order before the ordered record', async () => {
+    w = await world();
+    onMirror(w, (s) => {
+      s.amount = '999999';
+    });
+    const { buyer } = w.open();
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'transfer_mismatch' });
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    expect(rowsOf(w, orderId).some((r) => r.type === 'paid')).toBe(false);
+    expect(rowsOf(w, orderId).find((r) => r.type === 'payment_mismatch')).toMatchObject({ source: 'settlement', reason: 'transfer_mismatch' });
+    // A fresh process on the same journal ends the same way and pays nothing more.
+    expect(await w.open().buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'transfer_mismatch' });
+    expect(w.fake.settled).toHaveLength(1);
+  });
+
+  test('a settlement the mirror node never shows stops the order once its validity window is over', async () => {
+    w = await world();
+    w.fake.bareIds = true;
+    const { buyer } = w.open();
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'payment_unseen' });
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    expect(w.fake.settled).toHaveLength(1);
+  });
+
+  test('a mirror node that cannot be read leaves the payment unconfirmed, not paid', async () => {
+    w = await world();
+    w.fake.bareIds = true;
+    let down = true;
+    const { buyer } = w.open();
+    const mirror = (buyer as unknown as { deps: { mirror: { transaction: (id: string) => Promise<unknown> } } }).deps.mirror;
+    const transaction = mirror.transaction.bind(mirror);
+    // Only the payment's lookups fail; the records client reads the same mirror.
+    mirror.transaction = async (id) => {
+      if (down && w!.fake.settled.some((s) => s.hederaTxId === id)) throw new Error('mirror: 502 for /transactions');
+      return transaction(id);
+    };
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    const run = buyer.run(orderId);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(rowsOf(w, orderId).some((r) => r.type === 'paid' || r.type === 'abandoned')).toBe(false);
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    // The mirror node is back and shows the transfer.
+    w.fake.settled[0]!.landed = true;
+    down = false;
+    expect(await run).toMatchObject({ state: 'done', txId: w.fake.settled[0]!.hederaTxId });
+    expect(w.fake.settled).toHaveLength(1);
+  });
+
+  test('a paid reply naming a payment the agent never signed stops the order', async () => {
+    w = await world();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      const res = await fetch(req);
+      const paying = req.url.includes('/x402/orders/') && req.headers.has('payment-signature');
+      if (!paying || res.status !== 200) return res;
+      const body = (await res.json()) as Record<string, unknown>;
+      const headers = new Headers(res.headers);
+      headers.delete('payment-response');
+      return new Response(JSON.stringify({ ...body, txId: FOREIGN_TX }), { status: 200, headers });
+    };
+    const { buyer } = w.open({ fetchImpl });
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'payment_not_signed' });
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    expect(rowsOf(w, orderId).find((r) => r.type === 'payment_mismatch')).toMatchObject({ txId: FOREIGN_TX, source: 'settlement' });
+  });
+
+  test('an order the shop says exists, paid with a payment the agent never signed, is not taken', async () => {
+    w = await world();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      const ordering = req.url.includes('/x402/orders/') && (await req.clone().text()).includes('refs');
+      if (!ordering) return fetch(req);
+      return new Response(JSON.stringify({ error: 'order_exists', order: { status: 'paid', payment: { txId: FOREIGN_TX } } }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    const { buyer } = w.open({ fetchImpl });
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'payment_not_signed' });
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    expect(w.fake.settled).toHaveLength(0);
+  });
+
+  test('an order the shop marked payer_mismatch is not taken as paid after a lost reply', async () => {
+    w = await world();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      const res = await fetch(req);
+      if (req.url.includes('/x402/orders/') && req.headers.has('payment-signature')) throw new TypeError('fetch failed (simulated lost reply)');
+      if (req.method !== 'GET' || !/\/orders\/0x[0-9a-f]{64}$/.test(new URL(req.url).pathname) || res.status !== 200) return res;
+      const body = (await res.json()) as { order: Record<string, unknown> };
+      return new Response(JSON.stringify({ ...body, order: { ...body.order, status: 'payer_mismatch' } }), { status: 200, headers: res.headers });
+    };
+    const { buyer } = w.open({ fetchImpl });
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'payer_mismatch' });
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    expect(w.fake.settled).toHaveLength(1);
+  });
+
   test('the ordered record states the offer that was shown', async () => {
     w = await world();
     const { buyer } = w.open();

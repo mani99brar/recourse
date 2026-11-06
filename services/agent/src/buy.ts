@@ -16,13 +16,18 @@
 // new nonce is the way forward, because the shown record of this one is already on the topic.
 // The ordered record states the offer that was shown and approved. A paid reply from the shop that
 // names a different offer is journaled (`offer_mismatch`) and ends the order before that record.
+//
+// A payment the shop reports is taken only when it is one this agent signed for the order and the
+// mirror node shows it succeeded, moving exactly the approved amount of the asset from the agent's
+// account to payTo. Anything else is journaled (`payment_mismatch`) and ends the order before the
+// ordered record. A mirror node that cannot be read leaves the payment unconfirmed, never paid.
 
 import type { Address, Hex, LocalAccount } from 'viem';
 import { bytesToHex, hexToBytes } from 'viem';
 import type { ClientHederaSigner } from '@x402/hedera';
-import { RecordKind, newOrderNonce, orderIdOf, recordHash, toMicroUsdcEquivalent, type Attrs, type RecordKind as Kind } from '@recourse/shared';
+import { HBAR_ASSET_ID, RecordKind, newOrderNonce, orderIdOf, recordHash, toMicroUsdcEquivalent, type Attrs, type RecordKind as Kind } from '@recourse/shared';
 import { render, type RenderInput } from '@recourse/renderer';
-import { validStartSeconds, type Journal, type Logger, type MirrorClient, type Pinned, type RecordsClient } from '@recourse/records';
+import { mirrorTransactionId, validStartSeconds, type Journal, type Logger, type MirrorClient, type MirrorTransaction, type Pinned, type RecordsClient } from '@recourse/records';
 import { signApproval, signReport } from './approval.js';
 import { approvalDoc, arrivedBody, arrivedDoc, askedDoc, mandateDoc, orderedDoc, saltedBuyer, shownDoc } from './docs.js';
 import { decideLimit, utcDay, type LimitDecision, type Limits } from './limits.js';
@@ -86,6 +91,8 @@ export type AgentRow =
   | (At & { type: 'paid'; txId: string; source: 'settlement' | 'shop' | 'mirror'; offer: Omit<Attrs, 'price'> | null })
   /** The shop's paid reply named an offer other than the one shown and approved. */
   | (At & { type: 'offer_mismatch'; txId: string; keys: string[]; shown: Omit<Attrs, 'price'>; replied: Omit<Attrs, 'price'> })
+  /** A payment the shop reported that could not be taken as this order's; the order ends here. */
+  | (At & { type: 'payment_mismatch'; txId: string; source: 'settlement' | 'shop' | 'mirror'; reason: PaymentMismatch; detail: string })
   | (At & { type: 'pay_failed'; status: number; error: string })
   | (At & { type: 'abandoned'; reason: string })
   | (At & { type: 'done' })
@@ -171,6 +178,39 @@ const OFFER_KEYS = ['brand', 'size', 'colour', 'quantity', 'merchant'] as const;
 export function offerDifferences(shown: Omit<Attrs, 'price'>, replied: Omit<Attrs, 'price'> | null | undefined): string[] {
   if (!replied || typeof replied !== 'object') return [];
   return OFFER_KEYS.filter((k) => typeof replied[k] === 'string' && replied[k] !== shown[k]);
+}
+
+/**
+ * Why a reported payment was not taken: the agent did not sign it for this order, the shop's order
+ * says the payer did not match, it failed on chain, it never reached the mirror node in its validity
+ * window, or it moved something other than the approved amount and asset from the agent to payTo.
+ */
+export type PaymentMismatch = 'payment_not_signed' | 'payer_mismatch' | 'payment_failed' | 'payment_unseen' | 'transfer_mismatch';
+
+/** The settlement id prefix of the local simulated facilitator, which moves no money. */
+const SIMULATED_SETTLEMENT = 'fake-settlement:';
+
+/**
+ * One spelling of a Hedera transaction id (`0.0.x@s.n` or the mirror's `0.0.x-s-n`); anything else
+ * is kept as it is. `simulated`: a simulated settlement id stands for the transaction it names.
+ */
+function paymentKey(txId: string, simulated: boolean): string {
+  const bare = simulated && txId.startsWith(SIMULATED_SETTLEMENT) ? txId.slice(SIMULATED_SETTLEMENT.length) : txId;
+  try {
+    return mirrorTransactionId(bare);
+  } catch {
+    return bare.trim();
+  }
+}
+
+/** What a transaction moved other than exactly `amount` of `asset` from `payer` to `payTo`, or null. */
+export function transferProblem(tx: MirrorTransaction, terms: { asset: string; amount: string; payTo: string }, payer: string): string | null {
+  const moves = terms.asset === HBAR_ASSET_ID ? tx.transfers : tx.tokenTransfers.filter((t) => t.tokenId === terms.asset);
+  const net = (account: string) => moves.filter((t) => t.account === account).reduce((sum, t) => sum + t.amount, 0n);
+  const amount = BigInt(terms.amount);
+  if (net(payer) !== -amount) return `${payer} moved ${net(payer)} of ${terms.asset}, not -${amount}`;
+  if (net(terms.payTo) !== amount) return `${terms.payTo} received ${net(terms.payTo)} of ${terms.asset}, not ${amount}`;
+  return null;
 }
 
 /** The approval an order is waiting on, with what the buyer must sign; null when none is open. */
@@ -604,28 +644,83 @@ export class Buyer {
     return run;
   }
 
-  private async shopOrder(orderId: Hex): Promise<{ txId: string } | null> {
+  private async shopOrder(orderId: Hex): Promise<{ txId: string; status?: string } | null> {
     try {
       const res = await this.fetchImpl(`${this.deps.shop.apiBase}/orders/${orderId}`, { headers: { accept: 'application/json' } });
       if (res.status === 404) return null;
       if (!res.ok) return null;
-      const body = (await res.json()) as { order?: { payment?: { txId?: string } } };
+      const body = (await res.json()) as { order?: { status?: string; payment?: { txId?: string } } };
       const txId = body.order?.payment?.txId;
-      return txId ? { txId } : null;
+      return txId ? { txId, ...(typeof body.order?.status === 'string' ? { status: body.order.status } : {}) } : null;
     } catch {
       return null;
     }
   }
 
   /**
-   * What became of a signed payment: paid (the shop has the order, or the mirror node shows the
-   * transfer), dead (failed on chain, or past its validity window with no trace), or still open.
+   * Whether a payment the shop reported (`claimed`, in the shop's spelling) is this order's: one
+   * the agent signed for it, and on the mirror node a success moving exactly the approved amount
+   * and asset from the agent's account to payTo. `wait`: the mirror node does not show it yet, or
+   * cannot be read. An order whose records all went to a simulated topic takes the simulated
+   * facilitator's settlement of its own signed payment as it is: there is no chain to look at.
    */
-  private async resolveSigned(orderId: Hex, signed: Extract<AgentRow, { type: 'pay_signed' }>): Promise<{ state: 'paid'; txId: string; source: 'shop' | 'mirror' } | { state: 'dead'; reason: string } | { state: 'open' }> {
+  private async confirmPayment(
+    orderId: Hex,
+    probed: Extract<AgentRow, { type: 'probed' }>,
+    claimed: string,
+    status?: string,
+  ): Promise<{ state: 'paid' } | { state: 'wait' } | { state: 'mismatch'; reason: PaymentMismatch; detail: string }> {
+    if (status === 'payer_mismatch') return { state: 'mismatch', reason: 'payer_mismatch', detail: 'the shop refused the order: payer_mismatch' };
+    const committed = this.rowsOf(orderId).filter((r) => r.type === 'committed');
+    const simulated = committed.length > 0 && committed.every((r) => r.type === 'committed' && r.simulated === true);
+    const key = paymentKey(claimed, simulated);
+    const signed = this.rowsOf(orderId).find((r): r is Extract<AgentRow, { type: 'pay_signed' }> => r.type === 'pay_signed' && paymentKey(r.txId, false) === key);
+    if (!signed) return { state: 'mismatch', reason: 'payment_not_signed', detail: `the agent signed no payment ${claimed.slice(0, 100)} for this order` };
+    if (simulated && claimed.startsWith(SIMULATED_SETTLEMENT)) return { state: 'paid' };
+    let tx: MirrorTransaction | null;
+    try {
+      tx = await this.deps.mirror.transaction(signed.txId);
+    } catch (error) {
+      this.deps.log?.warn('payment_unconfirmed', { orderId, txId: signed.txId, error: error instanceof Error ? error.message.slice(0, 200) : String(error) });
+      return { state: 'wait' };
+    }
+    if (!tx) {
+      if (this.now() <= validStartSeconds(signed.txId) + PAYMENT_DEAD_AFTER_S) return { state: 'wait' };
+      return { state: 'mismatch', reason: 'payment_unseen', detail: `${signed.txId} is not on the mirror node past its validity window` };
+    }
+    if (tx.result !== 'SUCCESS') return { state: 'mismatch', reason: 'payment_failed', detail: `transaction ${tx.result}` };
+    const problem = transferProblem(tx, probed.terms, this.deps.payer.accountId);
+    return problem ? { state: 'mismatch', reason: 'transfer_mismatch', detail: problem } : { state: 'paid' };
+  }
+
+  /**
+   * What became of a signed payment: paid (the shop has the order and the payment checks out, or
+   * the mirror node shows the transfer), a mismatch, dead (failed on chain, or past its validity
+   * window with no trace), or still open.
+   */
+  private async resolveSigned(
+    orderId: Hex,
+    probed: Extract<AgentRow, { type: 'probed' }>,
+    signed: Extract<AgentRow, { type: 'pay_signed' }>,
+  ): Promise<
+    | { state: 'paid'; txId: string; source: 'shop' | 'mirror' }
+    | { state: 'mismatch'; txId: string; source: 'shop' | 'mirror'; reason: PaymentMismatch; detail: string }
+    | { state: 'dead'; reason: string }
+    | { state: 'open' }
+  > {
     const fromShop = await this.shopOrder(orderId);
-    if (fromShop) return { state: 'paid', txId: fromShop.txId, source: 'shop' };
+    if (fromShop) {
+      const c = await this.confirmPayment(orderId, probed, fromShop.txId, fromShop.status);
+      if (c.state === 'paid') return { state: 'paid', txId: fromShop.txId, source: 'shop' };
+      if (c.state === 'mismatch') return { ...c, txId: fromShop.txId, source: 'shop' };
+      return { state: 'open' };
+    }
     const tx = await this.deps.mirror.transaction(signed.txId).catch(() => undefined);
-    if (tx && tx.result === 'SUCCESS') return { state: 'paid', txId: signed.txId, source: 'mirror' };
+    if (tx && tx.result === 'SUCCESS') {
+      const problem = transferProblem(tx, probed.terms, this.deps.payer.accountId);
+      if (problem) return { state: 'mismatch', txId: signed.txId, source: 'mirror', reason: 'transfer_mismatch', detail: problem };
+      return { state: 'paid', txId: signed.txId, source: 'mirror' };
+    }
     if (tx) return { state: 'dead', reason: `transaction ${tx.result}` };
     if (tx === null && this.now() > validStartSeconds(signed.txId) + PAYMENT_DEAD_AFTER_S) return { state: 'dead', reason: 'expired unseen' };
     return { state: 'open' };
@@ -642,6 +737,16 @@ export class Buyer {
       this.deps.log?.info('order_paid', { orderId, txId, source });
       return { state: 'paid' as const, row };
     };
+    // A reported payment that is not this order's ends the order; no other payment is made for it.
+    const stop = (txId: string, source: 'settlement' | 'shop' | 'mirror', m: { reason: PaymentMismatch; detail: string }) => {
+      this.write({ type: 'payment_mismatch', at: iso(), orderId, txId, source, reason: m.reason, detail: m.detail });
+      this.deps.log?.error('payment_mismatch', { orderId, txId, source, reason: m.reason, detail: m.detail });
+      this.write({ type: 'abandoned', at: iso(), orderId, reason: m.reason });
+      return { state: 'stopped' as const, outcome: { state: 'abandoned' as const, orderId, reason: m.reason } };
+    };
+    // The offer a paid reply stated, kept for the paid row while the mirror node catches up.
+    let replied: { txId: string; offer: Omit<Attrs, 'price'> | null } | null = null;
+    const offerFor = (txId: string) => (replied?.txId === txId ? replied.offer : null);
 
     for (let round = 0; ; round++) {
       // Settle every signed payment of this order that is still open before signing another.
@@ -649,8 +754,9 @@ export class Buyer {
       const open = this.rowsOf(orderId).filter((r): r is Extract<AgentRow, { type: 'pay_signed' }> => r.type === 'pay_signed' && !dead.has(r.txId));
       let waiting = false;
       for (const signed of open) {
-        const r = await this.resolveSigned(orderId, signed);
-        if (r.state === 'paid') return markPaid(r.txId, r.source, null);
+        const r = await this.resolveSigned(orderId, probed, signed);
+        if (r.state === 'paid') return markPaid(r.txId, r.source, offerFor(r.txId));
+        if (r.state === 'mismatch') return stop(r.txId, r.source, r);
         if (r.state === 'dead') this.write({ type: 'pay_dead', at: iso(), orderId, txId: signed.txId, reason: r.reason });
         else waiting = true;
       }
@@ -660,7 +766,13 @@ export class Buyer {
       }
       // The shop may know the order from a payment journaled under another attempt.
       const known = await this.shopOrder(orderId);
-      if (known) return markPaid(known.txId, 'shop', null);
+      if (known) {
+        const c = await this.confirmPayment(orderId, probed, known.txId, known.status);
+        if (c.state === 'paid') return markPaid(known.txId, 'shop', null);
+        if (c.state === 'mismatch') return stop(known.txId, 'shop', c);
+        await this.sleep(this.deps.pollMs ?? 5000);
+        continue;
+      }
       if (round > 20) {
         this.write({ type: 'pay_failed', at: iso(), orderId, status: 0, error: 'too many attempts' });
         return { state: 'stopped', outcome: { state: 'pay_failed', orderId, reason: 'too many attempts' } };
@@ -695,14 +807,24 @@ export class Buyer {
         if (res.status === 200) {
           const reply = res.body as { txId?: string; offer?: Omit<Attrs, 'price'> };
           const txId = res.settlement?.transaction || reply.txId || '';
-          if (txId) return markPaid(txId, 'settlement', reply.offer ?? null);
-          // A 200 with no transaction id: settle it through the signed payment on the next round.
+          if (txId) {
+            const c = await this.confirmPayment(orderId, probed, txId);
+            if (c.state === 'paid') return markPaid(txId, 'settlement', reply.offer ?? null);
+            if (c.state === 'mismatch') return stop(txId, 'settlement', c);
+            replied = { txId, offer: reply.offer ?? null };
+          }
+          // Not on the mirror node yet, or a 200 with no transaction id: the next rounds settle it
+          // through the signed payment.
           continue;
         }
         if (res.status === 409) {
-          const reply = res.body as { error?: string; order?: { payment?: { txId?: string } } };
+          const reply = res.body as { error?: string; order?: { status?: string; payment?: { txId?: string } } };
           const txId = reply.order?.payment?.txId;
-          if (reply.error === 'order_exists' && txId) return markPaid(txId, 'shop', null);
+          if (reply.error === 'order_exists' && txId) {
+            const c = await this.confirmPayment(orderId, probed, txId, reply.order?.status);
+            if (c.state === 'paid') return markPaid(txId, 'shop', null);
+            if (c.state === 'mismatch') return stop(txId, 'shop', c);
+          }
           await this.sleep(this.deps.pollMs ?? 5000);
           continue;
         }
