@@ -108,6 +108,13 @@ export interface Chains {
   /** Ops addresses (evidence must come from ours). */
   readonly opsArb: Address;
   readonly opsHedera: Address;
+  /**
+   * Whether the arbitrator has KlerosCore's dispute views (`disputes`, `getTimesPerPeriod`). Known
+   * from the deployment, never guessed from an error: the local mock arbitrator has none, and its
+   * giveRuling rules the case at once, so there is no execution period to wait for. Where this is
+   * true a failed `dispute` read is a read failure, and nothing that would lose a ruling goes ahead.
+   */
+  readonly disputeViews: boolean;
 
   /** New Hedera events since the last commit, oldest first (may repeat after a restart). */
   pollHedera(): Promise<ChainEvent[]>;
@@ -134,6 +141,7 @@ export interface Chains {
   openCases(): Promise<number>;
   /** Execution state of a CCIP message on the destination chain's OffRamp. */
   execState(destination: Chain, messageId: Hex): Promise<ExecutionState>;
+  /** KlerosCore's view of a dispute. Throws when it cannot be read, or when `disputeViews` is false. */
   dispute(disputeId: bigint): Promise<DisputeInfo>;
   currentRuling(disputeId: bigint): Promise<RulingRead>;
   sortition(): Promise<SortitionRead>;

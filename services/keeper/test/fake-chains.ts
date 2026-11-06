@@ -66,6 +66,8 @@ export class FakeChains implements Chains {
   readonly rulings = new Map<string, RulingRead>();
   /** Whether the arbitrator exposes dispute views (the local mock does not). */
   disputeViews = true;
+  /** The next this many dispute() reads fail as a transport error would (a 429, a timeout). */
+  disputeReadFails = 0;
   sortitionV: SortitionRead = { phase: 0, lastPhaseChange: 0, minStakingTime: 3600, maxDrawingTime: 3600, disputesWithoutJurors: 0n };
   feePoolV = 10n ** 17n;
   costV = 10n ** 16n;
@@ -152,7 +154,11 @@ export class FakeChains implements Chains {
   }
   async dispute(disputeId: bigint): Promise<DisputeInfo> {
     if (!this.disputeViews) throw new Error('execution reverted');
-    const d = this.disputes.get(disputeId.toString());
+    if (this.disputeReadFails > 0) {
+      this.disputeReadFails -= 1;
+      throw new Error('HTTP request failed.\n\nStatus: 429');
+    }
+    const d =this.disputes.get(disputeId.toString());
     if (!d) throw new Error(`no dispute ${disputeId}`);
     return { ...d };
   }

@@ -166,3 +166,44 @@ describe('court round', () => {
     expect(asked).toEqual([1n]);
   });
 });
+
+describe('dispute views', () => {
+  const at = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
+  function chainsWith(extra: { disputeKit?: Address; sortitionModule?: Address; disputeViews?: boolean }, fail = false) {
+    const asked: string[] = [];
+    const client = {
+      async readContract(q: { functionName: string }) {
+        asked.push(q.functionName);
+        if (fail) throw new Error('HTTP request failed.\n\nURL: https://rpc.example');
+        if (q.functionName === 'disputes') return [8n, at(4), 4, false, 1_800_000_000n];
+        if (q.functionName === 'getTimesPerPeriod') return [900n, 2700n, 1800n, 2700n];
+        throw new Error(`unexpected ${q.functionName}`);
+      },
+    };
+    const chains = new LiveChains({
+      hedera: { client: {} as never, claims: at(1), vault: at(2), offRamp: at(3), events: {} as never, sender: {} as never },
+      arbitrum: { client: client as never, chainId: 421614, case: at(4), klerosCore: at(5), evidenceModule: at(6), offRamp: at(8), reader: {} as never, sender: { address: at(9) } as never, ...extra },
+    });
+    return { chains, asked };
+  }
+
+  it('KlerosCore (a deployment with a dispute kit and a sortition module) has them and is read', async () => {
+    const { chains, asked } = chainsWith({ disputeKit: at(7), sortitionModule: at(10) });
+    expect(chains.disputeViews).toBe(true);
+    expect(await chains.dispute(212n)).toMatchObject({ courtId: 8n, period: 4, ruled: false, timesPerPeriod: [900, 2700, 1800, 2700] });
+    expect(asked).toEqual(['disputes', 'getTimesPerPeriod']);
+  });
+
+  it('a failed read rejects; it is never an empty answer', async () => {
+    const { chains } = chainsWith({ disputeKit: at(7), sortitionModule: at(10) }, true);
+    await expect(chains.dispute(212n)).rejects.toThrow('HTTP request failed.');
+  });
+
+  it('the local mock arbitrator (neither address) has none, and is not asked', async () => {
+    const { chains, asked } = chainsWith({});
+    expect(chains.disputeViews).toBe(false);
+    await expect(chains.dispute(1n)).rejects.toThrow('no dispute views');
+    expect(asked).toEqual([]);
+    expect(chainsWith({ disputeViews: true }).chains.disputeViews).toBe(true);
+  });
+});

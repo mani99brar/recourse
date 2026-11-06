@@ -704,6 +704,73 @@ describe('expiry never beats a court ruling (Both mode)', () => {
     expect(kinds(r)).toContain('expiry_race');
   });
 
+  /** A Watching claim whose dispute sits in its execution period; the clock at `at` (the claim's or the case's expiry). */
+  async function rulingInPeriod4(at: 'claim' | 'case'): Promise<{ r: Rig; id: Hex }> {
+    const r = rig();
+    const id = await toWatching(r);
+    const d = r.fake.disputeOf(id).toString();
+    r.fake.t = at === 'claim' ? Number(r.fake.claims.get(id)!.preCheckedAt) + r.fake.claimsParamsV.claimTimeout + 5 : Number(r.fake.cases.get(id)!.expiresAt) + 1;
+    r.fake.disputes.set(d, { ...r.fake.disputes.get(d)!, period: 4, lastPeriodChange: r.fake.t - 700 });
+    return { r, id };
+  }
+
+  it('one failed Kleros dispute read at the claim timeout does not expire the claim; executeRuling still goes', async () => {
+    const { r, id } = await rulingInPeriod4('claim');
+    r.fake.disputeReadFails = 1; // the expiry check's read: a 429 from the public endpoint
+    await r.k.tick();
+    expect(fns(r, id)).not.toContain('expireClaim');
+    expect(fns(r, id)).not.toContain('markStale');
+    expect(fns(r, id)).toContain('executeRuling');
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.AtCourt);
+    expect(phase(r, id)).toBe('Watching');
+    const hint = r.alerter.pending().find((a) => a.kind === 'expiry_race')?.hint ?? '';
+    expect(hint).toContain('could not be read (HTTP request failed.)');
+    expect(hint).toContain(`keeper-ctl expire ${id}`);
+  });
+
+  it('one failed Kleros dispute read at the case expiresAt does not mark the case stale', async () => {
+    const { r, id } = await rulingInPeriod4('case');
+    expect(r.fake.t).toBeLessThanOrEqual(Number(r.fake.claims.get(id)!.preCheckedAt) + r.fake.claimsParamsV.claimTimeout); // Hedera cannot expire yet
+    r.fake.disputeReadFails = 1; // markStale's read
+    await r.k.tick();
+    expect(fns(r, id)).not.toContain('markStale');
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Opened);
+    expect(r.alerter.pending().find((a) => a.kind === 'expiry_race')?.hint).toContain('markStale waits until it can be read');
+    await run(r, 120, 30);
+    expect(fns(r, id)).toContain('executeRuling');
+    expect(fns(r, id)).not.toContain('markStale');
+  });
+
+  it('a dispute that stays unreadable holds both expiries until keeper-ctl expire, and says why', async () => {
+    const { r, id } = await rulingInPeriod4('claim');
+    r.fake.disputeReadFails = 1_000_000;
+    await run(r, 1800, 60);
+    expect(fns(r, id)).not.toContain('expireClaim');
+    expect(fns(r, id)).not.toContain('markStale');
+    expect(r.k.book.claims.get(id)!.lastError).toContain('could not be read');
+    expect(r.k.health.lastError).toContain('could not be read');
+    control(r, { expire: { [id]: Date.now() } });
+    await run(r, 90, 30);
+    expect(fns(r, id).filter((f) => f === 'expireClaim' || f === 'markStale')).toEqual(['expireClaim', 'markStale']);
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Expired);
+    expect(r.fake.cases.get(id)!.state).toBe(CaseState.Stale);
+  });
+
+  it('an arbitrator without dispute views (the local mock) is never read, and expiry goes ahead', async () => {
+    const { r, id } = await rulingInPeriod4('claim');
+    r.fake.disputeViews = false;
+    const read = r.fake.dispute.bind(r.fake);
+    let reads = 0;
+    r.fake.dispute = async (x) => {
+      reads += 1;
+      return read(x);
+    };
+    await run(r, 60, 30);
+    expect(reads).toBe(0);
+    expect(fns(r, id)).toContain('expireClaim');
+    expect(r.fake.claims.get(id)!.status).toBe(ClaimStatus.Expired);
+  });
+
   it('a ruling message that failed on the Hedera OffRamp holds expiry back for the operator', async () => {
     const { r, id, expiresAfter } = await watchingNearTimeout();
     r.fake.rule(id, 1);

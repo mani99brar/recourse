@@ -559,10 +559,11 @@ export class Keeper {
       const pending = await this.pendingRuling(c);
       if (pending !== undefined) {
         const held = c.autoHold ? ` The claim is held (${c.autoHold.reason}); keeper-ctl release ${c.claimId} tries the ruling again.` : '';
+        if (pending.unread) this.noteUnread(c, pending.why, now);
         this.alertClaim(
           c,
           'expiry_race',
-          `claim timeout passed but ${pending.why}; expiry waits for the ruling.${held} To expire anyway, which makes Hedera ignore the ruling: keeper-ctl expire ${c.claimId}`,
+          `claim timeout passed but ${pending.why}; expiry waits ${pending.unread ? 'until it can be read' : 'for the ruling'}.${held} To expire anyway, which makes Hedera ignore the ruling: keeper-ctl expire ${c.claimId}`,
           pending.messageId ? { links: [this.links.ccipMessage(pending.messageId)] } : {},
         );
         // The row's own call (relay, record, re-relay or executeRuling) is what delivers the ruling.
@@ -590,9 +591,10 @@ export class Keeper {
    * by many blocks after a downtime: a Ruled case still has its ruling to relay (or record, in
    * the one-leg modes); a Relayed case has a message in flight, or one that failed on the Hedera
    * OffRamp and can still be executed by hand; an Opened case whose Kleros dispute is in its
-   * execution period has a final ruling that executeRuling delivers.
+   * execution period has a final ruling that executeRuling delivers. A dispute that cannot be
+   * read counts as pending (`unread`): a failed read never lets expiry throw a ruling away.
    */
-  private async pendingRuling(c: KeeperClaim): Promise<{ why: string; messageId?: Hex } | undefined> {
+  private async pendingRuling(c: KeeperClaim): Promise<{ why: string; messageId?: Hex; unread?: boolean } | undefined> {
     if (c.rulingReceivedAt !== undefined) return undefined;
     let changed = false;
     const inbound = async (messageId: Hex): Promise<ExecutionState> => {
@@ -628,13 +630,38 @@ export class Keeper {
       }
       if (cv.state === CaseState.Opened && cv.attempts > 0) {
         const disputeId = cv.disputeIds[cv.attempts - 1]!;
-        const d = await this.o.chains.dispute(disputeId).catch(() => undefined);
-        if (d !== undefined && (d.ruled || d.period === 4)) return { why: `Kleros dispute ${disputeId} is in its execution period and executeRuling has not run` };
+        const k = await this.finalRuling(disputeId);
+        if (k.state === 'final') return { why: `Kleros dispute ${disputeId} is in its execution period and executeRuling has not run` };
+        if (k.state === 'unread') return { why: `Kleros dispute ${disputeId} could not be read (${k.error}), so a final ruling there cannot be ruled out`, unread: true };
       }
       return undefined;
     } finally {
       if (changed) this.book.save(c);
     }
+  }
+
+  /**
+   * Whether a Kleros dispute holds a final ruling that has not been executed: 'final' when it is
+   * ruled or in its execution period (4), 'unread' when the read failed, so that cannot be ruled
+   * out, 'none' otherwise. Always 'none' on an arbitrator without dispute views (the local mock,
+   * named by the deployment), whose rulings reach the case at once.
+   */
+  private async finalRuling(disputeId: bigint): Promise<{ state: 'final' | 'none' } | { state: 'unread'; error: string }> {
+    if (!this.o.chains.disputeViews) return { state: 'none' };
+    try {
+      const d = await this.o.chains.dispute(disputeId);
+      return { state: d.ruled || d.period === 4 ? 'final' : 'none' };
+    } catch (err) {
+      return { state: 'unread', error: msg(err) };
+    }
+  }
+
+  /** A read that a destructive call waits on failed: the claim and /health show it until a clean tick. */
+  private noteUnread(c: KeeperClaim, why: string, now: number): void {
+    c.lastError = why;
+    c.lastErrorAt = now;
+    this.noteError(`${c.claimId}: ${why}`);
+    this.log(`claim ${c.claimId}: ${why}; waiting`);
   }
 
   /**
@@ -711,17 +738,20 @@ export class Keeper {
     if (!STALEABLE.includes(cv.state)) return false;
     if (operatorHolds(this.control, c.claimId)) return true;
     // A final Kleros ruling nobody has executed yet still counts while Hedera has not expired the
-    // claim: executeRuling (the Watching row's nudge) delivers it and frees the slot as well.
+    // claim: executeRuling (the Watching row's nudge) delivers it and frees the slot as well. A
+    // dispute that cannot be read might hold one, so markStale waits for a read that answers.
     if (!opts.expired && cv.state === CaseState.Opened && cv.attempts > 0 && !expiryForced(this.control, c.claimId)) {
       const disputeId = cv.disputeIds[cv.attempts - 1]!;
-      const d = await this.o.chains.dispute(disputeId).catch(() => undefined);
-      if (d !== undefined && (d.ruled || d.period === 4)) {
-        this.alertClaim(
-          c,
-          'expiry_race',
-          `the case expired at ${exp} but Kleros dispute ${disputeId} is in its execution period; executeRuling goes first and markStale waits. To mark it stale anyway: keeper-ctl expire ${c.claimId}`,
-          { links: [this.links.courtCase(disputeId.toString())] },
-        );
+      const k = await this.finalRuling(disputeId);
+      if (k.state !== 'none') {
+        let why = `Kleros dispute ${disputeId} is in its execution period; executeRuling goes first and markStale waits`;
+        if (k.state === 'unread') {
+          why = `Kleros dispute ${disputeId} could not be read (${k.error}), so a final ruling there cannot be ruled out; markStale waits until it can be read`;
+          this.noteUnread(c, `Kleros dispute ${disputeId} could not be read (${k.error})`, now);
+        }
+        this.alertClaim(c, 'expiry_race', `the case expired at ${exp} but ${why}. To mark it stale anyway: keeper-ctl expire ${c.claimId}`, {
+          links: [this.links.courtCase(disputeId.toString())],
+        });
         return false;
       }
     }
@@ -953,7 +983,7 @@ export class Keeper {
     const lastRead = c.lastRuling?.attempt === a.attempt ? c.lastRuling.at : undefined;
     if (since >= this.timing.rulingReadFromS && (lastRead === undefined || now - lastRead >= this.timing.rulingReadEveryS)) {
       const r = await this.o.chains.currentRuling(disputeId);
-      d = await this.o.chains.dispute(disputeId).catch(() => undefined);
+      d = this.o.chains.disputeViews ? await this.o.chains.dispute(disputeId).catch(() => undefined) : undefined;
       c.lastRuling = { attempt: a.attempt, ruling: r.ruling.toString(), tied: r.tied, overridden: r.overridden, at: now };
       this.book.save(c);
       // A round starts tied at 0; only an untied 0, or a tie that survived the vote, is a refusal.
@@ -975,8 +1005,9 @@ export class Keeper {
   /** Permissionless Kleros calls when a period is overdue or nobody has drawn jurors. Never stakes or appeals. */
   private async nudge(c: KeeperClaim, a: CourtAttempt, d: DisputeInfo | undefined, now: number): Promise<void> {
     const disputeId = BigInt(a.disputeId);
+    if (!this.o.chains.disputeViews) return; // the local mock arbitrator has no periods to nudge
     const info = d ?? (await this.o.chains.dispute(disputeId).catch(() => undefined));
-    if (info === undefined) return; // the arbitrator does not expose dispute views (local mock)
+    if (info === undefined) return; // unreadable this tick: nudges only ever wait
     const row = rowOf('Watching');
     const after = this.timing.nudgeAfterS;
     const send = async (fn: string, contract: KeeperCall['contract'], args: readonly unknown[], marker: string) => {

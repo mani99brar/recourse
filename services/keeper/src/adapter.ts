@@ -60,6 +60,11 @@ export interface LiveChainsOptions {
     evidenceModule: Address;
     disputeKit?: Address;
     sortitionModule?: Address;
+    /**
+     * Whether klerosCore has KlerosCore's dispute views. Default: true when the deployment names
+     * a dispute kit and a sortition module (testnet), false otherwise (the local mock has neither).
+     */
+    disputeViews?: boolean;
     /** OffRamp executing Hedera -> Arbitrum messages. */
     offRamp: Address;
     reader: BlockLogReader;
@@ -90,12 +95,14 @@ export function batches<T>(items: readonly T[], size: number): T[][] {
 export class LiveChains implements Chains {
   readonly caseAddress: Address;
   readonly arbChainId: number;
+  readonly disputeViews: boolean;
   private readonly timesByCourt = new Map<string, readonly [number, number, number, number]>();
   private links?: { hedera: Address; arbitrum: Address };
 
   constructor(private readonly o: LiveChainsOptions) {
     this.caseAddress = o.arbitrum.case;
     this.arbChainId = o.arbitrum.chainId;
+    this.disputeViews = o.arbitrum.disputeViews ?? (o.arbitrum.disputeKit !== undefined && o.arbitrum.sortitionModule !== undefined);
   }
 
   get opsArb(): Address {
@@ -244,6 +251,7 @@ export class LiveChains implements Chains {
   }
 
   async dispute(disputeId: bigint): Promise<DisputeInfo> {
+    if (!this.disputeViews) throw new Error('this arbitrator has no dispute views');
     const a = this.o.arbitrum;
     const [courtId, , period, ruled, lastPeriodChange] = await a.client.readContract({ address: a.klerosCore, abi: klerosCoreAbi, functionName: 'disputes', args: [disputeId] });
     const times = await this.timesPerPeriod(courtId);
