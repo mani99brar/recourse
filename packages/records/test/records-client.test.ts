@@ -225,5 +225,6 @@ describe('records client: crash anywhere', () => {
         final.journal.close();
       }
     }
-  });
+    // A hundred sequences of up to twelve lives each take about 5 s on this host, the default limit.
+  }, 60_000);
 });
