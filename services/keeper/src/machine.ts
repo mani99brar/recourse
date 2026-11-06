@@ -39,6 +39,7 @@ import type {
   KeeperCall,
   KeeperClaim,
   Phase,
+  ResolvedCall,
 } from './types.js';
 
 const ZERO32 = `0x${'0'.repeat(64)}` as Hex;
@@ -154,7 +155,12 @@ export class Keeper {
     this.health.windowsActive = this.windows.filter((w) => w.from <= now && now < w.to).map((w) => `${w.chain}@${w.from}/${w.to}`);
 
     await this.refreshParams();
-    await this.guard('resolve open transactions', () => this.o.chains.resolveOpen());
+    await this.guard('resolve open transactions', async () => {
+      // Receipts are always read; a stored transaction is broadcast again only when a send could go now.
+      const settled = await this.o.chains.resolveOpen({ rebroadcast: (chain, call) => this.canSend(chain, call, now) });
+      for (const s of settled ?? []) this.settled(s, now);
+      this.stuckIntents();
+    });
     await this.guard('hedera events', () => this.ingestHedera());
     await this.guard('arbitrum events', () => this.ingestArbitrum());
     await this.guard('bridge-wide events', () => this.handleGlobalEvents(now));
@@ -222,6 +228,48 @@ export class Keeper {
     });
     for (const e of events) this.ingest(e);
     this.o.chains.commitArbitrum(events);
+  }
+
+  /**
+   * A call that came back pending has now been settled. Evidence is the one call no contract
+   * guard stops from going twice, so a mined submitEvidence counts at once instead of waiting for
+   * its Evidence log (read 20 blocks behind) while the 30-second retry runs.
+   */
+  private settled(s: ResolvedCall, now: number): void {
+    if (s.claimId === undefined) return;
+    const c = this.book.claims.get(s.claimId.toLowerCase());
+    if (!c) return;
+    if (s.call === 'submitEvidence' && s.outcome === 'success') {
+      const a = currentAttempt(c);
+      if (a && a.evidenceAt === undefined) {
+        a.evidenceAt = now;
+        a.evidenceTx = s.hash;
+        this.book.save(c);
+      }
+    } else if (s.outcome === 'dropped') {
+      this.log(`claim ${c.claimId}: ${s.call} ${s.hash} was dropped; the claim's next step reads the chain again`);
+    }
+  }
+
+  /** Alerts on transactions open longer than `intentStuckS`: every later call on that key waits on them. */
+  private stuckIntents(): void {
+    for (const s of this.o.chains.intentStatus?.() ?? []) {
+      if (s.ageS < this.timing.intentStuckS) continue;
+      const kind: AlertKind = s.reason === 'funds' ? 'gas_low' : 'call_failed';
+      const why = s.lastError ? `; last broadcast error: ${s.lastError}` : '';
+      const hint =
+        `${s.call} ${s.hash} (nonce ${s.nonce}) on ${s.chain} has been open for ${s.ageS} s and every later ${s.chain} call waits on it` +
+        `${why}. ${s.reason === 'funds' ? `Fund the ops-${s.chain} key. ` : ''}The keeper drops it after repeated refusals and sends again; a transaction you send by hand with that nonce also frees it`;
+      const subject = `intent-${s.chain}`;
+      if (s.claimId) {
+        const c = this.book.claims.get(s.claimId.toLowerCase());
+        if (c) {
+          this.alertClaim(c, kind, hint, { detail: { chain: s.chain, call: s.call, nonce: String(s.nonce), ageS: String(s.ageS) } });
+          continue;
+        }
+      }
+      this.alert({ kind, subject, hint, detail: { chain: s.chain, call: s.call, nonce: String(s.nonce), ageS: String(s.ageS) } });
+    }
   }
 
   private ingest(e: ChainEvent): void {

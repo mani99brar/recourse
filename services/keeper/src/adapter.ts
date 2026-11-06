@@ -29,6 +29,8 @@ import type {
   ClaimsParams,
   DisputeInfo,
   KeeperCall,
+  OpenIntentStatus,
+  ResolvedCall,
   RulingRead,
   SortitionRead,
 } from './types.js';
@@ -327,18 +329,29 @@ export class LiveChains implements Chains {
     return toCallResult(out);
   }
 
-  async resolveOpen(): Promise<void> {
+  async resolveOpen(opts: { rebroadcast?: (chain: Chain, call: string) => boolean } = {}): Promise<ResolvedCall[]> {
+    const out: ResolvedCall[] = [];
+    const rebroadcast = opts.rebroadcast;
     for (const s of [this.o.hedera.sender, this.o.arbitrum.sender]) {
-      for (const { intent, outcome } of await s.resolveOpen()) {
-        this.o.log?.(`resolved ${intent.call} ${intent.hash} on ${intent.chain}: ${outcome.kind === 'mined' ? outcome.status : outcome.kind}`);
+      const settled = await s.resolveOpen(rebroadcast ? { rebroadcast: (i) => rebroadcast(i.chain, i.call) } : {});
+      for (const { intent, outcome } of settled) {
+        const kind = outcome.kind === 'mined' ? outcome.status : outcome.kind;
+        this.o.log?.(`resolved ${intent.call} ${intent.hash} on ${intent.chain}: ${kind}`);
+        if (kind === 'busy' || kind === 'dry' || kind === 'rejected') continue;
+        out.push({ chain: intent.chain, call: intent.call, ...(intent.claimId ? { claimId: intent.claimId } : {}), hash: intent.hash, outcome: kind });
       }
     }
+    return out;
   }
 
   hasOpen(chain: Chain, fn: string, claimId: Hex): boolean {
     const s = chain === 'hedera' ? this.o.hedera.sender : this.o.arbitrum.sender;
     const id = claimId.toLowerCase();
     return s.openIntents().some((i) => i.call === fn && i.claimId?.toLowerCase() === id);
+  }
+
+  intentStatus(): OpenIntentStatus[] {
+    return [...this.o.hedera.sender.intentStatus(), ...this.o.arbitrum.sender.intentStatus()];
   }
 }
 

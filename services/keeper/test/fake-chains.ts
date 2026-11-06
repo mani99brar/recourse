@@ -27,6 +27,8 @@ import type {
   ClaimsParams,
   DisputeInfo,
   KeeperCall,
+  OpenIntentStatus,
+  ResolvedCall,
   RulingRead,
   SortitionRead,
 } from '../src/types.js';
@@ -74,7 +76,14 @@ export class FakeChains implements Chains {
   /** Per-function override: return a result to replace the contract behaviour. */
   readonly overrides = new Map<string, (call: KeeperCall) => CallResult | undefined>();
   loaded?: readonly JournalRecord[];
+  /** Open intents as `${chain}:${fn}:${claimId}`; a send that comes back pending stays here until settled. */
   readonly open = new Set<string>();
+  /** Calls the next resolveOpen settles (tests push them, then they are handed over once). */
+  settleNext: ResolvedCall[] = [];
+  /** What the last resolveOpen was told about rebroadcasting each chain, by `${chain}:${call}`. */
+  readonly rebroadcastAsked = new Map<string, boolean>();
+  /** Open-intent status the machine alerts on. */
+  intentStatusV: OpenIntentStatus[] = [];
 
   private hederaQ: ChainEvent[] = [];
   private arbQ: ChainEvent[] = [];
@@ -158,15 +167,36 @@ export class FakeChains implements Chains {
   hasOpen(chain: Chain, fn: string, claimId: Hex): boolean {
     return this.open.has(`${chain}:${fn}:${claimId.toLowerCase()}`);
   }
-  async resolveOpen(): Promise<void> {}
+  async resolveOpen(opts: { rebroadcast?: (chain: Chain, call: string) => boolean } = {}): Promise<ResolvedCall[]> {
+    for (const key of this.open) {
+      const [chain, call] = key.split(':') as [Chain, string];
+      this.rebroadcastAsked.set(`${chain}:${call}`, opts.rebroadcast?.(chain, call) ?? true);
+    }
+    const out = this.settleNext;
+    this.settleNext = [];
+    for (const s of out) if (s.claimId) this.open.delete(`${s.chain}:${s.call}:${s.claimId.toLowerCase()}`);
+    return out;
+  }
+  intentStatus(): OpenIntentStatus[] {
+    return this.intentStatusV;
+  }
 
   async send(call: KeeperCall): Promise<CallResult> {
     this.calls.push(call);
     const o = this.overrides.get(call.fn)?.(call);
-    if (o) return o;
+    if (o) {
+      // A pending result leaves the intent open, as the real sender does.
+      if (o.kind === 'pending' && call.claimId) this.open.add(`${call.chain}:${call.fn}:${call.claimId.toLowerCase()}`);
+      return o;
+    }
     const r = this.apply(call);
     if (r) return r;
     return { kind: 'ok', hash: this.txHash() };
+  }
+
+  /** Runs a call's contract behaviour without a send (a pending transaction that has now mined). */
+  mine(call: KeeperCall): void {
+    this.apply(call);
   }
 
   // ---------------------------------------------------------------- contract behaviour

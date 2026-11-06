@@ -933,6 +933,65 @@ describe('pause windows and operator control', () => {
   });
 });
 
+describe('open transactions', () => {
+  it('alerts gas_low with the age when a transaction the node refuses for lack of funds blocks the key', async () => {
+    const r = rig();
+    const id = await toCourt(r);
+    r.fake.intentStatusV = [
+      { chain: 'hedera', call: 'resend', claimId: id, hash: `0x${'ee'.repeat(32)}`, nonce: 9, ageS: 200, rejections: 12, reason: 'funds', lastError: 'insufficient funds' },
+    ];
+    await r.k.tick();
+    expect(kinds(r)).not.toContain('gas_low');
+    r.fake.intentStatusV[0]!.ageS = 400;
+    await r.k.tick();
+    const a = r.alerter.pending().find((x) => x.kind === 'gas_low')!;
+    expect(a.claimId).toBe(id);
+    expect(a.detail).toMatchObject({ chain: 'hedera', call: 'resend', nonce: '9', ageS: '400' });
+    expect(a.hint).toContain('insufficient funds');
+  });
+
+  it('asks the senders not to rebroadcast while paused or inside a window, and to go on otherwise', async () => {
+    const fake = new FakeChains();
+    const from = fake.t + 600;
+    const r = rig({ fake, keeper: { windows: [{ chain: 'hedera', from, to: from + 600 }] } });
+    const id = await toCourt(r);
+    r.fake.open.add(`hedera:resend:${id}`);
+    r.fake.open.add(`arbitrum:openCase:${id}`);
+    await r.k.tick();
+    expect(r.fake.rebroadcastAsked.get('hedera:resend')).toBe(true);
+    control(r, { paused: true });
+    await r.k.tick();
+    expect(r.fake.rebroadcastAsked.get('hedera:resend')).toBe(false);
+    expect(r.fake.rebroadcastAsked.get('arbitrum:openCase')).toBe(false);
+    control(r, {});
+    r.fake.t = from + 60;
+    await r.k.tick();
+    expect(r.fake.rebroadcastAsked.get('hedera:resend')).toBe(false);
+    expect(r.fake.rebroadcastAsked.get('arbitrum:openCase')).toBe(true);
+  });
+
+  it('a submitEvidence that came back pending and then mined is not sent again', async () => {
+    const r = rig();
+    const id = await toCourt(r);
+    let first = true;
+    r.fake.overrides.set('submitEvidence', (): CallResult | undefined => {
+      if (!first) return undefined;
+      first = false;
+      return { kind: 'pending', hash: `0x${'ab'.repeat(32)}` };
+    });
+    r.fake.deliver(id);
+    await run(r, 60);
+    expect(fns(r, id).filter((f) => f === 'submitEvidence')).toHaveLength(1);
+    expect(phase(r, id)).toBe('Opened');
+    // The transaction mines; its Evidence log is read only later (20 blocks behind).
+    r.fake.settleNext = [{ chain: 'arbitrum', call: 'submitEvidence', claimId: id, hash: `0x${'ab'.repeat(32)}`, outcome: 'success' }];
+    await run(r, 120);
+    expect(fns(r, id).filter((f) => f === 'submitEvidence')).toHaveLength(1);
+    expect(phase(r, id)).toBe('Watching');
+    expect(r.k.book.claims.get(id)!.attempts[0]!.evidenceTx).toBe(`0x${'ab'.repeat(32)}`);
+  });
+});
+
 describe('restart', () => {
   it('resumes from the journal: no repeated call, clocks from chain milestones', async () => {
     const fake = new FakeChains();

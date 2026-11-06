@@ -146,10 +146,38 @@ export interface Chains {
   hederaLagS?(): Promise<number>;
 
   send(call: KeeperCall): Promise<CallResult>;
-  /** Settles calls left open by a timeout or a restart. */
-  resolveOpen(): Promise<void>;
+  /**
+   * Settles calls left open by a timeout or a restart and returns the ones it settled.
+   * `rebroadcast` says whether an intent the node no longer knows may be broadcast again now
+   * (false while paused or inside a send-pause window: receipts are still read).
+   */
+  resolveOpen(opts?: { rebroadcast?: (chain: Chain, call: string) => boolean }): Promise<ResolvedCall[] | void>;
   /** True when a call on this chain is open (signed, unresolved) for the claim and function. */
   hasOpen(chain: Chain, fn: string, claimId: Hex): boolean;
+  /** Open intents with their age and broadcast trouble; absent where nothing is signed. */
+  intentStatus?(): OpenIntentStatus[];
+}
+
+/** A call that was left open and has now been settled. */
+export interface ResolvedCall {
+  chain: Chain;
+  call: string;
+  claimId?: Hex;
+  hash: Hex;
+  outcome: 'success' | 'reverted' | 'superseded' | 'dropped' | 'pending';
+}
+
+export interface OpenIntentStatus {
+  chain: Chain;
+  call: string;
+  claimId?: Hex;
+  hash: Hex;
+  nonce: number;
+  ageS: number;
+  rejections: number;
+  /** 'funds' when the node refused it because the key cannot pay. */
+  reason?: string;
+  lastError?: string;
 }
 
 /** Keeper-side phase of a claim. Terminal phases mirror the Hedera end states. */

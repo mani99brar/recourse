@@ -55,6 +55,11 @@ export type AlertKind = (typeof ALERT_KINDS)[number];
 export interface Alert {
   kind: AlertKind;
   claimId?: Hex;
+  /**
+   * What a claim-less alert is about (a key, a contract), so two of one kind (ops-hedera and
+   * ops-arb short of gas, say) are deduped apart.
+   */
+  subject?: string;
   /** Keeper state of the claim when the alert fired. */
   state?: string;
   /** Explorer, court or CCIP links. */
@@ -71,6 +76,7 @@ export interface AlertRecord extends JournalRecord {
   service: string;
   kind: AlertKind;
   claimId?: Hex;
+  subject?: string;
   state?: string;
   links?: string[];
   hint?: string;
@@ -90,8 +96,8 @@ export interface AlerterOptions {
   log?: (line: string) => void;
 }
 
-function dedupeKey(kind: string, claimId: string | undefined): string {
-  return `${claimId ?? '-'}|${kind}`;
+function dedupeKey(kind: string, claimId: string | undefined, subject?: string): string {
+  return `${claimId ?? (subject ? `@${subject}` : '-')}|${kind}`;
 }
 
 export class Alerter {
@@ -112,7 +118,7 @@ export class Alerter {
     for (const r of records) {
       if (r.t !== 'alert') continue;
       const a = r as AlertRecord;
-      this.last.set(dedupeKey(a.kind, a.claimId), a.raisedAt);
+      this.last.set(dedupeKey(a.kind, a.claimId, a.subject), a.raisedAt);
       if (!sent.has(a.id)) this.outbox.set(a.id, a);
     }
   }
@@ -136,7 +142,7 @@ export class Alerter {
   /** Raises an alert unless the same (claim, kind) was raised inside the dedupe window. */
   raise(alert: Alert): boolean {
     const now = this.now();
-    const key = dedupeKey(alert.kind, alert.claimId);
+    const key = dedupeKey(alert.kind, alert.claimId, alert.subject);
     const prev = this.last.get(key);
     if (prev !== undefined && now - prev < (this.o.dedupeMs ?? 30 * 60_000)) return false;
     this.counter += 1;

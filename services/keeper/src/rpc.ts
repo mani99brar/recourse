@@ -7,6 +7,7 @@ import {
   decodeErrorResult,
   fallback,
   http,
+  keccak256,
   type Abi,
   type Address,
   type Hex,
@@ -15,7 +16,33 @@ import {
 } from 'viem';
 import { knownErrorsAbi } from './abi.js';
 import { TransientError } from './net.js';
-import { RevertError, type FeeFields, type TxReceipt, type TxRpc } from './sender.js';
+import { ALREADY_KNOWN, BroadcastRejected, RevertError, rejectionOfText, type FeeFields, type TxReceipt, type TxRpc } from './sender.js';
+
+/** Message, details and the cause chain of an error, as one string (never logged as a whole). */
+function fullText(err: unknown): string {
+  const parts: string[] = [];
+  let e: unknown = err;
+  for (let depth = 0; depth < 8 && typeof e === 'object' && e !== null; depth++) {
+    const o = e as { message?: unknown; details?: unknown; shortMessage?: unknown; cause?: unknown };
+    for (const v of [o.shortMessage, o.details, o.message]) if (typeof v === 'string') parts.push(v);
+    e = o.cause;
+  }
+  if (parts.length === 0) parts.push(String(err));
+  return parts.join(' | ');
+}
+
+/** The node's own short answer, without request bodies or URLs. */
+function nodeWords(err: unknown): string {
+  const d = (err as { details?: unknown }).details;
+  if (typeof d === 'string' && d !== '') return d.split('\n')[0]!;
+  let e: unknown = err;
+  for (let depth = 0; depth < 8 && typeof e === 'object' && e !== null; depth++) {
+    const x = (e as { details?: unknown }).details;
+    if (typeof x === 'string' && x !== '') return x.split('\n')[0]!;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return err instanceof Error ? err.message.split('\n')[0]! : String(err);
+}
 
 export interface ClientOptions {
   chainId: number;
@@ -120,7 +147,16 @@ export function viemTxRpc(o: ViemTxRpcOptions): TxRpc {
       return wrap(() => c.getTransactionCount({ address, blockTag: tag }));
     },
     async sendRaw(raw: Hex) {
-      return wrap(() => c.sendRawTransaction({ serializedTransaction: raw }));
+      try {
+        return await c.sendRawTransaction({ serializedTransaction: raw });
+      } catch (err) {
+        // The node's own words sit in the details and causes, past the first line of the message.
+        const text = fullText(err);
+        if (ALREADY_KNOWN.test(text)) return keccak256(raw); // it has the transaction already
+        const reason = rejectionOfText(text);
+        if (reason !== undefined) throw new BroadcastRejected(reason, nodeWords(err));
+        throw classifyRpcError(err);
+      }
     },
     async receipt(hash: Hex): Promise<TxReceipt | null> {
       try {

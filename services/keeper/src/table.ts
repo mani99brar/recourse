@@ -205,6 +205,8 @@ export interface Timing {
   levelsEveryS: number;
   /** Open the case without built evidence once the case deadline is this close. */
   openWithoutEvidenceS: number;
+  /** Alert on a transaction of ours still open after this long (it blocks its key). */
+  intentStuckS: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -217,4 +219,5 @@ export const DEFAULT_TIMING: Timing = {
   relayLeadS: 1800,
   levelsEveryS: 600,
   openWithoutEvidenceS: 900,
+  intentStuckS: 300,
 };

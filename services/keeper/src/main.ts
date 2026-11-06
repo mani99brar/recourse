@@ -97,6 +97,10 @@ async function main(): Promise<void> {
 
   const journal = openJournal(cfg.stateDir);
   const append = (r: Parameters<typeof journal.append>[0]) => journal.append(r);
+  // A transaction the node refuses 4 times in a row (one per tick) and that is 2 min old is
+  // dropped so the key is free again; after a drop for lack of funds nothing new is signed on
+  // that key for 5 min (doubling up to 40 min while it stays unfunded).
+  const dropRejected = { after: 4, minAgeMs: 120_000, fundsCooldownMs: 300_000 };
   const hSender = new Sender({
     chain: 'hedera',
     rpc: viemTxRpc({ chainId: hed.chainId, client: hClient, feeMode: 'legacy' }),
@@ -104,6 +108,7 @@ async function main(): Promise<void> {
     append,
     nonceTag: 'latest', // the Hedera relay has no usable pending nonce
     log,
+    dropRejected,
     ...(hSigner ? { signer: hSigner } : {}),
   });
   const aSender = new Sender({
@@ -113,6 +118,7 @@ async function main(): Promise<void> {
     append,
     nonceTag: 'pending',
     log,
+    dropRejected,
     ...(aSigner ? { signer: aSigner } : {}),
   });
 
@@ -218,7 +224,18 @@ async function main(): Promise<void> {
       arbitrumFile: arb.file,
       opsHedera: chains.opsHedera,
       opsArb: chains.opsArb,
-      openIntents: [...hSender.openIntents(), ...aSender.openIntents()].map((i) => ({ chain: i.chain, call: i.call, claimId: i.claimId, hash: i.hash, nonce: i.nonce })),
+      openIntents: [...hSender.intentStatus(), ...aSender.intentStatus()].map((i) => ({
+        chain: i.chain,
+        call: i.call,
+        claimId: i.claimId,
+        hash: i.hash,
+        nonce: i.nonce,
+        ageS: i.ageS,
+        rejections: i.rejections,
+        ...(i.reason ? { reason: i.reason } : {}),
+        ...(i.lastError ? { lastError: i.lastError } : {}),
+      })),
+      sendCooldownUntil: { hedera: hSender.cooldownUntil || undefined, arbitrum: aSender.cooldownUntil || undefined },
       ...keeper.health,
       cursors: { hedera: hReader.position, arbitrum: aReader.position },
     }) as Record<string, unknown>;
