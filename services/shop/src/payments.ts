@@ -1,7 +1,9 @@
 // x402 resource server for the shop: Hedera `exact` scheme on hedera:testnet, in USDC or HBAR
 // (PRICE_ASSET), payment settled before the route handler runs. The handler learns the settlement
 // (tx id, payer) through `SettlementBook`, filled by an after-settle hook keyed by the request's
-// payment header.
+// payment header. A settle that fails after the facilitator may have submitted the transfer (a
+// timeout, an error, `transaction_failed`) reaches `onSettleUnknown` with the transfer's Hedera
+// transaction id, since no after-settle hook runs for it.
 
 import { paymentMiddlewareFromHTTPServer } from '@x402/express';
 import {
@@ -16,6 +18,7 @@ import { inspectHederaTransaction } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/server';
 import { HBAR_ASSET_ID, addressBook } from '@recourse/shared';
 import type { Request, RequestHandler } from 'express';
+import { isRefusedBeforeSubmit } from './facilitators.js';
 
 export const NETWORK = 'hedera:testnet' as const;
 export const USDC_TOKEN_ID = addressBook.hedera.usdc.tokenId;
@@ -86,6 +89,20 @@ export interface RequestView {
   header(name: string): string | undefined;
   path: string;
   paymentHeader: string | undefined;
+  /** The parsed JSON body. */
+  body: unknown;
+}
+
+/** A verified payment whose settle failed in a way that may still have moved the money. */
+export interface UnknownSettlement {
+  /** The Hedera transaction id signed into the payment; null when it cannot be read. */
+  txId: string | null;
+  payer: string | null;
+  amount: string;
+  asset: string;
+  payTo: string;
+  network: string;
+  reason: string;
 }
 
 export interface PaymentsOptions {
@@ -98,6 +115,29 @@ export interface PaymentsOptions {
   beforePayment?: (payment: { payer: string; amount: string; asset: string; payTo: string }, request: RequestView) => Promise<string | null>;
   /** Called once per settled payment, before the handler runs. Must not throw. */
   onSettled?: (settled: SettledPayment, request: RequestView) => void;
+  /**
+   * Called once per before-handler settle that failed after the payment was verified, unless the
+   * facilitator refused it before submitting anything. Must not throw.
+   */
+  onSettleUnknown?: (unknown: UnknownSettlement, request: RequestView) => void;
+}
+
+/** The Hedera transaction id signed into an `exact` payment payload, or null. */
+export function txIdOfPayload(payload: unknown): string | null {
+  const tx = (payload as { payload?: { transaction?: unknown } })?.payload?.transaction;
+  if (typeof tx !== 'string') return null;
+  try {
+    return inspectHederaTransaction(tx).transactionId;
+  } catch {
+    return null;
+  }
+}
+
+function failureReason(error: unknown): { reason: string; errorReason: string | undefined } {
+  const errorReason = (error as { errorReason?: unknown } | null)?.errorReason;
+  const r = typeof errorReason === 'string' ? errorReason : undefined;
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return { reason: (r ?? message).slice(0, 200), errorReason: r };
 }
 
 /** The account debited by a Hedera `exact` payment payload, or null when it cannot be read. */
@@ -143,6 +183,24 @@ export function createPayments(options: PaymentsOptions): ShopPayments {
     if (view.paymentHeader) settlements.put(view.paymentHeader, settled);
     options.onSettled?.(settled, view);
   });
+  // Runs for a settle that answered success:false and for one that threw (timeout, network, 5xx).
+  resourceServer.onSettleFailure(async (ctx) => {
+    if (ctx.phase !== 'before-handler' || !options.onSettleUnknown) return;
+    const { reason, errorReason } = failureReason(ctx.error);
+    if (isRefusedBeforeSubmit(errorReason)) return;
+    options.onSettleUnknown(
+      {
+        txId: txIdOfPayload(ctx.paymentPayload),
+        payer: payerOfPayload(ctx.paymentPayload, ctx.requirements),
+        amount: ctx.requirements.amount,
+        asset: ctx.requirements.asset,
+        payTo: ctx.requirements.payTo,
+        network: ctx.requirements.network,
+        reason,
+      },
+      viewOf(ctx.transportContext),
+    );
+  });
   const httpServer = new x402HTTPResourceServer(resourceServer, options.routes);
   // Initialisation is explicit at boot (and after a facilitator switch), not on the first request.
   const middleware = paymentMiddlewareFromHTTPServer(httpServer, undefined, undefined, false) as RequestHandler;
@@ -150,12 +208,14 @@ export function createPayments(options: PaymentsOptions): ShopPayments {
 }
 
 function viewOf(transportContext: unknown): RequestView {
-  const adapter = (transportContext as { request?: { adapter?: { getHeader(name: string): string | undefined; getPath(): string } } })
-    ?.request?.adapter;
+  const adapter = (
+    transportContext as { request?: { adapter?: { getHeader(name: string): string | undefined; getPath(): string; getBody?(): unknown } } }
+  )?.request?.adapter;
   const header = (name: string) => adapter?.getHeader(name) ?? undefined;
   return {
     header,
     path: adapter?.getPath() ?? '',
     paymentHeader: header('payment-signature') ?? header('x-payment'),
+    body: adapter?.getBody?.(),
   };
 }

@@ -1,6 +1,8 @@
 // The shop's journal and the order book replayed from it. The journal is append-only JSONL; a paid
 // order is journaled by the after-settle hook before its handler runs, so a handler that fails
-// after the money moved still leaves the order visible (`paid_unconfirmed`).
+// after the money moved still leaves the order visible (`paid_unconfirmed`). A settle that failed
+// after the facilitator may have submitted is journaled as `settle_unknown` and resolved against
+// the mirror node (reconcile.ts).
 
 import { z } from 'zod';
 import type { Address, Hex } from 'viem';
@@ -48,6 +50,29 @@ export type ShopJournalRow =
     })
   | (At & { type: 'order_confirmed'; orderId: Hex; refs: { asked: RecordRef; shown: RecordRef; approval: RecordRef } })
   | (At & { type: 'payer_mismatch'; orderId: Hex; payer: string; txId: string })
+  /**
+   * A verified payment for an order whose settle failed in a way that may still have moved the money
+   * (the reply timed out or errored after submitting). `txId` is the Hedera transaction id signed
+   * into the payment; the mirror node decides what became of it (`settle_resolved`).
+   */
+  | (At & {
+      type: 'settle_unknown';
+      orderId: Hex;
+      orderNonce: Hex;
+      platform: Address;
+      sku: string;
+      quantity: number;
+      txId: string;
+      payer: string;
+      amount: string;
+      asset: string;
+      payTo: string;
+      reason: string;
+      refs: { asked: RecordRef; shown: RecordRef; approval: RecordRef } | null;
+    })
+  | (At & { type: 'settle_resolved'; orderId: Hex; txId: string; outcome: 'paid' | 'duplicate' | 'dead'; reason: string })
+  /** A second payment that settled for an order already paid: shown on the order for a refund. */
+  | (At & { type: 'duplicate_payment'; orderId: Hex; txId: string; payer: string; amount: string; asset: string; payTo: string })
   /** The packed record's document, journaled before it is committed so a rerun commits the same bytes. */
   | (At & { type: 'pack_draft'; orderId: Hex; doc: Hex })
   | (At & { type: 'packed'; orderId: Hex; seq: number; hash: Hex; cid: string })
@@ -66,14 +91,30 @@ export interface OrderView {
   refs: { asked: RecordRef; shown: RecordRef; approval: RecordRef } | null;
   packed: { seq: number; hash: Hex; cid: string } | null;
   complaint: { seq: string; hash: Hex; cid: string } | null;
+  /** Payments settled for this order after the first one; each is owed back. */
+  duplicatePayments: { txId: string; payer: string; amount: string; asset: string; at: string }[];
 }
+
+export type SettleUnknownRow = Extract<ShopJournalRow, { type: 'settle_unknown' }>;
 
 export class OrderBook {
   private readonly orders = new Map<string, OrderView>();
   /** Orders whose paid request is being processed right now, with the time it started. */
   private readonly inFlight = new Map<string, number>();
+  /** Settles of unknown outcome, by Hedera transaction id, and the ids already resolved. */
+  private readonly unknown = new Map<string, SettleUnknownRow>();
+  private readonly resolved = new Set<string>();
 
+  /** Applying the same row twice changes nothing, so a book can replay a journal it partly holds. */
   apply(row: ShopJournalRow): void {
+    if (row.type === 'settle_unknown') {
+      if (!this.unknown.has(row.txId)) this.unknown.set(row.txId, row);
+      return;
+    }
+    if (row.type === 'settle_resolved') {
+      this.resolved.add(row.txId);
+      return;
+    }
     if (row.type === 'order_paid') {
       if (this.orders.has(row.orderId)) return;
       this.orders.set(row.orderId, {
@@ -87,12 +128,19 @@ export class OrderBook {
         refs: null,
         packed: null,
         complaint: null,
+        duplicatePayments: [],
       });
       return;
     }
     if (row.type === 'settled' || row.type === 'ping_paid') return;
     const order = this.orders.get(row.orderId);
     if (!order) return;
+    if (row.type === 'duplicate_payment') {
+      if (row.txId !== order.payment.txId && !order.duplicatePayments.some((d) => d.txId === row.txId)) {
+        order.duplicatePayments.push({ txId: row.txId, payer: row.payer, amount: row.amount, asset: row.asset, at: row.at });
+      }
+      return;
+    }
     if (row.type === 'order_confirmed' && order.status === 'paid_unconfirmed') {
       order.refs = row.refs;
       order.status = 'paid';
@@ -111,6 +159,17 @@ export class OrderBook {
 
   all(): OrderView[] {
     return [...this.orders.values()];
+  }
+
+  /** Settles of unknown outcome not yet resolved, oldest first; only the order's when one is named. */
+  openSettlements(orderId?: string): SettleUnknownRow[] {
+    const only = orderId?.toLowerCase();
+    return [...this.unknown.values()].filter(
+      (u) =>
+        !this.resolved.has(u.txId) &&
+        (only === undefined || u.orderId.toLowerCase() === only) &&
+        this.orders.get(u.orderId)?.payment.txId !== u.txId,
+    );
   }
 
   /** Marks a paid request as started; false when another is already running for the order. */

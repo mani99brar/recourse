@@ -9,19 +9,21 @@ import { PrivateKey } from '@hiero-ledger/sdk';
 import { createClientHederaSigner } from '@x402/hedera';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { getAddress, type Hex } from 'viem';
-import { priceAssetIdOf, type Parties, type PriceAsset } from '@recourse/shared';
+import { HBAR_ASSET_ID, priceAssetIdOf, type Parties, type PriceAsset } from '@recourse/shared';
 import {
   Journal,
   MemoryIpfs,
   MemoryLedger,
+  MirrorClient,
   RecordsClient,
   TopicReader,
   memoryLogger,
+  mirrorTransactionId,
   pinDocument,
   type MemorySubmitterOptions,
   type RecordsJournalRow,
 } from '@recourse/records';
-import { fakeFacilitator } from '../../shop/test/fake-facilitator.js';
+import { fakeFacilitator, type FakeFacilitator } from '../../shop/test/fake-facilitator.js';
 import { TEST_SHOP_ACCOUNT, TEST_SHOP_ADDRESS, startTestShop } from '../../shop/test/helpers.js';
 import { Buyer, type AgentRow } from '../src/buy.js';
 import { DEFAULT_LIMITS, type Limits } from '../src/limits.js';
@@ -38,13 +40,46 @@ export const PARTIES: Parties = [
 
 export const ASKED_CAP = { brand: 'Northwind', size: 'One size', colour: 'Red', quantity: '1', price: '2.00', merchant: 'Test Shop' };
 
+/**
+ * The simulated mirror node, which also shows the transfers the fake facilitator landed without
+ * telling the shop (`land_then_timeout`), by their Hedera transaction id. Transfers it settled
+ * normally carry `fake-settlement:` ids that only the shop knows, so they are not shown here.
+ */
+function mirrorWithLanded(ledger: MemoryLedger, fake: FakeFacilitator): MirrorClient {
+  return new MirrorClient('http://memory-mirror.invalid', async (input, init) => {
+    const m = /\/transactions\/(\d+\.\d+\.\d+-\d+-\d+)$/.exec(new URL(input).pathname);
+    const s = m ? fake.settled.find((x) => x.landed && mirrorTransactionId(x.hederaTxId) === m[1]) : undefined;
+    if (!s) return ledger.fetch(input, init);
+    const moves = [
+      { account: s.payer, amount: `-${s.amount}` },
+      { account: s.payTo, amount: s.amount },
+    ];
+    const hbar = s.asset === HBAR_ASSET_ID;
+    const tx = {
+      transaction_id: m![1],
+      result: 'SUCCESS',
+      consensus_timestamp: `${ledger.clock}.000000000`,
+      name: 'CRYPTOTRANSFER',
+      nonce: 0,
+      scheduled: false,
+      transfers: hbar ? moves : [],
+      token_transfers: hbar ? [] : moves.map((x) => ({ ...x, token_id: s.asset })),
+    };
+    return new Response(JSON.stringify({ transactions: [tx] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+}
+
 export async function world(options: { limits?: Partial<Limits>; priceAsset?: PriceAsset } = {}) {
   const fake = fakeFacilitator();
   const ledger = new MemoryLedger(Math.floor(Date.now() / 1000));
   ledger.createTopic(TOPIC);
   const ipfs = new MemoryIpfs();
   const priceAsset = options.priceAsset ?? 'usdc';
-  const shop = await startTestShop([fake], { priceAsset }, { parties: PARTIES, reader: new TopicReader(ledger.mirror(), TOPIC) });
+  const shop = await startTestShop(
+    [fake],
+    { priceAsset },
+    { parties: PARTIES, reader: new TopicReader(ledger.mirror(), TOPIC), mirror: mirrorWithLanded(ledger, fake), now: () => ledger.clock },
+  );
   const dir = mkdtempSync(join(tmpdir(), 'agent-test-'));
   const payerKey = PrivateKey.generateECDSA();
   const agentAccount = privateKeyToAccount(generatePrivateKey());
@@ -55,7 +90,7 @@ export async function world(options: { limits?: Partial<Limits>; priceAsset?: Pr
 
   function open(o: { fetchImpl?: FetchLike; submitter?: MemorySubmitterOptions } = {}) {
     const submitter = ledger.submitter(AGENT, o.submitter);
-    const mirror = ledger.mirror();
+    const mirror = mirrorWithLanded(ledger, fake);
     const recordsJournal = Journal.open<RecordsJournalRow>(join(dir, 'records.jsonl'));
     const agentJournal = Journal.open<AgentRow>(join(dir, 'orders.jsonl'));
     journals.push(recordsJournal, agentJournal);

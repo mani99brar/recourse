@@ -1,16 +1,20 @@
 // Crash anywhere in the buy flow, restart, and check the money and the records: every order is
 // settled exactly once, each of its records is on the topic exactly once, and its ordered record
 // carries the settled transaction id. Two orders of the same item and price run back to back.
+// The facilitator fails too: down, unable to submit, or landing the transfer and then timing out,
+// so the shop only learns of the payment from the mirror node.
 
 import { describe, expect, test } from 'vitest';
 import { RecordKind, decodeRecordMsg } from '@recourse/shared';
 import { readJournal, type SendFault } from '@recourse/records';
 import type { ShopJournalRow } from '../../shop/src/orders.js';
+import type { FakeMode } from '../../shop/test/fake-facilitator.js';
 import { AGENT, ASKED_CAP, TOPIC, docAt, world } from './world.js';
 
 type FetchFault = 'ok' | 'drop_before' | 'lost_reply' | 'hang_before' | 'hang_after';
 const FETCH_FAULTS: FetchFault[] = ['ok', 'drop_before', 'lost_reply', 'hang_before', 'hang_after'];
 const SEND_FAULTS: SendFault[] = ['ok', 'drop', 'lost_reply', 'hang', 'land_and_hang'];
+const SETTLE_FAULTS: FakeMode[] = ['ok', 'land_then_timeout', 'land_then_timeout', 'timeout', 'submit_failed'];
 
 function prng(seed: number) {
   let s = seed >>> 0 || 1;
@@ -65,6 +69,7 @@ describe('buy flow invariants', () => {
             });
             const fetchFaults = calm ? [] : Array.from({ length: Math.floor(rand() * 3) }, () => pick(FETCH_FAULTS));
             const sendFaults = calm ? [] : Array.from({ length: Math.floor(rand() * 3) }, () => pick(SEND_FAULTS));
+            w.fake.faults = calm ? [] : Array.from({ length: Math.floor(rand() * 2) }, () => pick(SETTLE_FAULTS));
             const { buyer, submitter } = w.open({
               fetchImpl: faultyFetch(fetchFaults, () => kill()),
               submitter: { faults: sendFaults, receipts: rand() < 0.5 },
@@ -110,6 +115,11 @@ describe('buy flow invariants', () => {
       expect(orders.length).toBeGreaterThan(150);
       // Two orders in a row at the same price never share a settlement.
       expect(new Set(paidRows.map((r) => r.txId)).size).toBe(orders.length);
+      // Transfers the shop only learned of from the mirror node are orders like any other.
+      const landed = w.fake.settled.filter((s) => s.landed);
+      expect(landed.length).toBeGreaterThan(10);
+      for (const s of landed) expect(paidRows.filter((r) => r.txId === s.txId), s.txId).toHaveLength(1);
+      expect(shopRows.filter((r) => r.type === 'duplicate_payment')).toHaveLength(0);
     } finally {
       await w.close();
     }

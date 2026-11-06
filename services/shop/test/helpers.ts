@@ -36,7 +36,7 @@ export function testConfig(overrides: Partial<ShopConfig> = {}): ShopConfig {
 export async function startTestShop(
   fakes: FakeFacilitator[],
   overrides: Partial<ShopConfig> = {},
-  extra: Pick<ShopAppDeps, 'parties' | 'standing' | 'reader'> = {},
+  extra: Pick<ShopAppDeps, 'parties' | 'standing' | 'reader' | 'mirror' | 'now'> = {},
 ) {
   const config = { ...testConfig(overrides), shopAddress: overrides.shopAddress ?? TEST_SHOP_ADDRESS };
   const log = memoryLogger();

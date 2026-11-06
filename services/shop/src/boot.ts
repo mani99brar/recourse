@@ -74,8 +74,11 @@ export async function startShop(
     parties,
     standing: config.standingCheck === 'vault' ? vaultStandingReader(env) : null,
     reader: config.topicId ? new TopicReader(mirrorFromEnv(env), config.topicId) : null,
+    mirror: mirrorFromEnv(env),
   });
   await shop.initialize();
+  // Payments journaled as settle_unknown before a restart: the mirror node decides them now.
+  void shop.reconcile();
   log.info('shop_config', {
     payTo: config.payTo,
     payToSource: config.payToSource,

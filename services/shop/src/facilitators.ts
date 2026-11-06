@@ -71,6 +71,23 @@ export function isFacilitatorSideReason(reason: string | undefined): boolean {
   return reason === SUBMIT_FAILED_REASON;
 }
 
+/** Reasons a facilitator gives when its settle-time verification refuses the payment. */
+const VERIFY_REASONS = new Set([
+  'unsupported_scheme',
+  'network_mismatch',
+  'accepted_payment_requirements_mismatch',
+  'fee_payer_not_managed_by_facilitator',
+  'verification_failed',
+]);
+
+/**
+ * True when the settle reason says the facilitator refused the payment before submitting anything,
+ * so no money can have moved. Anything else (no reason, a timeout, `transaction_failed`) may have.
+ */
+export function isRefusedBeforeSubmit(reason: string | undefined): boolean {
+  return reason !== undefined && (reason.startsWith('invalid_') || VERIFY_REASONS.has(reason));
+}
+
 /** True for failures that say the facilitator, not the payment, is at fault. */
 export function isFacilitatorSideFailure(error: unknown): boolean {
   if (error instanceof FacilitatorTimeoutError || error instanceof FacilitatorResponseError) return true;

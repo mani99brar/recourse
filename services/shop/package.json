@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:anvil": "vitest run --passWithNoTests anvil.test",
     "pack": "tsx scripts/pack.ts",
-    "file-claim": "tsx scripts/file-claim.ts"
+    "file-claim": "tsx scripts/file-claim.ts",
+    "reconcile": "tsx scripts/reconcile.ts"
   },
   "dependencies": {
     "@hiero-ledger/sdk": "2.85.0",

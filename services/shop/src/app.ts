@@ -6,7 +6,10 @@
 // a body naming the order and the three records written before paying, no earlier order with the
 // same id, and (when the check is on) a platform in good standing. The paying account must be one
 // of the platform's record writers, checked before settlement. Payment settles before the handler
-// runs; the order is journaled from the settlement hook, so it is never lost once paid.
+// runs; the order is journaled from the settlement hook, so it is never lost once paid. A settle
+// that fails after the transfer may have been submitted is journaled as `settle_unknown` and
+// reconciled against the mirror node (at boot, on GET /orders/:id, and before another payment for
+// the same order is taken).
 
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
@@ -37,7 +40,9 @@ import {
   type RequestView,
   type SettledPayment,
   type ShopPayments,
+  type UnknownSettlement,
 } from './payments.js';
+import { checkSettlements, type MirrorTxReader } from './reconcile.js';
 import type { StandingReader } from './standing.js';
 
 export type { ShopJournalRow } from './orders.js';
@@ -61,6 +66,10 @@ export interface ShopAppDeps {
   standing?: StandingReader | null;
   /** Topic reader, to check that a complaint points at a real arrived record. */
   reader?: TopicReader | null;
+  /** Mirror node, to resolve settles of unknown outcome. Without it they stay open. */
+  mirror?: MirrorTxReader | null;
+  /** Unix seconds. */
+  now?: () => number;
 }
 
 export interface ShopApp {
@@ -69,6 +78,8 @@ export interface ShopApp {
   book: OrderBook;
   /** Reads /supported again; call at boot and after a facilitator switch. */
   initialize: () => Promise<void>;
+  /** Resolves open settles of unknown outcome against the mirror node and journals what it finds. */
+  reconcile: (orderId?: string) => Promise<void>;
 }
 
 export function pingPrice(config: ShopConfig): Price {
@@ -115,6 +126,33 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
     book.apply(row);
   };
   const now = () => new Date().toISOString();
+  const nowSeconds = deps.now ?? (() => Math.floor(Date.now() / 1000));
+
+  // One reconciliation at a time, so two requests never journal the same outcome twice.
+  let reconciling: Promise<void> = Promise.resolve();
+  const reconcileOnce = async (orderId?: string): Promise<void> => {
+    if (!deps.mirror) return;
+    // Other processes (the pack and reconcile commands) append to the same journal.
+    const rows = journal.read().rows;
+    for (const row of rows) book.apply(row);
+    if (book.openSettlements(orderId).length === 0) return;
+    for (const check of await checkSettlements({ rows, mirror: deps.mirror, now: nowSeconds(), ...(orderId ? { orderId } : {}) })) {
+      for (const row of check.rows) write(row);
+      const fields = { orderId: check.unknown.orderId, txId: check.unknown.txId, outcome: check.outcome, reason: check.reason };
+      if (check.outcome === 'duplicate') log.error('duplicate_payment', fields);
+      else if (check.rows.length > 0) log.info('settle_resolved', fields);
+    }
+  };
+  const reconcile = (orderId?: string): Promise<void> => {
+    const run = reconciling.then(
+      () => reconcileOnce(orderId),
+      () => reconcileOnce(orderId),
+    );
+    reconciling = run.catch((error: unknown) => {
+      log.warn('reconcile_failed', { error: error instanceof Error ? error.message.slice(0, 200) : String(error) });
+    });
+    return reconciling;
+  };
 
   const routes: RoutesConfig = {
     [`POST ${PING_ROUTE}`]: paidRoute(config.payTo, pingPrice(config), 'Connectivity check: a paid request that is not an order'),
@@ -173,6 +211,40 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
         log.error('journal_write_failed', { txId: s.transaction, error: lastError });
       }
     },
+    onSettleUnknown: (u: UnknownSettlement, request: RequestView) => {
+      try {
+        const route = parseOrderPath(request.path);
+        const headers = orderHeaders(request.header);
+        log.warn('settle_unknown', { path: request.path, txId: u.txId, payer: u.payer, reason: u.reason });
+        if (!route || !headers) return;
+        if (!u.txId || !u.payer) {
+          lastError = 'settle_unknown: the payment names no transaction id or payer';
+          log.error('settle_unknown_unreadable', { path: request.path, reason: u.reason });
+          return;
+        }
+        const orderId = orderIdOf(headers.platform, config.shopAddress, headers.orderNonce);
+        const body = OrderBody.safeParse(request.body);
+        write({
+          type: 'settle_unknown',
+          at: now(),
+          orderId,
+          orderNonce: headers.orderNonce,
+          platform: headers.platform,
+          sku: route.item.sku,
+          quantity: route.quantity,
+          txId: u.txId,
+          payer: u.payer,
+          amount: u.amount,
+          asset: u.asset,
+          payTo: u.payTo,
+          reason: u.reason,
+          refs: body.success && body.data.orderId === orderId ? body.data.refs : null,
+        });
+      } catch (error) {
+        lastError = `journal: ${error instanceof Error ? error.message : String(error)}`;
+        log.error('journal_write_failed', { txId: u.txId, error: lastError });
+      }
+    },
   });
 
   const app = express();
@@ -226,13 +298,24 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
     });
   });
 
-  app.get('/orders/:orderId', (req, res) => {
+  app.get('/orders/:orderId', async (req, res) => {
     // Re-read: the pack and complaint commands append to the same journal from other processes.
-    const fresh = new OrderBook();
-    for (const row of journal.read().rows) fresh.apply(row);
-    const order = fresh.get(req.params.orderId) ?? book.get(req.params.orderId);
+    const freshBook = () => {
+      const fresh = new OrderBook();
+      for (const row of journal.read().rows) fresh.apply(row);
+      return fresh;
+    };
+    let fresh = freshBook();
+    let order = fresh.get(req.params.orderId) ?? book.get(req.params.orderId);
+    if (!order && fresh.openSettlements(req.params.orderId).length > 0) {
+      // A payment for this order may have landed without the shop hearing back: ask the mirror.
+      await reconcile(req.params.orderId);
+      fresh = freshBook();
+      order = fresh.get(req.params.orderId) ?? book.get(req.params.orderId);
+    }
     if (!order) {
-      res.status(404).json({ error: 'order_not_found' });
+      const pending = fresh.openSettlements(req.params.orderId).length > 0;
+      res.status(404).json({ error: 'order_not_found', ...(pending ? { settlement: 'pending' } : {}) });
       return;
     }
     res.json({ order, inFlight: book.isInFlight(order.orderId) });
@@ -258,9 +341,15 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
       }
     }
     const orderId = orderIdOf(headers.platform, config.shopAddress, headers.orderNonce);
+    // An earlier payment whose settle outcome is unknown may be the order: settle that first.
+    if (book.openSettlements(orderId).length > 0) await reconcile(orderId);
     const existing = book.get(orderId);
     if (existing) {
       res.status(409).json({ error: 'order_exists', order: existing });
+      return;
+    }
+    if (book.openSettlements(orderId).length > 0) {
+      res.status(409).json({ error: 'order_settle_pending', orderId });
       return;
     }
     if (book.isInFlight(orderId)) {
@@ -421,5 +510,6 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
     payments,
     book,
     initialize: () => payments.httpServer.initialize(),
+    reconcile,
   };
 }
