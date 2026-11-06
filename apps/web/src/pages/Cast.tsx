@@ -1,4 +1,5 @@
-import { Banner, ExtLink, Loading, Pill, Row } from '../components.js';
+import { Arrow, Banner, ExtLink, Loading, Pill, Row } from '../components.js';
+import '../styles/docket.css';
 import { usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when } from '../lib/format.js';
 import { SIDE_WORDS, STATUS_WORDS } from '../lib/words.js';
@@ -66,13 +67,15 @@ function Member({ m, token }: { m: CastMember; token: VaultToken | undefined }) 
   const type = m.registration?.recourse ?? null;
   const name = m.registration?.name ?? m.displayName;
   return (
-    <section className="card">
-      <h3>{name}</h3>
-      <p>
-        {type ? <Pill tone="plain">{type.label}</Pill> : <Pill tone="wait">Type not stated</Pill>}
-        {!m.current && m.readAt !== null && <Pill tone="wait">as read {when(m.readAt)}</Pill>}
-      </p>
-      <p className="muted">
+    <section className="card member">
+      <div className="member-head">
+        <h3>{name}</h3>
+        <p className="member-tags">
+          {type ? <Pill tone="plain">{type.label}</Pill> : <Pill tone="wait">Type not stated</Pill>}
+          {!m.current && m.readAt !== null && <Pill tone="wait">as read {when(m.readAt)}</Pill>}
+        </p>
+      </div>
+      <p className="muted member-sum">
         {type?.summary ?? m.registration?.description ?? (m.registration === null ? 'The registration has not been read yet.' : 'Its registration does not say what type it is.')}
       </p>
       <dl>
@@ -94,33 +97,37 @@ function Member({ m, token }: { m: CastMember; token: VaultToken | undefined }) 
         <ul className="claims">
           {m.claims.map((c) => (
             <li key={c.claimId}>
-              <a href={`#/claim/${c.claimId}`}>{short(c.claimId)}</a> <Pill tone="plain">{STATUS_WORDS[c.statusKey]?.title ?? c.statusKey}</Pill>{' '}
-              <span className="muted small">{`with ${c.counterpartyName ?? short(c.counterparty)}; pre-check: ${findingWords(c)}${c.paid !== null ? `; paid ${usdc(c.paid, token)}` : ''}`}</span>
+              <span className="claim-main">
+                <a href={`#/claim/${c.claimId}`}>{short(c.claimId)}</a>
+                <small>{`with ${c.counterpartyName ?? short(c.counterparty)}; pre-check: ${findingWords(c)}${c.paid !== null ? `; paid ${usdc(c.paid, token)}` : ''}`}</small>
+              </span>
+              <Pill tone="plain">{STATUS_WORDS[c.statusKey]?.title ?? c.statusKey}</Pill>
             </li>
           ))}
         </ul>
       )}
-      <p className="small">
-        <a href={`#/party/${m.address}`}>Open its worklist</a>
-      </p>
+      <a className="read" href={`#/party/${m.address}`}>
+        Open its worklist
+        <Arrow />
+      </a>
     </section>
   );
 }
 
 function Group({ title, members, token }: { title: string; members: CastMember[]; token: VaultToken | undefined }) {
   return (
-    <>
+    <div className="cast-group">
       <h2>{`${title} (${members.length})`}</h2>
       {members.length === 0 ? (
-        <p className="muted">None registered yet.</p>
+        <p className="empty">None registered yet.</p>
       ) : (
-        <div className="grid">
+        <div className="cast-list">
           {members.map((m) => (
             <Member key={m.agentId} m={m} token={token} />
           ))}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -141,9 +148,11 @@ export function CastView({ d }: { d: CastBody }) {
           ))}
         </div>
       )}
-      <Group title="Shops" members={shops} token={d.vaultToken} />
-      <Group title="Agent companies" members={companies} token={d.vaultToken} />
-      <p className="muted small">
+      <div className="cast-cols">
+        <Group title="Shops" members={shops} token={d.vaultToken} />
+        <Group title="Agent companies" members={companies} token={d.vaultToken} />
+      </div>
+      <p className="muted small cast-src">
         Read from the ERC-8004 identity registry <ExtLink href={d.registry.explorer}>{short(d.registry.address)}</ExtLink> ({d.registry.accountId}) on Hedera testnet, the records topic and the
         claims contract.
       </p>
@@ -157,14 +166,18 @@ export function CastPage() {
   // The page says itself when the registry is behind; the banner names the other sources.
   const fresh = data ? { ...data, degraded: (data.degraded ?? []).filter((s) => s !== 'identity') } : undefined;
   return (
-    <>
-      <h1>Shops and agents</h1>
-      <p className="lead">
-        Every shop and agent company in this demo, as registered in ERC-8004 on Hedera testnet: what type it is, how many orders its records name, and how its claims ended.
-      </p>
+    <div className="cast-page">
+      <div className="page-head">
+        <p className="eyebrow">ERC-8004 on Hedera testnet</p>
+        <h1>Shops and agents</h1>
+        <p className="lead">
+          Every shop and agent company in this demo, as registered in ERC-8004 on Hedera testnet: what type it is, how many orders its records name, and how its claims ended.
+        </p>
+      </div>
       <Banner fresh={fresh} error={error} />
       {!data && !error && <Loading what="shops and agents" />}
+      {!data && error && <p className="empty">The status service did not return the list of shops and agents, so none are shown.</p>}
       {data && <CastView d={data} />}
-    </>
+    </div>
   );
 }
