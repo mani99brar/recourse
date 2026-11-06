@@ -18,14 +18,6 @@
       "textHash": "0x405e7796e49c45f3c8c388dfd0f9f0ad455ba61659079e7273bd3dee65b7b350",
       "changeSlot": "empty",
       "changes": []
-    },
-    "hostile": {
-      "textHash": "0x84d2a1982d6697ae742be287320bc27b6c7ea88945c0aec1259591c95915d9b5",
-      "changeSlot": "filled",
-      "changes": [
-        "brand",
-        "colour"
-      ]
     }
   }
 }

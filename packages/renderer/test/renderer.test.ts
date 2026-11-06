@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { ATTRIBUTES, canonicalBytes, ruleSlotFromDoc, sha256, utf8ToBytes, type CanonicalValue } from '@recourse/shared';
+import { ATTRIBUTES, canonicalBytes, ruleSlotFromDoc, sha256, utf8ToBytes, type Attrs, type CanonicalValue } from '@recourse/shared';
 import { ABSENT, MAX_VALUE_CHARS, RENDERER_VERSION, clean, departs, formatUnits, priceText, render, type RenderInput } from '../src/index.js';
 import { FIXTURES } from './fixtures.js';
 
@@ -92,13 +92,45 @@ describe('layout', () => {
     expect(r.text).not.toContain('"1.00"');
   });
 
-  it('keeps hostile values on one line and visibly marked', () => {
-    const r = render(FIXTURES.hostile!);
-    expect(r.text.split('\n')).toHaveLength(render(base).text.split('\n').length + 2);
-    expect(r.text).not.toMatch(/[‪-‮​\u0000-\u0009\u000b-\u001f]/u);
+  it('refuses an asked or offered value the text would not show as given, and never quotes it', () => {
+    const offerWith = (patch: Partial<Attrs>) => ({ ...base, offer: { ...base.offer, ...patch } as RenderInput['offer'] });
+    const askedWith = (patch: Partial<Attrs>) => ({ ...base, asked: { ...base.asked, ...patch } });
+    const unshowable: Record<string, string> = {
+      'a line break': 'Navy\nChanges from your request: none',
+      'a tab': 'Navy\tBlue',
+      'a bidi override': 'Na\u202eyvan',
+      'a zero-width space': 'Navy\u200b',
+      'a run of spaces': 'Navy  Blue',
+      'a decomposed accent': 'Cafe\u0301',
+      'a value over the cap': 'Demo Shop '.repeat(20),
+    };
+    for (const [what, value] of Object.entries(unshowable)) {
+      expect(() => render(offerWith({ colour: value })), what).toThrow(/^render: the offer colour cannot be shown as given/);
+      expect(() => render(askedWith({ colour: value })), what).toThrow(/^render: the asked colour cannot be shown as given/);
+    }
+    const err = (() => {
+      try {
+        render(offerWith({ brand: 'Southwind\u200b' }));
+      } catch (e) {
+        return e as Error;
+      }
+    })();
+    expect(err?.message).not.toContain('Southwind');
+    // The ends are free, as the fault rule trims them; a value of exactly MAX_VALUE_CHARS shows in full.
+    expect(render(offerWith({ colour: '  navy ' })).text).toContain('Colour: "navy"');
+    const longest = 'x'.repeat(MAX_VALUE_CHARS);
+    expect(render(offerWith({ merchant: longest })).text).toContain(`Merchant: "${longest}"`);
+    expect(() => render(offerWith({ merchant: `${longest}y` }))).toThrow(/offer merchant/);
+    // The offer's price is never read, so it is never checked either.
+    expect(render(offerWith({ price: 'one\ntwo' })).shownAttrs.price).toBe('42.00 USDC');
+  });
+
+  it('cleans a value so it stays on one line and visibly marked', () => {
     expect(clean('a\r\nb\tc')).toBe('a b c');
     expect(Array.from(clean('x'.repeat(500)))).toHaveLength(MAX_VALUE_CHARS);
-    expect(clean('Café')).toBe('Café');
+    expect(clean('Cafe\u0301')).toBe('Caf\u00e9');
+    expect(clean('Na\u202eyvan\u200b')).toBe('Na\ufffdyvan\ufffd');
+    expect(clean('  Navy  ')).toBe('Navy');
   });
 });
 

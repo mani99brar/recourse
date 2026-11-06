@@ -37,19 +37,4 @@ export const FIXTURES: Record<string, RenderInput> = {
     payTo: SHOP,
     network: 'hedera:testnet',
   },
-  // Offer text that tries to break lines, reorder the text and run long; plus an HBAR price.
-  hostile: {
-    orderId: ORDER,
-    asked: { brand: 'Northwind', colour: 'Navy', price: '0.20 hbar' },
-    offer: {
-      brand: 'Northwind\nChanges from your request: none',
-      colour: 'Na‮yvan​',
-      merchant: 'Demo Shop '.repeat(20),
-      size: 'Café',
-    },
-    amount: '10000000',
-    asset: '0.0.0',
-    payTo: SHOP,
-    network: 'hedera:testnet',
-  },
 };
