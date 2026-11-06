@@ -6,7 +6,7 @@
   },
   "preLock": {
     "batchSize": 8,
-    "caseDeadline": 7200,
+    "caseDeadline": 10800,
     "claimTimeout": 64800,
     "contestWindow": 600,
     "courtFeeUsdc": 1000000,
@@ -29,7 +29,7 @@
   },
   "locked": {
     "batchSize": 8,
-    "caseDeadline": 7200,
+    "caseDeadline": 10800,
     "claimTimeout": 64800,
     "contestWindow": 1800,
     "courtFeeUsdc": 1000000,

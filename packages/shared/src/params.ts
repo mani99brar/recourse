@@ -23,7 +23,10 @@ export interface ParamSet {
   resendGap: number;
   /** CCIP sends per claim and leg. */
   maxSends: number;
-  /** s; Arbitrum case deadline, exclusive. */
+  /**
+   * s; the time one court round needs (court 8's four periods, 8,100 s, plus a margin for the draw).
+   * A case opens or refiles only before its expiresAt - this (exclusive); from then on it goes Stale.
+   */
   caseDeadline: number;
   maxOpenCases: number;
   /** s; a Filed claim expires after filedAt + this, a Contested or AtCourt one after preCheckedAt + this. */
@@ -51,7 +54,7 @@ const shared = {
   topUpWindow: 604_800,
   resendGap: 1_800,
   maxSends: 5,
-  caseDeadline: 7_200,
+  caseDeadline: 10_800,
   maxOpenCases: 10,
   claimTimeout: 64_800,
   stuckAfter: 3_600,
