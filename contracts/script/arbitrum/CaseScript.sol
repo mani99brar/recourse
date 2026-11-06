@@ -45,8 +45,9 @@ abstract contract CaseScript is Script {
         return _param(vm.readFile(PARAMS), "gasRulingBack");
     }
 
-    /// @dev Hedera's claim timeout after lock. The testnet deploy passes it less the relay budget
-    /// (`CaseTimeouts.caseClaimTimeout`); the local stack uses it as it is.
+    /// @dev Hedera's locked claim timeout. It is not the case's `claimTimeout`: both the testnet and the local deploy
+    /// pass it to `CaseTimeouts.caseClaimTimeout`, which takes off the relay budget (`CASE_RELAY_BUDGET`, default
+    /// `CaseTimeouts.RELAY_BUDGET`).
     function _claimTimeout() internal view returns (uint64 t) {
         t = uint64(vm.parseJsonUint(vm.readFile(PARAMS), ".locked.claimTimeout"));
         require(t > 0, "CaseScript: zero claimTimeout");
