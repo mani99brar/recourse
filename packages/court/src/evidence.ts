@@ -17,8 +17,14 @@ import {
 import type { Hex } from 'viem';
 
 export const EVIDENCE_VERSION = '1';
-/** Largest evidence string accepted, in UTF-8 bytes. */
-export const EVIDENCE_MAX_BYTES = 16 * 1024;
+/**
+ * Largest evidence string accepted, in UTF-8 bytes. Sized so the worst case always fits: six held
+ * records of RECORD_DOC_MAX_BYTES (the pre-check rejects larger ones) built to cost the most once
+ * shown (a long backtick run needs a fence as long on both sides; quotes and backslashes double
+ * under JSON escaping), every one marked from the topic index, plus the largest pre-check document
+ * and a notice. That case is about 36 KB; the test builds it.
+ */
+export const EVIDENCE_MAX_BYTES = 48 * 1024;
 
 export interface EvidenceRecordDoc {
   kind: RecordKind;
@@ -225,10 +231,11 @@ export function buildEvidence(input: EvidenceInput): EvidenceBundle {
     const meta = [`SHA-256 ${h}`];
     if (seq !== undefined) meta.push(`HCS sequence ${seq}`);
     if (cid !== undefined) meta.push(`CID ${cid}`);
+    // The policy tells jurors to look for this exact phrase: from the topic index.
     const note = fromIndex
-      ? '\n\nThe claim did not name this record (or named a different hash). The pre-check used this one, published on the record topic for the same order; its hash matches the pre-check document.'
+      ? '\n\nThe claim did not name this record (or named a different hash). The pre-check used this one, from the topic index: it was published on the record topic for the same order, and its hash matches the pre-check document.'
       : '';
-    sections.push(`${heading}: held\n\n${meta.join(', ')}.${note}\n\n${block(decoder.decode(doc.bytes))}`);
+    sections.push(`${heading}: held${fromIndex ? ', from the topic index' : ''}\n\n${meta.join(', ')}.${note}\n\n${block(decoder.decode(doc.bytes))}`);
   }
 
   const flagged = pre.flagged.length > 0 ? pre.flagged.join(', ') : 'none';
