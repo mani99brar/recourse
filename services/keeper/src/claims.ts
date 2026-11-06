@@ -303,16 +303,20 @@ export class ClaimBook {
     return undefined;
   }
 
-  /** Our dispute ids (for the Kleros log filters). */
+  /**
+   * Dispute ids of the claims still open (for the Kleros log filters). A terminal claim needs no
+   * more Kleros events, so the filters grow with the open claims, not with every dispute ever.
+   */
   disputeIds(): bigint[] {
     const out: bigint[] = [];
-    for (const c of this.claims.values()) for (const a of c.attempts) out.push(BigInt(a.disputeId));
+    for (const c of this.claims.values()) if (!isTerminal(c)) for (const a of c.attempts) out.push(BigInt(a.disputeId));
     return out;
   }
 
+  /** External dispute ids of the claims still open (for the Evidence filter). */
   externalIds(): bigint[] {
     const out: bigint[] = [];
-    for (const c of this.claims.values()) for (const a of c.attempts) out.push(BigInt(a.externalId));
+    for (const c of this.claims.values()) if (!isTerminal(c)) for (const a of c.attempts) out.push(BigInt(a.externalId));
     return out;
   }
 

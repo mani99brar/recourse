@@ -70,6 +70,16 @@ export const DEFAULT_GAS_FLOORS: Record<string, bigint> = {
   relayRuling: 450_000n,
 };
 
+/** Most ids in one indexed-topic OR-list (nodes refuse more than 1000). */
+export const MAX_FILTER_IDS = 500;
+
+/** `items` in consecutive slices of at most `size` (none for an empty list). */
+export function batches<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 export class LiveChains implements Chains {
   readonly caseAddress: Address;
   readonly arbChainId: number;
@@ -113,16 +123,19 @@ export class LiveChains implements Chains {
     return a.reader.poll({
       between: filter.onCaseEvents,
       then: () => {
-        const disputes = [...filter.disputeIds()];
-        const externals = [...filter.externalIds()];
-        const q: LogQuery[] = [
-          { source: 'core', address: a.klerosCore, abi: klerosCoreAbi as Abi, eventName: 'Draw', args: { _disputeID: disputes } },
-          // Anyone may post evidence to our disputes; only our own key's posts are read at all.
-          { source: 'evidence', address: a.evidenceModule, abi: evidenceModuleAbi as Abi, eventName: 'Evidence', args: { _externalDisputeID: externals, _party: a.sender.address } },
-        ];
+        // Nodes refuse a topic OR-list longer than 1000 ("exceed max topics"), which would stop the
+        // Arbitrum cursor for good; long lists are split over several queries.
+        const disputes = batches([...filter.disputeIds()], MAX_FILTER_IDS);
+        const externals = batches([...filter.externalIds()], MAX_FILTER_IDS);
+        const q: LogQuery[] = [];
+        for (const ids of disputes) q.push({ source: 'core', address: a.klerosCore, abi: klerosCoreAbi as Abi, eventName: 'Draw', args: { _disputeID: ids } });
+        // Anyone may post evidence to our disputes; only our own key's posts are read at all.
+        for (const ids of externals) {
+          q.push({ source: 'evidence', address: a.evidenceModule, abi: evidenceModuleAbi as Abi, eventName: 'Evidence', args: { _externalDisputeID: ids, _party: a.sender.address } });
+        }
         if (a.disputeKit) {
           for (const eventName of ['Contribution', 'ChoiceFunded']) {
-            q.push({ source: 'kit', address: a.disputeKit, abi: disputeKitClassicAbi as Abi, eventName, args: { _coreDisputeID: disputes } });
+            for (const ids of disputes) q.push({ source: 'kit', address: a.disputeKit, abi: disputeKitClassicAbi as Abi, eventName, args: { _coreDisputeID: ids } });
           }
         }
         return q;
