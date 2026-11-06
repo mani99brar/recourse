@@ -3,6 +3,10 @@
 // transfer succeed on the mirror node. The shop journals such a payment as `settle_unknown` with the
 // Hedera transaction id signed into it, and this module asks the mirror node what became of it:
 //
+//   a transfer the journal already credits to something else     -> dead (`tx_already_used`), before
+//     (another order, a duplicate payment, a ping, a settled route)   the mirror is asked: one payment
+//                                                                     sent again for a new order, and
+//                                                                     refused at submit, pays nothing
 //   SUCCESS, moving exactly the price from the payer to the shop  -> the order is paid with that id
 //     (order_paid, and order_confirmed when the request carried the record refs); a second payment
 //     for an order already paid is journaled as `duplicate_payment`, owed back
@@ -28,7 +32,8 @@ export interface MirrorTxReader {
 
 export interface SettlementCheck {
   unknown: SettleUnknownRow;
-  outcome: 'paid' | 'duplicate' | 'dead' | 'open' | 'unreachable';
+  /** `reused`: the transfer already paid for something else; journaled as a dead settle. */
+  outcome: 'paid' | 'duplicate' | 'reused' | 'dead' | 'open' | 'unreachable';
   reason: string;
   /** Journal rows that record the outcome; none while it is open or the mirror is unreachable. */
   rows: ShopJournalRow[];
@@ -61,13 +66,6 @@ export async function checkSettlements(deps: {
   for (const row of deps.rows) book.apply(row);
   const out: SettlementCheck[] = [];
   for (const u of book.openSettlements(deps.orderId)) {
-    let tx: MirrorTransaction | null;
-    try {
-      tx = await deps.mirror.transaction(u.txId);
-    } catch (error) {
-      out.push({ unknown: u, outcome: 'unreachable', reason: error instanceof Error ? error.message.slice(0, 200) : String(error), rows: [] });
-      continue;
-    }
     const resolved = (outcome: 'paid' | 'duplicate' | 'dead', reason: string): ShopJournalRow => ({
       type: 'settle_resolved',
       at: at(),
@@ -76,6 +74,24 @@ export async function checkSettlements(deps: {
       outcome,
       reason,
     });
+    // One transfer pays for one thing. The same signed payment sent again for a new order fails at
+    // submit (a duplicate, or expired) and lands here with the first order's transaction id; the
+    // journal already credits that transfer, so this row can credit nothing, whatever the mirror says.
+    const credit = book.creditOf(u.txId);
+    if (credit) {
+      const reason = `tx_already_used: ${credit.kind}${credit.orderId ? ` ${credit.orderId}` : ''}`;
+      const check: SettlementCheck = { unknown: u, outcome: 'reused', reason, rows: [resolved('dead', reason)] };
+      for (const row of check.rows) book.apply(row);
+      out.push(check);
+      continue;
+    }
+    let tx: MirrorTransaction | null;
+    try {
+      tx = await deps.mirror.transaction(u.txId);
+    } catch (error) {
+      out.push({ unknown: u, outcome: 'unreachable', reason: error instanceof Error ? error.message.slice(0, 200) : String(error), rows: [] });
+      continue;
+    }
     let check: SettlementCheck;
     if (tx && tx.result === 'SUCCESS' && transferMatches(tx, u)) {
       const payment = { txId: u.txId, payer: u.payer, amount: u.amount, asset: u.asset, payTo: u.payTo };

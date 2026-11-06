@@ -24,10 +24,16 @@ export interface FakeFacilitator extends FacilitatorClient {
   mode: FakeMode;
   /** Modes for the next settles, in order. */
   faults: FakeMode[];
+  /**
+   * Tests only: answer a settle with the bare Hedera transaction id, as a real facilitator does,
+   * instead of `fake-settlement:<id>`. Off by default.
+   */
+  bareIds: boolean;
   calls: { verify: number; settle: number; supported: number };
   /**
-   * Every transfer that moved. `txId` is what the shop was told: `fake-settlement:<id>`, or the bare
-   * Hedera id for a transfer that landed unannounced (`landed: true`). `hederaTxId` is always the bare id.
+   * Every transfer that moved. `txId` is what the shop was told: `fake-settlement:<id>` (the bare id
+   * with `bareIds`), or the bare Hedera id for a transfer that landed unannounced (`landed: true`).
+   * `hederaTxId` is always the bare id.
    */
   settled: { txId: string; hederaTxId: string; payer: string; amount: string; payTo: string; asset: string; landed?: true }[];
 }
@@ -52,6 +58,7 @@ export function fakeFacilitator(feePayer = FAKE_FEE_PAYER): FakeFacilitator {
   const fake: FakeFacilitator = {
     mode: 'ok',
     faults: [],
+    bareIds: false,
     calls: { verify: 0, settle: 0, supported: 0 },
     settled: [],
     async getSupported(): Promise<SupportedResponse> {
@@ -90,7 +97,7 @@ export function fakeFacilitator(feePayer = FAKE_FEE_PAYER): FakeFacilitator {
         fake.settled.push({ ...moved, txId: info.transactionId, landed: true });
         throw timeout();
       }
-      const txId = `fake-settlement:${info.transactionId}`;
+      const txId = fake.bareIds ? info.transactionId : `fake-settlement:${info.transactionId}`;
       fake.settled.push({ ...moved, txId });
       return { success: true, transaction: txId, network: requirements.network, payer: r.payer, amount: requirements.amount };
     },

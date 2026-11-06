@@ -9,7 +9,8 @@
 // runs; the order is journaled from the settlement hook, so it is never lost once paid. A settle
 // that fails after the transfer may have been submitted is journaled as `settle_unknown` and
 // reconciled against the mirror node (at boot, on GET /orders/:id, and before another payment for
-// the same order is taken).
+// the same order is taken). A signed transfer the journal has already seen, or that another request
+// is settling, is refused before it is verified, so one transfer never pays for two orders.
 
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
@@ -36,6 +37,7 @@ import {
   createPayments,
   paidRoute,
   paymentHeaderOf,
+  txIdOfRequest,
   type Price,
   type RequestView,
   type SettledPayment,
@@ -143,6 +145,7 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
       for (const row of check.rows) write(row);
       const fields = { orderId: check.unknown.orderId, txId: check.unknown.txId, outcome: check.outcome, reason: check.reason };
       if (check.outcome === 'duplicate') log.error('duplicate_payment', fields);
+      else if (check.outcome === 'reused') log.error('payment_reused', fields);
       else if (check.rows.length > 0) log.info('settle_resolved', fields);
     }
   };
@@ -427,13 +430,36 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
   // The payment middleware settles before the handler and resolves once the response is done,
   // whether or not the client is still connected. The order stays in flight until then, so a
   // client that gives up and retries with a new payment cannot start a second settle for it.
+  //
+  // One signed transfer pays for one thing. A payment the journal has already seen (paid, owed
+  // back, a ping, or a settle of unknown outcome), or one another request is settling right now,
+  // is refused here, before it is verified: sent again for a new order it would fail at submit as
+  // a duplicate, and the mirror would show the first order's transfer as a success.
   app.use(async (req: Request, res: Response, next: NextFunction) => {
     const ctx = res.locals.order as OrderContext | undefined;
     const held = ctx?.body ? ctx.orderId : null;
+    let paying: string | null = null;
     try {
+      const paidRoute = req.method === 'POST' && (req.path === PING_ROUTE || parseOrderPath(req.path) !== null);
+      const txId = paidRoute ? txIdOfRequest(req) : null;
+      if (txId) {
+        const used = book.paymentUse(txId);
+        if (used) {
+          log.error('payment_reused', { path: req.path, txId, usedFor: used.kind, usedBy: used.orderId, orderId: ctx?.orderId ?? null });
+          res.status(409).json({ error: 'payment_already_used', txId });
+          return;
+        }
+        if (!book.beginPayment(txId)) {
+          log.warn('payment_in_flight', { path: req.path, txId, orderId: ctx?.orderId ?? null });
+          res.status(409).json({ error: 'payment_in_flight', txId });
+          return;
+        }
+        paying = txId;
+      }
       await payments.middleware(req, res, next);
     } finally {
       if (held) book.end(held);
+      if (paying) book.endPayment(paying);
     }
   });
 

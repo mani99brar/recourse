@@ -13,6 +13,7 @@ import {
   type RouteConfig,
   type RoutesConfig,
 } from '@x402/core/server';
+import { decodePaymentSignatureHeader } from '@x402/core/http';
 import type { SettleResponse } from '@x402/core/types';
 import { inspectHederaTransaction } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/server';
@@ -128,6 +129,21 @@ export function txIdOfPayload(payload: unknown): string | null {
   if (typeof tx !== 'string') return null;
   try {
     return inspectHederaTransaction(tx).transactionId;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Hedera transaction id signed into the request's payment, read from the header x402 decodes
+ * (`payment-signature`) the way it decodes it; null when there is none or it cannot be read, in
+ * which case x402 refuses the payment itself.
+ */
+export function txIdOfRequest(req: Request): string | null {
+  const header = req.header('payment-signature');
+  if (!header) return null;
+  try {
+    return txIdOfPayload(decodePaymentSignatureHeader(header));
   } catch {
     return null;
   }
