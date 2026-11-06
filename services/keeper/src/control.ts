@@ -21,7 +21,7 @@ export interface Control {
    * Hedera (keeper-ctl expire). Without it the keeper never expires such a claim itself.
    */
   expire: Record<string, number>;
-  /** Unix ms of the latest rebuild request. */
+  /** Read by nothing: there is no rebuild command (RUNBOOK.md has the journal steps). Still parsed, so older control files load. */
   rebuildAt?: number;
 }
 

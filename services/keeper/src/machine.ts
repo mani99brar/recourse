@@ -190,7 +190,10 @@ export class Keeper {
       this.o.alerter.loadRecord(r);
     });
     if (replay.badLines.length > 0) {
-      this.o.alerter.raise({ kind: 'journal_error', hint: `journal lines ${replay.badLines.join(', ')} do not parse; run keeper-ctl rebuild` });
+      this.o.alerter.raise({
+        kind: 'journal_error',
+        hint: `journal lines ${replay.badLines.join(', ')} do not parse and were skipped; follow "Journal lines that do not parse" in services/keeper/RUNBOOK.md`,
+      });
     }
     this.o.chains.load([...intents.values()]);
     this.handledGlobal = this.book.globalEvents.length;
@@ -816,7 +819,7 @@ export class Keeper {
       }
       if (st === ExecutionState.Failure) {
         const side = destination === 'arbitrum' ? 'outbound message' : 'ruling message';
-        this.alertClaim(c, 'exec_failure', `${side} ${m.messageId} failed on the ${destination === 'arbitrum' ? 'Arbitrum' : 'Hedera'} OffRamp; see the stuck-message runbook`, {
+        this.alertClaim(c, 'exec_failure', `${side} ${m.messageId} failed on the ${destination === 'arbitrum' ? 'Arbitrum' : 'Hedera'} OffRamp; execute it by hand as "A CCIP message failed on an OffRamp" in services/keeper/RUNBOOK.md says`, {
           links: [this.links.ccipMessage(m.messageId)],
           detail: { messageId: m.messageId, sendNo: String(m.sendNo) },
         });

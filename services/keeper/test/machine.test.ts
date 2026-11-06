@@ -1,7 +1,7 @@
 // The keeper machine over the in-memory two-chain fake: every lifecycle row, its timeouts and
 // retries, the one-leg modes, pause windows, operator control and restart from the journal.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BridgeMode, CIRCLE_VAULT_TOKEN, CaseState, ClaimStatus, ExecutionState, externalIdUint, vaultTokenOf } from '@recourse/shared';
@@ -15,6 +15,8 @@ import type { CallResult } from '../src/types.js';
 import { openJournal, type Journal } from '../src/journal.js';
 import { Keeper, type KeeperOptions } from '../src/machine.js';
 import { FakeChains, SHOP } from './fake-chains.js';
+
+const runbook = () => readFileSync(join(import.meta.dirname, '..', 'RUNBOOK.md'), 'utf8');
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -223,6 +225,11 @@ describe('outbound bridge', () => {
     await run(r, 4000, 120);
     expect(kinds(r)).toContain('exec_failure');
     expect(fns(r, id)).toEqual(['sendToCourt']);
+    // The hint names a runbook section that exists.
+    const hint = r.alerter.pending().find((a) => a.kind === 'exec_failure')!.hint!;
+    const section = /"([^"]+)" in services\/keeper\/RUNBOOK\.md/.exec(hint)?.[1];
+    expect(section).toBe('A CCIP message failed on an OffRamp');
+    expect(runbook()).toContain(`## ${section} (exec_failure)`);
   });
 
   it('needs both proofs: Success with no ClaimReceived alerts delivered_not_recorded and is not resent', async () => {
@@ -1111,6 +1118,20 @@ describe('restart', () => {
     expect(after.map((c) => c.fn)).toEqual(['closeUncontested']);
     expect(after[0]!.args[0]).toBe(waiting);
     expect(kinds(r2).filter((k) => k === 'withdraw_due')).toHaveLength(0);
+  });
+
+  it('a journal line that does not parse points to the runbook steps, not to a command that does not exist', async () => {
+    const fake = new FakeChains();
+    const r1 = rig({ fake });
+    await toWatching(r1, 1);
+    r1.journal.close();
+    appendFileSync(join(r1.dir, 'journal.jsonl'), '{"t":"event","key":\n');
+    const r2 = rig({ fake, dir: r1.dir });
+    const hint = r2.alerter.pending().find((a) => a.kind === 'journal_error')!.hint!;
+    expect(hint).not.toContain('keeper-ctl rebuild');
+    const section = /"([^"]+)" in services\/keeper\/RUNBOOK\.md/.exec(hint)?.[1];
+    expect(section).toBe('Journal lines that do not parse');
+    expect(runbook()).toContain(`## ${section} (journal_error)`);
   });
 
   it('ignores an event replayed by the source after a restart', async () => {
