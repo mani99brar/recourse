@@ -27,6 +27,8 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
     mapping(bytes32 => bool) public ghostOpen;
     mapping(bytes32 => uint256) public appliedCount;
     mapping(address => uint256) public ghostOpenClaims;
+    mapping(bytes32 => uint256) public ghostMax; // the stated maximum payout
+    mapping(bytes32 => uint256) public ghostOwn; // the reservation made at filing
 
     bool public creditFellOutsideWithdraw;
     uint256 public calls;
@@ -101,17 +103,26 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
         bytes32 id = keccak256(abi.encode("claim", claimIds.length));
         if (maxPayout % 3 == 0) {
             vault.escrowFee(s, p, amount, id);
+            maxPayout = 0;
         } else {
-            uint256 free = vault.depositOf(p) - vault.reservedOf(p);
             maxPayout = bound(maxPayout, 0, 20_000e6);
-            uint256 got = vault.escrowAndReserve(s, p, amount, id, maxPayout);
-            require(got == (maxPayout < free ? maxPayout : free), "reserved more or less than the free deposit");
+            _reserve(s, p, amount, id, maxPayout);
         }
+        ghostMax[id] = maxPayout;
         claimIds.push(id);
         claimPlatform[id] = p;
         claimShop[id] = s;
         ghostOpen[id] = true;
         ghostOpenClaims[p] += 1;
+    }
+
+    function _reserve(address s, address p, uint256 amount, bytes32 id, uint256 maxPayout) internal {
+        uint256 dep = vault.depositOf(p);
+        uint256 exposure = vault.exposureOf(p);
+        uint256 free = dep > exposure ? dep - exposure : 0;
+        uint256 got = vault.escrowAndReserve(s, p, amount, id, maxPayout);
+        require(got == (maxPayout < free ? maxPayout : free), "reserved more or less than the uncommitted deposit");
+        ghostOwn[id] = got;
     }
 
     function apply_(uint256 idSeed, uint256 toShop, uint256 refund) external creditsOnlyRise {
@@ -126,11 +137,20 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
             return;
         }
         uint256 fee = vault.escrowOf(id).amount;
-        toShop = bound(toShop, 0, 20_000e6);
+        // Half the payouts stay within the claim's stated maximum, as RecourseClaims' always do.
+        toShop = toShop % 2 == 0 ? bound(toShop, 0, ghostMax[id]) : bound(toShop, 0, 20_000e6);
         refund = bound(refund, 0, fee);
-        uint256 cap = vault.reservationOf(id) + vault.depositOf(p) - vault.reservedOf(p);
+        uint256 cap = _ghostAvailable(id, p);
+        require(vault.availableTo(id) == cap, "availableTo");
+        bytes32 oldest = _ghostOldest(p);
+        if (toShop > cap && oldest != id) {
+            // Short while an earlier claim is open: it waits, and nothing changes.
+            vm.expectRevert(abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, oldest));
+            vault.applyOutcome(id, p, s, toShop, refund);
+            return;
+        }
         uint256 paid = vault.applyOutcome(id, p, s, toShop, refund);
-        require(paid == (toShop < cap ? toShop : cap), "paid past its own reservation and the unreserved rest");
+        require(paid == (toShop < cap ? toShop : cap), "paid past what the claim may draw");
         ghostOpen[id] = false;
         appliedCount[id] += 1;
         ghostOpenClaims[p] -= 1;
@@ -166,6 +186,43 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
     }
 
     // ------------------------------------------------------------ ghost checks
+
+    /// @dev The first claim escrowed against `p` that is still open.
+    function _ghostOldest(address p) internal view returns (bytes32) {
+        for (uint256 i; i < claimIds.length; ++i) {
+            bytes32 id = claimIds[i];
+            if (ghostOpen[id] && claimPlatform[id] == p) return id;
+        }
+        return bytes32(0);
+    }
+
+    /// @dev What the claim may draw, from the ghost books: its reservation, plus all of the unreserved deposit if it
+    ///      is the oldest open claim, else only the unreserved deposit past what every other open claim may still
+    ///      be owed beyond its own reservation.
+    function _ghostAvailable(bytes32 id, address p) internal view returns (uint256) {
+        uint256 reserved;
+        uint256 othersUncovered;
+        for (uint256 i; i < claimIds.length; ++i) {
+            bytes32 k = claimIds[i];
+            if (!ghostOpen[k] || claimPlatform[k] != p) continue;
+            reserved += ghostOwn[k];
+            if (k != id) othersUncovered += ghostMax[k] - ghostOwn[k];
+        }
+        uint256 unreserved = vault.depositOf(p) - reserved;
+        if (_ghostOldest(p) == id) return ghostOwn[id] + unreserved;
+        return ghostOwn[id] + (unreserved > othersUncovered ? unreserved - othersUncovered : 0);
+    }
+
+    function ghostExposure(address p) external view returns (uint256 sum) {
+        for (uint256 i; i < claimIds.length; ++i) {
+            bytes32 k = claimIds[i];
+            if (ghostOpen[k] && claimPlatform[k] == p) sum += ghostMax[k];
+        }
+    }
+
+    function ghostOldest(address p) external view returns (bytes32) {
+        return _ghostOldest(p);
+    }
 
     modifier creditsOnlyRise() {
         uint256 n = accounts.length;

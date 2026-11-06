@@ -91,6 +91,14 @@ contract VaultInvariantTest is HederaBase {
             }
             assertEq(vault.reservedOf(p), sum, "reserved total");
             assertLe(vault.reservedOf(p), vault.depositOf(p), "reserved above the deposit");
+            assertLe(vault.reservedOf(p), vault.exposureOf(p), "reserved above the exposure");
+            assertEq(vault.exposureOf(p), handler.ghostExposure(p), "exposure total");
+            assertEq(vault.oldestOpenClaimOf(p), handler.ghostOldest(p), "oldest open claim");
+        }
+        for (uint256 j; j < handler.claimCount(); ++j) {
+            bytes32 id = handler.claimIds(j);
+            if (!handler.ghostOpen(id)) assertEq(vault.maxPayoutOf(id), 0, "closed claim keeps a stated maximum");
+            else assertEq(vault.maxPayoutOf(id), handler.ghostMax(id), "stated maximum");
         }
     }
 

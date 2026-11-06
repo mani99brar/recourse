@@ -70,6 +70,9 @@ interface IDepositVault {
     error OpenClaims(uint256 count);
     /// @dev No new claim may be escrowed against a platform whose exit is due.
     error ExitDue();
+    /// @dev The payout is more than the claim may draw now, and a claim filed earlier against the same platform
+    ///      is still open and may release deposit to it. Nothing changed; retry once `oldestOpen` has ended.
+    error EarlierClaimOpen(bytes32 oldestOpen);
 
     // ------------------------------------------------------------------ setup (owner)
 
@@ -100,9 +103,9 @@ interface IDepositVault {
 
     function escrowFee(address shop, address platform, uint256 amount, bytes32 claimId) external;
 
-    /// @notice `escrowFee`, then reserves up to `maxPayout` of the platform's unreserved deposit for
-    ///         the claim until its escrow closes.
-    /// @return reserved The part of `maxPayout` the unreserved deposit covered.
+    /// @notice `escrowFee`, recording `maxPayout` as the most the claim may be owed, and reserves for it up to
+    ///         `maxPayout` of the deposit no open claim may still be owed, until its escrow closes.
+    /// @return reserved The part of `maxPayout` the uncommitted deposit covered.
     function escrowAndReserve(address shop, address platform, uint256 amount, bytes32 claimId, uint256 maxPayout)
         external
         returns (uint256 reserved);
@@ -140,6 +143,20 @@ interface IDepositVault {
 
     /// @notice The deposit reserved for an open claim; 0 once its escrow has closed.
     function reservationOf(bytes32 claimId) external view returns (uint256);
+
+    /// @notice Sum of the stated maximum payouts of the platform's open claims. A new claim reserves only out of
+    ///         `depositOf - exposureOf`.
+    function exposureOf(address platform) external view returns (uint256);
+
+    /// @notice The most an open claim stated it may be owed at filing; 0 once its escrow has closed.
+    function maxPayoutOf(bytes32 claimId) external view returns (uint256);
+
+    /// @notice The platform's open claim filed first (0 when none is open): the only one that can close short.
+    function oldestOpenClaimOf(address platform) external view returns (bytes32);
+
+    /// @notice What an open claim's payout may draw on if it closed now (0 for a closed or unknown escrow). A
+    ///         payout above it waits with `EarlierClaimOpen` unless the claim is the oldest open one.
+    function availableTo(bytes32 claimId) external view returns (uint256);
 
     function inGoodStanding(address platform) external view returns (bool);
 

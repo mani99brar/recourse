@@ -83,19 +83,35 @@ contract ClaimsInvariantTest is ClaimsBase {
         }
         assertEq(openEscrow, escrow, "escrow total");
 
-        // Every open claim's reservation is backed by its platform's deposit.
+        // Every open claim's reservation is backed by its platform's deposit, its stated maximum is counted in the
+        // platform's exposure, and the oldest open claim is the first one filed that is still open.
         for (uint256 j; j < open.length; ++j) {
             address p = handler.platforms(j);
             uint256 reserved;
+            uint256 exposure;
+            bytes32 oldest;
             for (uint256 i; i < handler.claimCount(); ++i) {
                 bytes32 id = handler.claimIds(i);
-                if (_live(claims.getClaim(id).status) && claims.getClaim(id).platform == p) {
-                    reserved += vault.reservationOf(id);
+                Claim memory c = claims.getClaim(id);
+                if (!_live(c.status)) {
+                    assertEq(vault.maxPayoutOf(id), 0, "ended claim keeps a stated maximum");
+                    continue;
                 }
+                if (c.platform != p) continue;
+                reserved += vault.reservationOf(id);
+                exposure += vault.maxPayoutOf(id);
+                assertEq(
+                    vault.maxPayoutOf(id), c.netLossUsdc + claims.claimTermsOf(id).handling + vault.escrowOf(id).amount
+                );
+                assertLe(vault.reservationOf(id), vault.maxPayoutOf(id), "reserved above the claim's maximum");
+                if (oldest == bytes32(0)) oldest = id;
             }
             assertEq(vault.reservedOf(p), reserved, "reserved total");
             assertLe(reserved, vault.depositOf(p), "reserved above the deposit");
+            assertEq(vault.exposureOf(p), exposure, "exposure total");
+            assertEq(vault.oldestOpenClaimOf(p), oldest, "oldest open claim");
         }
+        assertFalse(handler.shortBehindEarlierClaim(), "a claim closed short while an earlier one was open");
         for (uint256 j; j < open.length; ++j) {
             assertEq(vault.openClaimsOf(handler.platforms(j)), open[j], "open claims");
         }

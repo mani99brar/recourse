@@ -33,8 +33,10 @@ import {SettleMath} from "./SettleMath.sol";
 ///         the claim. A contested claim goes to court on Arbitrum over CCIP, and the ruling comes
 ///         back the same way (or, in the one-leg modes, through a disclosed relayer). Anyone then
 ///         settles it. Every USDC movement goes through the vault, as credit. Each claim fixes its
-///         contest window, claim timeout and handling at filing, and reserves what it may be owed
-///         against the platform's deposit until it ends.
+///         contest window, claim timeout and handling at filing, and states what it may be owed against
+///         the platform's deposit; claims against one platform are paid in filing order, so a close or
+///         settle that an earlier open claim may still need deposit for waits (`EarlierClaimOpen`, from
+///         the vault) instead of closing short.
 /// @dev Owner powers before `lockConfig` are wide, so lock before real deposits are taken:
 ///      `setBridgeMode` names the ruling relayer, which records any ruling it likes on a claim at court
 ///      in the one-leg modes (OutOnly, None); `setPeer` names the only contract whose CCIP rulings are
@@ -182,7 +184,9 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
     }
 
     /// @notice After the window, closes an uncontested claim: the fee is refunded, and if the
-    ///         finding was against the platform the shop is paid net loss plus handling.
+    ///         finding was against the platform the shop is paid net loss plus handling. Reverts
+    ///         `EarlierClaimOpen` (and changes nothing) while that payout needs deposit an earlier open
+    ///         claim against the platform may still be owed; retry once that claim has ended.
     function closeUncontested(bytes32 claimId) external nonReentrant {
         Claim storage c = _claims[claimId];
         if (c.status != ClaimStatus.PreChecked) revert WrongStatus(c.status);
@@ -264,7 +268,8 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         _applyRuling(claimId, disputeId, ruling, attempts, bytes32(0));
     }
 
-    /// @notice Applies a ruled claim's outcome. Anyone may call.
+    /// @notice Applies a ruled claim's outcome. Anyone may call. Waits with `EarlierClaimOpen` as
+    ///         `closeUncontested` does.
     function settle(bytes32 claimId) external nonReentrant {
         Claim storage c = _claims[claimId];
         if (c.status != ClaimStatus.Ruled) revert WrongStatus(c.status);

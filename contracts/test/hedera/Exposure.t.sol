@@ -25,20 +25,124 @@ contract ExposureTest is ClaimsBase {
     // ------------------------------------------------------------ reservation
 
     /// A shop's claim is at court. A second address the platform controls files for the whole deposit, the
-    /// pre-check finds against the platform, nobody contests, and it closes first. The earlier claim is still
-    /// paid in full when its ruling lands.
+    /// pre-check finds against the platform and nobody contests. It cannot close while the earlier claim may
+    /// still need the deposit; the earlier claim is paid in full when its ruling lands, and the alias gets only
+    /// what is left after it.
     function test_aliasClaimCannotTakeWhatAnEarlierOpenClaimMayBeOwed() public {
         bytes32 real = _atCourt(2, 1);
         bytes32 fake = _file(aliasFiler, platform, DEPOSIT, DEPOSIT);
+        assertEq(vault.reservationOf(fake), DEPOSIT - (NET_LOSS + H + FEE), "only what the earlier claim cannot need");
         _precheck(fake, 2, 1);
         vm.warp(block.timestamp + _params().contestWindow + 1);
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, real));
         claims.closeUncontested(fake);
 
         _deliver(real, 77, 1, 1);
         claims.settle(real);
         assertEq(vault.creditOf(shop), NET_LOSS + H + FEE, "the earlier claim is paid in full");
+        claims.closeUncontested(fake);
         assertEq(vault.creditOf(aliasFiler), DEPOSIT - (NET_LOSS + H + FEE) + FEE, "the alias gets only the rest");
         assertEq(vault.depositOf(platform), 0);
+        _assertBooks();
+    }
+
+    /// An earlier claim that will never pay (found against its own filer, who contests it so it stays open)
+    /// covers the whole deposit. A genuine claim filed after it, found against the platform, waits instead of
+    /// closing short, and is paid in full once the earlier claim ends.
+    function test_neverPayableEarlierClaimDelaysButNeverShortsALaterClaim() public {
+        bytes32 blocker = _file(aliasFiler, platform, DEPOSIT, DEPOSIT);
+        _precheck(blocker, 2, 2);
+        vm.prank(aliasFiler);
+        claims.contest(blocker);
+
+        bytes32 real = _file();
+        _precheck(real, 2, 1);
+        vm.warp(block.timestamp + _params().contestWindow + 1);
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, blocker));
+        claims.closeUncontested(real);
+        assertEq(uint8(_status(real)), uint8(ClaimStatus.PreChecked), "still open, not closed short");
+
+        vm.warp(uint256(claims.getClaim(blocker).preCheckedAt) + _params().claimTimeout + 1);
+        claims.expireClaim(blocker);
+        claims.closeUncontested(real);
+        assertEq(vault.creditOf(shop), NET_LOSS + H + FEE, "paid in full, fee back");
+        assertEq(vault.creditOf(aliasFiler), FEE, "the earlier claim gets its fee back and nothing else");
+        assertEq(vault.depositOf(platform), DEPOSIT - (NET_LOSS + H));
+        _assertBooks();
+    }
+
+    /// The earlier claim's filer lets it expire and files a fresh one for the whole deposit in the same block,
+    /// before anyone closes the waiting claim. A new filing can only reserve what no open claim may still be
+    /// owed, so the waiting claim is paid in full.
+    function test_refiledBlockerCannotTakeWhatAWaitingClaimIsOwed() public {
+        bytes32 blocker = _file(aliasFiler, platform, DEPOSIT, DEPOSIT);
+        _precheck(blocker, 2, 2);
+        vm.prank(aliasFiler);
+        claims.contest(blocker);
+        bytes32 real = _file();
+        _precheck(real, 2, 1);
+
+        vm.warp(uint256(claims.getClaim(blocker).preCheckedAt) + _params().claimTimeout + 1);
+        claims.expireClaim(blocker);
+        _file(aliasFiler, platform, DEPOSIT, DEPOSIT); // same block, ahead of the close
+        claims.closeUncontested(real);
+        assertEq(vault.creditOf(shop), NET_LOSS + H + FEE, "paid in full, fee back");
+        assertEq(vault.depositOf(platform), DEPOSIT - (NET_LOSS + H));
+        _assertBooks();
+    }
+
+    /// Two claims wait behind the same earlier claim. When it ends, the later one cannot take what the earlier one
+    /// may be owed, even when it is closed first: it waits again, and gets what is left after the earlier one.
+    function test_waitingClaimsArePaidInFilingOrder() public {
+        uint256 bigBasket = 4_900 * USDC;
+        uint256 bigH = 40 * USDC; // capped
+        bytes32 blocker = _file(aliasFiler, platform, DEPOSIT, DEPOSIT);
+        bytes32 first = _file();
+        bytes32 second = _file(shop2, platform, bigBasket, bigBasket);
+        _precheck(first, 2, 1);
+        _precheck(second, 2, 1);
+        vm.warp(uint256(claims.getClaim(blocker).filedAt) + _params().claimTimeout + 1);
+        claims.expireClaim(blocker); // never pre-checked: it expires from filing
+
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, first));
+        claims.closeUncontested(second);
+        claims.closeUncontested(first);
+        assertEq(vault.creditOf(shop), NET_LOSS + H + FEE, "the earlier claim in full");
+
+        uint256 left = DEPOSIT - (NET_LOSS + H);
+        vm.expectEmit(address(vault));
+        emit IDepositVault.Shortfall(second, platform, bigBasket + bigH - left);
+        claims.closeUncontested(second);
+        assertEq(vault.creditOf(shop2), left + FEE, "the later claim gets what is left");
+        assertEq(vault.depositOf(platform), 0);
+        _assertBooks();
+    }
+
+    /// A shortfall is final only when the deposit itself runs out: the oldest open claim closes short at once.
+    function test_oldestOpenClaimClosesShortWhenTheDepositRunsOut() public {
+        uint256 small = 150 * USDC;
+        _fund(platform2, small);
+        vm.startPrank(platform2);
+        usdc.approve(address(vault), type(uint256).max);
+        vault.postDeposit(platform2, small);
+        vm.stopPrank();
+        bytes32 first = _file(shop, platform2, BASKET, NET_LOSS);
+        bytes32 second = _file(shop2, platform2, BASKET, NET_LOSS);
+        _precheck(first, 2, 1);
+        _precheck(second, 2, 1);
+        vm.warp(block.timestamp + _params().contestWindow + 1);
+
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, first));
+        claims.closeUncontested(second);
+        claims.closeUncontested(first);
+        uint256 left = small - (NET_LOSS + H);
+        vm.expectEmit(address(vault));
+        emit IDepositVault.Shortfall(second, platform2, NET_LOSS + H - left);
+        claims.closeUncontested(second);
+        assertEq(uint8(_status(second)), uint8(ClaimStatus.Closed));
+        assertEq(vault.creditOf(shop), NET_LOSS + H + FEE);
+        assertEq(vault.creditOf(shop2), left + FEE);
+        assertEq(vault.depositOf(platform2), 0);
         _assertBooks();
     }
 
@@ -64,32 +168,70 @@ contract ExposureTest is ClaimsBase {
         _assertBooks();
     }
 
-    /// A claim filed when the deposit was already fully reserved reserves nothing, can still draw on what is
-    /// unreserved when it ends (a top-up included), and never on another open claim's reservation.
-    function test_reservation_laterClaimDrawsOnlyOnTheUnreservedRest() public {
+    /// A claim filed when the deposit was already fully reserved reserves nothing. While the earlier claim is
+    /// open it waits rather than closing short, unless a top-up covers its payout beyond what the earlier claim
+    /// may still be owed past its own reservation; it never draws on the earlier claim's reservation.
+    function test_reservation_laterClaimWaitsOrDrawsOnATopUpBeyondEarlierClaims() public {
         bytes32 big = _file(aliasFiler, platform, DEPOSIT, DEPOSIT); // reserves all of it
+        uint256 bigUncovered = 40 * USDC + FEE; // its handling (capped) and fee are past the deposit
         assertEq(vault.reservationOf(big), DEPOSIT);
+        assertEq(vault.exposureOf(platform), DEPOSIT + bigUncovered);
         bytes32 late = _file(); // nothing left to reserve
         assertEq(vault.reservationOf(late), 0);
 
         _precheck(late, 2, 1);
         vm.warp(block.timestamp + _params().contestWindow + 1);
-        vm.expectEmit(address(vault));
-        emit IDepositVault.Shortfall(late, platform, NET_LOSS + H);
+        assertEq(vault.availableTo(late), 0);
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, big));
         claims.closeUncontested(late);
-        assertEq(vault.creditOf(shop), FEE, "fee back, nothing from the reserved deposit");
-        assertEq(vault.depositOf(platform), DEPOSIT);
 
-        // After a top-up, a claim filed short draws on the new unreserved part.
-        bytes32 late2 = _file();
+        // A top-up that covers the earlier claim's uncovered part but not this payout: still waiting.
         vm.prank(platform);
-        vault.postDeposit(platform, 50 * USDC);
-        _precheck(late2, 2, 1);
+        vault.postDeposit(platform, 100 * USDC);
+        assertEq(vault.availableTo(late), 100 * USDC - bigUncovered);
+        vm.expectRevert(abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, big));
+        claims.closeUncontested(late);
+
+        // Enough of a top-up: it closes in full while the earlier claim is still open.
+        vm.prank(platform);
+        vault.postDeposit(platform, 100 * USDC);
+        claims.closeUncontested(late);
+        assertEq(vault.creditOf(shop), NET_LOSS + H + FEE, "paid in full from the top-up");
+        assertEq(vault.depositOf(platform), DEPOSIT + 200 * USDC - (NET_LOSS + H));
+        assertEq(vault.reservedOf(platform), DEPOSIT, "the earlier reservation is untouched");
+        assertEq(vault.availableTo(big), DEPOSIT + 200 * USDC - (NET_LOSS + H), "the oldest may draw on it all");
+        _assertBooks();
+    }
+
+    /// The vault keeps each platform's open claims in filing order, whatever order they end in.
+    function test_oldestOpenClaimOf_followsFilingOrder() public {
+        assertEq(vault.oldestOpenClaimOf(platform), bytes32(0));
+        bytes32 a = _file();
+        bytes32 b = _file(shop2, platform, BASKET, NET_LOSS);
+        bytes32 c = _file();
+        assertEq(vault.oldestOpenClaimOf(platform), a);
+        assertEq(vault.maxPayoutOf(b), NET_LOSS + H + FEE);
+        assertEq(vault.exposureOf(platform), 3 * (NET_LOSS + H + FEE));
+
+        _precheck(b, 2, 2);
         vm.warp(block.timestamp + _params().contestWindow + 1);
-        claims.closeUncontested(late2);
-        assertEq(vault.creditOf(shop), FEE + 50 * USDC + FEE, "the top-up, not the earlier reservation");
-        assertEq(vault.depositOf(platform), DEPOSIT);
-        assertEq(vault.reservedOf(platform), DEPOSIT);
+        claims.closeUncontested(b); // out of the middle
+        assertEq(vault.maxPayoutOf(b), 0);
+        assertEq(vault.availableTo(b), 0);
+        assertEq(vault.oldestOpenClaimOf(platform), a);
+        assertEq(vault.exposureOf(platform), 2 * (NET_LOSS + H + FEE));
+
+        vm.warp(uint256(claims.getClaim(a).filedAt) + _params().claimTimeout + 1);
+        claims.expireClaim(a); // the oldest
+        assertEq(vault.oldestOpenClaimOf(platform), c);
+        bytes32 d = _file();
+        claims.expireClaim(c);
+        assertEq(vault.oldestOpenClaimOf(platform), d);
+        vm.warp(uint256(claims.getClaim(d).filedAt) + _params().claimTimeout + 1);
+        claims.expireClaim(d);
+        assertEq(vault.oldestOpenClaimOf(platform), bytes32(0));
+        assertEq(vault.exposureOf(platform), 0);
+        assertEq(vault.reservedOf(platform), 0);
         _assertBooks();
     }
 

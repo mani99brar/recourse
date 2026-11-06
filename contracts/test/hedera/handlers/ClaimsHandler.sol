@@ -8,6 +8,7 @@ import {StdCheats} from "forge-std/StdCheats.sol";
 import {StdUtils} from "forge-std/StdUtils.sol";
 
 import {DepositVault} from "../../../src/hedera/DepositVault.sol";
+import {IDepositVault} from "../../../src/hedera/interfaces/IDepositVault.sol";
 import {RecourseClaims} from "../../../src/hedera/RecourseClaims.sol";
 import {Claim, ClaimStatus, RecordRefs, RulingBack} from "../../../src/shared/RecourseTypes.sol";
 
@@ -34,6 +35,9 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
     mapping(ClaimStatus => uint256) public reached; // claims that entered each status
 
     uint256 public exits;
+    uint256 public waits; // closes and settles refused because an earlier claim was still open
+    uint256 public shortfalls;
+    bool public shortBehindEarlierClaim;
     bool public illegalTransition;
     bool public receiveReverted;
     uint256 public currentTime;
@@ -127,6 +131,15 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
         (bytes32 id, Claim memory c, bool ok) = _pickIn(idSeed, _bit(ClaimStatus.PreChecked));
         if (!ok || c.status != ClaimStatus.PreChecked) return;
         if (block.timestamp <= uint256(c.preCheckedAt) + claims.params().contestWindow) return;
+        if (_mustWait(id, c.platform)) {
+            vm.expectRevert(
+                abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, vault.oldestOpenClaimOf(c.platform))
+            );
+            claims.closeUncontested(id);
+            ++waits;
+            return;
+        }
+        _noteShortfall(id, c.platform);
         claims.closeUncontested(id);
         _moved(id, c.status);
     }
@@ -170,6 +183,15 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
     function settle(uint256 idSeed) external atTime {
         (bytes32 id, Claim memory c, bool ok) = _pickIn(idSeed, _bit(ClaimStatus.Ruled));
         if (!ok || c.status != ClaimStatus.Ruled) return;
+        if (_mustWait(id, c.platform)) {
+            vm.expectRevert(
+                abi.encodeWithSelector(IDepositVault.EarlierClaimOpen.selector, vault.oldestOpenClaimOf(c.platform))
+            );
+            claims.settle(id);
+            ++waits;
+            return;
+        }
+        _noteShortfall(id, c.platform);
         claims.settle(id);
         _moved(id, c.status);
     }
@@ -222,6 +244,30 @@ contract ClaimsHandler is CommonBase, StdCheats, StdUtils {
     }
 
     // ------------------------------------------------------------ bookkeeping
+
+    /// @dev The vault refuses a payout above what the claim may draw unless it is the platform's oldest open claim.
+    function _mustWait(bytes32 id, address p) internal view returns (bool) {
+        (uint256 toShop,,) = claims.previewSettle(id);
+        return toShop > vault.availableTo(id) && vault.oldestOpenClaimOf(p) != id;
+    }
+
+    /// @dev A claim that closes short must be its platform's oldest open claim, with every claim filed before it
+    ///      against that platform already ended.
+    function _noteShortfall(bytes32 id, address p) internal {
+        (uint256 toShop,,) = claims.previewSettle(id);
+        if (toShop <= vault.availableTo(id)) return;
+        ++shortfalls;
+        if (vault.oldestOpenClaimOf(p) != id) shortBehindEarlierClaim = true;
+        for (uint256 i; i < claimIds.length && claimIds[i] != id; ++i) {
+            Claim memory e = claims.getClaim(claimIds[i]);
+            if (e.platform == p && _isOpen(e.status)) shortBehindEarlierClaim = true;
+        }
+    }
+
+    function _isOpen(ClaimStatus s) internal pure returns (bool) {
+        return s == ClaimStatus.Filed || s == ClaimStatus.PreChecked || s == ClaimStatus.Contested
+            || s == ClaimStatus.AtCourt || s == ClaimStatus.Ruled;
+    }
 
     function _exitDue(address p) internal view returns (bool) {
         uint256 at = vault.exitRequestedAt(p);

@@ -15,13 +15,21 @@ import {IHRC719} from "./interfaces/IHRC719.sol";
 /// @notice Holds every USDC unit of the scheme on Hedera: platform deposits, the shop's court-fee
 ///         escrow per claim, and withdrawable credits. The bound claims contract is the only caller
 ///         that can open or close an escrow, and it can only move money along the settle table it
-///         implements. The owner can never move deposits, escrow or credits. Each open claim can reserve
-///         what it may be owed out of the part of the platform's deposit no earlier open claim reserved,
-///         so a later claim (from any filer) can never take what an earlier one may still be paid.
+///         implements. The owner can never move deposits, escrow or credits.
+///
+///         A platform's open claims are paid in filing order. Each claim states at filing the most it may be
+///         owed (`maxPayoutOf`) and reserves it out of the deposit that no open claim may still be owed
+///         (`depositOf - exposureOf`), so a later filing can never take what an open claim may be paid. A claim
+///         whose payout is more than it may draw now waits (`EarlierClaimOpen`) while a claim filed before it
+///         is still open; only the oldest open claim (`oldestOpenClaimOf`) ever closes short, and then only
+///         because the deposit itself ran out. Anyone can end each earlier claim by its own frozen timeout at
+///         the latest (expire it, close it after its window, or settle its ruling), so the wait is bounded, and
+///         a later filing can neither extend it nor take what the waiting claim is owed.
 /// @dev Invariants: `usdc.balanceOf(this) >= totalDeposits + totalEscrow + totalCredits`, with equality
 ///      unless someone transfers USDC to the vault directly (that excess is never counted or recoverable);
-///      and for every platform `reservedOf <= depositOf`, the reserved sum being that of its open claims.
-///      Accounting never reads the token balance. No function accepts native value.
+///      for every platform `reservedOf <= depositOf` and `reservedOf <= exposureOf`, the sums being those of
+///      its open claims; and the open claims of a platform form one list in filing order.
+///      Accounting never reads the token balance. No function accepts native value. No loop runs over claims.
 contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     /// @dev Hedera Token Service system contract.
     address internal constant HTS = RecourseAddresses.HEDERA_HTS;
@@ -56,6 +64,14 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     mapping(bytes32 claimId => Escrow) internal _escrows;
     mapping(address platform => uint256) internal _reserved;
     mapping(bytes32 claimId => uint256) internal _reservation;
+    /// @dev Sum of the open claims' `_maxPayout`, and each open claim's stated maximum.
+    mapping(address platform => uint256) internal _exposure;
+    mapping(bytes32 claimId => uint256) internal _maxPayout;
+    /// @dev The platform's open claims as a doubly linked list in filing order (claim ids are never 0).
+    mapping(address platform => bytes32) internal _oldest;
+    mapping(address platform => bytes32) internal _newest;
+    mapping(bytes32 claimId => bytes32) internal _prev;
+    mapping(bytes32 claimId => bytes32) internal _next;
 
     modifier onlyClaims() {
         if (msg.sender != claims || claims == address(0)) revert OnlyClaims();
@@ -205,32 +221,31 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
 
     // =================================================================== claims contract only
 
-    /// @notice Pulls `amount` from `shop` into a new escrow for `claimId`. Reserves nothing.
+    /// @notice Pulls `amount` from `shop` into a new escrow for `claimId`, stating a maximum payout of 0.
     function escrowFee(address shop, address platform, uint256 amount, bytes32 claimId)
         external
         onlyClaims
         nonReentrant
     {
-        _escrowFee(shop, platform, amount, claimId);
+        _escrowFee(shop, platform, amount, claimId, 0);
     }
 
-    /// @notice Pulls `amount` from `shop` into a new escrow for `claimId` and reserves for the claim up to
-    ///         `maxPayout` of the platform's deposit that no other open claim has reserved.
+    /// @notice Pulls `amount` from `shop` into a new escrow for `claimId`, records `maxPayout` as the most the
+    ///         claim may be owed, and reserves for it up to `maxPayout` of the platform's deposit that no open
+    ///         claim may still be owed (`depositOf - exposureOf`, before this claim).
     function escrowAndReserve(address shop, address platform, uint256 amount, bytes32 claimId, uint256 maxPayout)
         external
         onlyClaims
         nonReentrant
         returns (uint256 reserved)
     {
-        uint256 total = _reserved[platform];
-        uint256 free = _deposit[platform] - total;
-        reserved = maxPayout < free ? maxPayout : free;
-        _reserved[platform] = total + reserved;
-        _reservation[claimId] = reserved;
-        _escrowFee(shop, platform, amount, claimId);
+        reserved = _escrowFee(shop, platform, amount, claimId, maxPayout);
     }
 
-    function _escrowFee(address shop, address platform, uint256 amount, bytes32 claimId) private {
+    function _escrowFee(address shop, address platform, uint256 amount, bytes32 claimId, uint256 maxPayout)
+        private
+        returns (uint256 reserved)
+    {
         if (!usdcAssociated) revert NotAssociatedYet();
         if (amount == 0) revert AmountZero();
         // Once a platform's exit is due, no new claim can keep it open; claims already open run out.
@@ -238,6 +253,18 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         if (exitAt != 0 && block.timestamp >= exitAt + _exitDelay) revert ExitDue();
         Escrow storage e = _escrows[claimId];
         if (e.state != EscrowState.None) revert EscrowExists(claimId);
+
+        // Only what is beyond every open claim's stated maximum is free to reserve, so deposit an earlier claim
+        // may still need (including deposit another claim just released) never goes to a later one.
+        uint256 held = _deposit[platform];
+        uint256 exposure = _exposure[platform];
+        uint256 uncommitted = held > exposure ? held - exposure : 0;
+        reserved = maxPayout < uncommitted ? maxPayout : uncommitted;
+        _reserved[platform] += reserved;
+        _reservation[claimId] = reserved;
+        _exposure[platform] = exposure + maxPayout;
+        _maxPayout[claimId] = maxPayout;
+        _link(platform, claimId);
 
         e.shop = shop;
         e.state = EscrowState.Open;
@@ -251,10 +278,12 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         _pull(shop, amount);
     }
 
-    /// @notice Closes `claimId`'s escrow. Pays `toShop` from the platform's deposit, capped at the claim's
-    ///         own reservation plus the deposit no open claim has reserved, releases the reservation,
-    ///         refunds `refundToShop` of the escrow to the shop and gives the rest of the escrow to the
-    ///         pool. Everything lands as credit; nothing is transferred out here.
+    /// @notice Closes `claimId`'s escrow. Pays `toShop` from the platform's deposit, capped at what the claim
+    ///         may draw (`availableTo`), releases its reservation, refunds `refundToShop` of the escrow to the
+    ///         shop and gives the rest of the escrow to the pool. Everything lands as credit; nothing is
+    ///         transferred out here. When `toShop` is more than the claim may draw and it is not the oldest open
+    ///         claim against the platform, nothing happens: it reverts `EarlierClaimOpen` and the claim waits.
+    ///         The oldest open claim is never refused; its shortfall is final.
     /// @return paid The part of `toShop` the deposit covered.
     function applyOutcome(bytes32 claimId, address platform, address shop, uint256 toShop, uint256 refundToShop)
         external
@@ -268,7 +297,12 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         if (refundToShop > fee) revert RefundAboveEscrow(refundToShop, fee);
 
         uint256 held = _deposit[platform];
-        uint256 available = _release(claimId, platform, held);
+        uint256 available = _available(claimId, platform, held);
+        if (toShop > available) {
+            bytes32 oldest = _oldest[platform];
+            if (oldest != claimId) revert EarlierClaimOpen(oldest);
+        }
+        _release(claimId, platform);
         paid = toShop < available ? toShop : available;
         uint256 remaining = held - paid;
         uint256 toPool = fee - refundToShop;
@@ -354,6 +388,24 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         return _reservation[claimId];
     }
 
+    function exposureOf(address platform) external view returns (uint256) {
+        return _exposure[platform];
+    }
+
+    function maxPayoutOf(bytes32 claimId) external view returns (uint256) {
+        return _maxPayout[claimId];
+    }
+
+    function oldestOpenClaimOf(address platform) external view returns (bytes32) {
+        return _oldest[platform];
+    }
+
+    function availableTo(bytes32 claimId) external view returns (uint256) {
+        Escrow storage e = _escrows[claimId];
+        if (e.state != EscrowState.Open) return 0;
+        return _available(claimId, e.platform, _deposit[e.platform]);
+    }
+
     /// @notice Derived on every read: no exit is pending, a requirement exists, and the deposit meets it
     ///         or the platform is still inside its top-up window.
     function inGoodStanding(address platform) external view returns (bool) {
@@ -367,14 +419,47 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
 
     // =================================================================== internal
 
-    /// @dev Releases the claim's reservation and returns what its payout may draw on: the reservation
-    ///      plus the part of the platform's deposit `held` that no open claim has reserved.
-    function _release(bytes32 claimId, address platform, uint256 held) private returns (uint256 available) {
+    /// @dev What an open claim's payout may draw on now. Always its own reservation. The oldest open claim also
+    ///      takes all of the unreserved deposit, since every other open claim was filed after it. Any other
+    ///      claim takes only the unreserved deposit beyond what all other open claims may still be owed past
+    ///      their own reservations, so it never takes what an earlier claim may need; if that is not enough it
+    ///      waits until it is the oldest.
+    function _available(bytes32 claimId, address platform, uint256 held) private view returns (uint256) {
         uint256 own = _reservation[claimId];
-        uint256 reservedTotal = _reserved[platform];
-        available = own + (held - reservedTotal);
+        uint256 reserved = _reserved[platform];
+        uint256 unreserved = held - reserved;
+        if (_oldest[platform] == claimId) return own + unreserved;
+        uint256 othersUncovered = (_exposure[platform] - reserved) - (_maxPayout[claimId] - own);
+        return own + (unreserved > othersUncovered ? unreserved - othersUncovered : 0);
+    }
+
+    /// @dev Releases the claim's reservation and stated maximum and takes it out of the filing-order list.
+    function _release(bytes32 claimId, address platform) private {
+        _reserved[platform] -= _reservation[claimId];
+        _exposure[platform] -= _maxPayout[claimId];
         _reservation[claimId] = 0;
-        _reserved[platform] = reservedTotal - own;
+        _maxPayout[claimId] = 0;
+
+        bytes32 prev = _prev[claimId];
+        bytes32 next = _next[claimId];
+        if (prev == bytes32(0)) _oldest[platform] = next;
+        else _next[prev] = next;
+        if (next == bytes32(0)) _newest[platform] = prev;
+        else _prev[next] = prev;
+        delete _prev[claimId];
+        delete _next[claimId];
+    }
+
+    /// @dev Appends a newly opened claim to the platform's filing-order list.
+    function _link(address platform, bytes32 claimId) private {
+        bytes32 last = _newest[platform];
+        if (last == bytes32(0)) {
+            _oldest[platform] = claimId;
+        } else {
+            _next[last] = claimId;
+            _prev[claimId] = last;
+        }
+        _newest[platform] = claimId;
     }
 
     function _startClock(address platform) private {
