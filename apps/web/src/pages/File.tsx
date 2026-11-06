@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { PrecheckResult, VaultToken } from '@recourse/shared';
+import { FileClaimAction } from '../actions/forms.js';
 import { Banner, Card, Loading, Pill, Row } from '../components.js';
-import { ApiFailure, getApi, usePoll, type Fresh } from '../lib/api.js';
+import { ApiFailure, READS, getRead, usePoll, type Fresh } from '../lib/api.js';
 import { parseUsdc, usdc } from '../lib/format.js';
 import { precheckFromRecords, type ServedRecord, type PrecheckOutcome } from '../lib/precheck.js';
 import { KIND_WORDS, REASON_WORDS, SIDE_WORDS } from '../lib/words.js';
@@ -64,8 +65,8 @@ export function FilePage() {
   const [netLoss, setNetLoss] = useState('');
   const [platform, setPlatform] = useState('');
   const [state, setState] = useState<{ loading: boolean; error: string | null; data: OrderRecords | null }>({ loading: false, error: null, data: null });
-  const params = usePoll<ParamsBody>('/params', 30000);
-  const standing = usePoll<PartyBody>(/^0x[0-9a-fA-F]{40}$/.test(platform) ? `/parties/${platform}` : null, 15000);
+  const params = usePoll<ParamsBody>(READS.params(), 30000);
+  const standing = usePoll<PartyBody>(/^0x[0-9a-fA-F]{40}$/.test(platform) ? READS.party(platform) : null, 15000);
 
   const idOk = /^0x[0-9a-fA-F]{64}$/.test(orderId.trim());
   const b = parseUsdc(basket);
@@ -75,7 +76,7 @@ export function FilePage() {
   async function load() {
     setState({ loading: true, error: null, data: null });
     try {
-      const data = await getApi<OrderRecords>(`/orders/${orderId.trim().toLowerCase()}/records`);
+      const data = await getRead<OrderRecords>(READS.orderRecords(orderId.trim().toLowerCase()));
       setState({ loading: false, error: null, data });
     } catch (e) {
       setState({ loading: false, error: e instanceof ApiFailure ? (e.status === 400 ? 'That is not an order id.' : 'The records could not be loaded.') : 'The records could not be loaded.', data: null });
@@ -90,7 +91,7 @@ export function FilePage() {
     <>
       <h1>Check an order before filing</h1>
       <p className="lead">
-        Load the records of an order and see what the pre-check would say. This page only checks. It does not sign, send or file anything; a shop files through its own service.
+        Load the records of an order and see what the pre-check would say. The shop that took the order can then file the claim here: the page shows what filing will do, and the shop's own wallet signs. Checking needs no wallet.
       </p>
       <Banner fresh={params.data ?? undefined} error={params.error} token={token} />
       <Card title="1. The order">
@@ -158,6 +159,16 @@ export function FilePage() {
         </dl>
         <p className="muted small">The court fee comes back to you if the claim closes uncontested, expires, or is not drawn.</p>
       </Card>
+      {state.data && !state.data.claimId && (
+        <FileClaimAction
+          key={state.data.orderId}
+          orderId={state.data.orderId}
+          packedHeld={state.data.records.find((r) => r.kind === 4)?.held === true}
+          platform={platform.trim()}
+          netLoss={netLoss}
+          token={token}
+        />
+      )}
     </>
   );
 }

@@ -34,6 +34,7 @@ import {
   type FoldedClaim,
   type Money,
 } from './join.js';
+import { ChainRevert, classify, type ClaimTerms } from './chain.js';
 import { TtlCache, type CaseParams, type ClaimsParams, type ConfigLocks, type PartyViews, type Reader, type VaultParams } from './live.js';
 import type { LiveState, Store } from './store.js';
 import type { HcsRecord, IndexedEvent, SourceName } from './types.js';
@@ -100,6 +101,11 @@ export class StatusService {
   private lastGood: LiveParamBundle | null = null;
   private locks: { flags: ConfigLocks | null; at: number; pending: Promise<void> | null } = { flags: null, at: -Infinity, pending: null };
   private hcsOrder: { size: number; map: Map<string, HcsRecord[]> } = { size: -1, map: new Map() };
+  /** Claim terms by claim id: fixed at filing, so kept for good once read. */
+  private terms = new Map<string, ClaimTerms>();
+  private termsTried = new Map<string, number>();
+  /** The claims contract reverted a `claimTermsOf`: it predates per-claim terms, so none is asked again. */
+  private termsUnsupported = false;
 
   constructor(readonly d: ServiceDeps) {
     this.params$ = new TtlCache(d.cfg.viewCacheMs);
@@ -239,6 +245,43 @@ export class StatusService {
   }
 
   /**
+   * Reads each claim's own terms (contest window, timeout, handling; fixed at filing) once, at most
+   * 20 a call and waiting at most `waitMs`; slower reads finish in the background. A failed read is
+   * tried again after a minute; until a claim's terms are known, the current parameters stand in.
+   */
+  async loadTerms(ids: readonly string[], waitMs = 2_000): Promise<void> {
+    const r = this.d.reader;
+    if (!r || this.termsUnsupported) return;
+    const now = this.d.nowS();
+    const todo = ids.filter((id) => !this.terms.has(id) && now - (this.termsTried.get(id) ?? -Infinity) >= 60).slice(0, 20);
+    if (todo.length === 0) return;
+    for (const id of todo) this.termsTried.set(id, now);
+    const all = Promise.all(
+      todo.map(async (id) => {
+        try {
+          const t = await r.claimTerms(id as Hex);
+          if (t.contestWindow > 0n && t.claimTimeout > 0n) this.terms.set(id, t);
+        } catch (e) {
+          // A revert: a claims contract from before per-claim terms, which checks every claim against
+          // its current parameters, so those are exact. Anything else: read again later.
+          if (classify(e, 'hedera') instanceof ChainRevert) this.termsUnsupported = true;
+        }
+      }),
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([all, new Promise((resolve) => (timer = setTimeout(resolve, waitMs)))]);
+    clearTimeout(timer);
+  }
+
+  /** The parameters one claim runs under: its own contest window, timeout and handling once read. */
+  private paramsFor(lp: LiveParamBundle, claimId: string): LiveParamBundle {
+    const t = this.terms.get(claimId);
+    if (!t) return lp;
+    // A fixed handling H: handlingOf(basket) = min(H + 0, H) = H.
+    return { ...lp, claims: { ...lp.claims, contestWindow: t.contestWindow, claimTimeout: t.claimTimeout, handlingBase: t.handling, handlingBps: 0n, handlingCap: t.handling } };
+  }
+
+  /**
    * True when the claim's Arbitrum case is not known to be current: Arbitrum is configured, no
    * `caseOf` read has succeeded within the Arbitrum lag limit, and the case events are failing,
    * not read through yet or late. A fresh store serves before Arbitrum has caught up, so "no case"
@@ -253,7 +296,8 @@ export class StatusService {
     return st.failing || st.indexedThrough === null || now - st.indexedThrough > limit;
   }
 
-  private statusOf(c: FoldedClaim, lp: LiveParamBundle) {
+  private statusOf(c: FoldedClaim, bundle: LiveParamBundle) {
+    const lp = this.paramsFor(bundle, c.claimId);
     const events = this.d.store.eventsOf(c.claimId);
     const live = this.d.store.live.get(c.claimId);
     const caseView = caseViewOf(c, events, live);
@@ -270,7 +314,8 @@ export class StatusService {
     return { status, caseView, bridge };
   }
 
-  private moneyFor(c: FoldedClaim, lp: LiveParamBundle): Money {
+  private moneyFor(c: FoldedClaim, bundle: LiveParamBundle): Money {
+    const lp = this.paramsFor(bundle, c.claimId);
     return moneyOf(
       c,
       {
@@ -315,6 +360,7 @@ export class StatusService {
 
   async claimRows(filter: { party?: Address; status?: string } = {}) {
     const lp = await this.liveParams();
+    await this.loadTerms(this.d.store.claimIds());
     const rows = [];
     for (const id of this.d.store.claimIds()) {
       const c = this.foldOf(id);
@@ -477,6 +523,7 @@ export class StatusService {
     const c = this.foldOf(id);
     if (!c) throw new ApiError(404, 'unknown');
     const lp = await this.liveParams();
+    await this.loadTerms([id]);
     const { status, caseView, bridge } = this.statusOf(c, lp);
     const money = this.moneyFor(c, lp);
     const events = this.d.store.eventsOf(id);
@@ -522,7 +569,7 @@ export class StatusService {
       precheck: c.preChecked
         ? { gap: c.gap, answer: c.answer, side: sideOf(c.answer as Answer), packHash: c.packHash, preCheckedAt: c.preCheckedAt, result: precheckRes, packHashOk }
         : null,
-      contest: { by: c.contestedBy, at: c.contestedAt, windowEndsAt: c.preChecked ? c.preCheckedAt + lp.claims.contestWindow : null },
+      contest: { by: c.contestedBy, at: c.contestedAt, windowEndsAt: c.preChecked ? c.preCheckedAt + this.paramsFor(lp, id).claims.contestWindow : null },
       court: {
         state: caseView ? CASE_STATES[caseView.state] ?? 'unknown' : 'none',
         attempts: caseView?.attempts ?? attemptsOpened.length,

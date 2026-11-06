@@ -46,6 +46,14 @@ export interface Config {
   webOrigin: string | null;
   /** Optional: `{id}` is replaced by the dispute id. */
   courtUrlTemplate: string | null;
+  /** The shop service, asked for the nonce and platform of an orderId-only fileClaim (SHOP_URL, optional). */
+  shopUrl: string;
+  /** Actions built per client a minute, the burst above it, and how many build at once. */
+  actionsPerMin: number;
+  actionBurst: number;
+  actionConcurrency: number;
+  /** An action that has not answered by then answers upstream_unavailable (the web server waits 15 s). */
+  actionDeadlineMs: number;
 }
 
 export function loadConfig(env: Env = process.env): Config {
@@ -95,5 +103,10 @@ export function loadConfig(env: Env = process.env): Config {
     precheckUrl: v.PRECHECK_URL.replace(/\/+$/, ''),
     webOrigin: v.WEB_ORIGIN === '' ? null : v.WEB_ORIGIN,
     courtUrlTemplate: env.COURT_URL_TEMPLATE ?? 'https://v2-testnet.kleros.builders/#/cases/{id}/overview',
+    shopUrl: (env.SHOP_URL || 'http://127.0.0.1:8720').replace(/\/+$/, ''),
+    actionsPerMin: 30,
+    actionBurst: 10,
+    actionConcurrency: 4,
+    actionDeadlineMs: 12_000,
   };
 }

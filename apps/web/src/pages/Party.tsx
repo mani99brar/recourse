@@ -1,5 +1,6 @@
+import { WithdrawAction } from '../actions/forms.js';
 import { Banner, Card, Loading, Pill, Row } from '../components.js';
-import { usePoll, type Fresh } from '../lib/api.js';
+import { READS, usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when } from '../lib/format.js';
 import { GROUP_WORDS, STATUS_WORDS } from '../lib/words.js';
 import type { StatusKey, VaultToken } from '@recourse/shared';
@@ -49,13 +50,14 @@ export function ClaimList({ rows }: { rows: RowT[] }) {
 }
 
 export function PartyPage({ address }: { address: string }) {
-  const { data, error } = usePoll<ClaimsBody>(`/claims?party=${address}`);
+  const { data, error } = usePoll<ClaimsBody>(READS.partyClaims(address));
   return (
     <>
       <Banner fresh={data ?? undefined} error={error} />
       {error?.status === 400 && <p>That does not look like an address.</p>}
       {!data && !error && <Loading what="worklist" />}
       {data?.standing && <Standing s={data.standing} address={address} token={data.vaultToken} />}
+      {data?.standing && <WithdrawAction key={address.toLowerCase()} address={address} credit={data.standing.credit} token={data.vaultToken} />}
       {data?.groups &&
         Object.entries(GROUP_WORDS).map(([k, label]) => {
           const ids = new Set(data.groups?.[k] ?? []);

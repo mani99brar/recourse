@@ -12,6 +12,7 @@ import { loadDeployments } from './deployments.js';
 import { realFetch, safeError } from './http.js';
 import { Indexer } from './indexer.js';
 import { DocFetcher } from './ipfs.js';
+import { ViemActionReads, type ActionReads } from './chain.js';
 import { ViemReader, type Reader } from './live.js';
 import { StatusService } from './service.js';
 import { viemArbRpc } from './sources/viem-arb.js';
@@ -62,10 +63,26 @@ function main(): void {
     });
   }
 
+  // The /v1 actions read and simulate on the same endpoints at the latest block; without a Hedera
+  // relay or the Hedera contracts they answer upstream_unavailable, and without ARB_RPC_URL so do
+  // the Arbitrum ones.
+  let chain: ActionReads | null = null;
+  if (deployments.claims && deployments.vault && cfg.hederaRpcUrls.length > 0) {
+    chain = new ViemActionReads({
+      hederaRpcUrls: cfg.hederaRpcUrls,
+      arbRpcUrl: cfg.arbRpcUrl,
+      timeoutMs: cfg.sourceTimeoutMs,
+      claims: deployments.claims,
+      vault: deployments.vault,
+      caseAddress: deployments.caseAddress ?? null,
+      klerosCore: deployments.outside.klerosCore,
+    });
+  }
+
   const svc = new StatusService({ store, cfg, deployments, reader, parties: () => parties, docs, fetch: realFetch, nowS });
   const indexer = new Indexer({ store, cfg, deployments, fetch: realFetch, arbRpc, reader, parties: () => parties, docs, nowS });
   indexer.start();
-  const server = createApp(svc).listen(cfg.port, '127.0.0.1', () => {
+  const server = createApp(svc, { chain }).listen(cfg.port, '127.0.0.1', () => {
     console.log(`status-api listening on 127.0.0.1:${cfg.port}`);
   });
   const stop = () => {

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { VaultToken } from '@recourse/shared';
-import type { ApiFailure, Fresh } from './lib/api.js';
+import { isRebuilding, type ApiFailure, type Fresh } from './lib/api.js';
 import { mockNote } from './lib/format.js';
 
 export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; error?: ApiFailure | null; token?: VaultToken | undefined }) {
@@ -11,7 +11,7 @@ export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; err
   if (mock) notes.push(mock);
   if (error) {
     notes.push(
-      error.code === 'rebuilding'
+      isRebuilding(error)
         ? 'The status service is rebuilding its index. Figures will appear in a moment.'
         : error.status === 404
           ? ''

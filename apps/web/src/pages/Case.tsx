@@ -1,7 +1,8 @@
 import { recordHash, utf8ToBytes } from '@recourse/shared';
 import { useState } from 'react';
+import { ClaimActions, EvidenceAction, anyoneAction } from '../actions/forms.js';
 import { Banner, Card, ExtLink, Loading, Pill, Row } from '../components.js';
-import { usePoll, type Fresh } from '../lib/api.js';
+import { READS, usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when, whenS } from '../lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, SIDE_WORDS, STATUS_WORDS, deadlineLabel, statusPlain } from '../lib/words.js';
 import type { NextActor, NextCall, StatusKey } from '@recourse/shared';
@@ -105,7 +106,8 @@ export function CaseView({ d }: { d: CaseDetail }) {
         <p className="lead">{statusPlain(d.statusKey, d.nextCall, d.court.state)}</p>
         {d.nextCall && (
           <p className="next">
-            <strong>Next:</strong> {ACTOR_WORDS[d.nextActor]} can {CALL_WORDS[d.nextCall]}. This page does not send anything.
+            <strong>Next:</strong> {ACTOR_WORDS[d.nextActor]} can {CALL_WORDS[d.nextCall]}.
+            {(d.nextCall === 'contest' || anyoneAction(d.nextCall)) && ' It can be done below with a browser wallet; nothing is sent until you confirm.'}
           </p>
         )}
         {d.deadline && (
@@ -114,6 +116,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
           </p>
         )}
       </header>
+      <ClaimActions key={d.claimId} d={d} />
       <div className="grid">
         <Card title="Timeline">
           <Timeline events={d.events} statusKey={d.statusKey} />
@@ -196,6 +199,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
           </p>
         </Card>
       </div>
+      {d.court.disputeIds.length > 0 && <EvidenceAction key={d.claimId} d={d} />}
       <Card title="Records" id="records">
         <p className="muted">
           Each record document is fetched by its content id and checked against the hash on the records topic. A record that could not be fetched yet reads as unchecked, never as verified. Buyer details inside the documents appear only as salted hashes.
@@ -266,7 +270,7 @@ export function RecordCheck({ hashes }: { hashes: string[] }) {
 }
 
 export function CasePage({ id }: { id: string }) {
-  const { data, error } = usePoll<CaseDetail>(`/claims/${id}`);
+  const { data, error } = usePoll<CaseDetail>(READS.claim(id));
   return (
     <>
       <Banner fresh={data ?? undefined} error={error} />

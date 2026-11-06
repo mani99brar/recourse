@@ -1,10 +1,12 @@
-// The HTTP layer: read-only GET endpoints, CORS limited to the web origin, bigint as text.
+// The HTTP layer: the /v1 API (reads, actions, the OpenAPI file; see v1/router.ts) and the older
+// unversioned read-only GET endpoints, CORS limited to the web origin, bigint as text.
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { apiReplacer } from './json.js';
 import { ApiError, type StatusService } from './service.js';
+import { createV1Router, serveOpenapi, type V1Options } from './v1/router.js';
 
-export function createApp(svc: StatusService): express.Express {
+export function createApp(svc: StatusService, v1: V1Options = { chain: null }): express.Express {
   const app = express();
   app.disable('x-powered-by');
   app.set('json replacer', apiReplacer);
@@ -17,10 +19,19 @@ export function createApp(svc: StatusService): express.Express {
       res.setHeader('vary', 'origin');
     }
     if (req.method === 'OPTIONS') {
-      res.setHeader('access-control-allow-methods', 'GET');
+      const versioned = req.path === '/v1' || req.path.startsWith('/v1/');
+      res.setHeader('access-control-allow-methods', versioned ? 'GET, POST' : 'GET');
+      if (versioned) res.setHeader('access-control-allow-headers', 'content-type');
       res.status(204).end();
       return;
     }
+    next();
+  });
+
+  app.use('/v1', createV1Router(svc, v1));
+  app.get('/openapi.json', serveOpenapi);
+
+  app.use((req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.status(405).json({ error: 'read_only' });
       return;

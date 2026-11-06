@@ -237,6 +237,10 @@ export function fakeReader(over: Partial<Reader> = {}): Reader & { calls: string
     async preCheckedAt() {
       return 0n;
     },
+    // Not read unless a test gives terms: the current parameters stand in.
+    async claimTerms() {
+      throw new Error('no terms');
+    },
     ...over,
   };
   return new Proxy(r, {

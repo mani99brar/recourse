@@ -1,9 +1,10 @@
+import { readdirSync, readFileSync } from 'node:fs';
 import { CIRCLE_VAULT_TOKEN, STATUS_KEYS, vaultTokenOf } from '@recourse/shared';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { Shell, route } from '../src/App.js';
 import { Banner, lateWords } from '../src/components.js';
-import { ApiFailure } from '../src/lib/api.js';
+import { ApiFailure, READS, failureFrom, fromV1, isRebuilding } from '../src/lib/api.js';
 import { mockNote, parseUsdc, usdc } from '../src/lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS } from '../src/lib/words.js';
 import { CaseView, type CaseDetail } from '../src/pages/Case.js';
@@ -45,7 +46,8 @@ describe('pages render', () => {
     it(`case page for ${k}`, () => {
       const html = renderToString(<CaseView d={detail(k)} />);
       expect(html).toContain(STATUS_WORDS[k].title);
-      expect(html).toContain('does not send anything');
+      // With no wallet in the page there is nothing to connect, and the claim still reads in full.
+      expect(html).not.toContain('Connect wallet');
     });
   }
   it('shows a stuck claim with its next call', () => {
@@ -185,5 +187,68 @@ describe('helpers', () => {
     expect(parseUsdc('12.5')).toBe(12_500_000n);
     expect(parseUsdc('-1')).toBeNull();
     expect(parseUsdc('1.1234567')).toBeNull();
+  });
+});
+
+type Schema = { $ref?: string; properties?: Record<string, Schema>; required?: string[] };
+const root = new URL('../../../', import.meta.url);
+const spec = JSON.parse(readFileSync(new URL('services/status-api/openapi.json', root), 'utf8')) as {
+  paths: Record<string, { get?: { responses: Record<string, { content: Record<string, { schema: Schema }> }> } }>;
+  components: { schemas: Record<string, Schema> };
+};
+const deref = (x: Schema): Schema => (x.$ref ? deref(spec.components.schemas[x.$ref.split('/').pop()!]!) : x);
+
+describe('the read pages call the documented /v1 API, as the agents do', () => {
+  const ID = '0x' + 'ab'.repeat(32);
+  const ADDR = '0x' + 'cd'.repeat(20);
+  const reads = [READS.claims(), READS.partyClaims(ADDR), READS.claim(ID), READS.party(ADDR), READS.params(), READS.search('order 1'), READS.orderRecords(ID)];
+  const templateOf = (path: string) =>
+    Object.keys(spec.paths).find((t) => spec.paths[t]!.get && new RegExp(`^${t.replace(/\{[^}]+\}/g, '[^/?]+')}$`).test(path.split('?')[0]!)) ?? null;
+
+  it('every path the pages read is a GET in openapi.json under /v1', () => {
+    for (const p of reads) {
+      expect(p.startsWith('/v1/'), p).toBe(true);
+      expect(templateOf(p), p).not.toBeNull();
+    }
+  });
+
+  it('each of those answers is { <key>, meta } (or { claims, party, meta }), with the freshness in meta', () => {
+    for (const p of reads) {
+      const schema = deref(spec.paths[templateOf(p)!]!.get!.responses['200']!.content['application/json']!.schema);
+      const keys = Object.keys(schema.properties ?? {}).sort();
+      expect(keys.includes('meta') && (keys.length === 2 || keys.join() === 'claims,meta,party'), `${p}: ${keys.join()}`).toBe(true);
+      const meta = Object.keys(deref(schema.properties!.meta!).properties ?? {});
+      for (const k of ['asOf', 'degraded', 'vaultToken', 'configLock']) expect(meta, p).toContain(k);
+    }
+  });
+
+  it('no page reads an unversioned path', () => {
+    const dir = new URL('../src/pages/', import.meta.url);
+    for (const f of readdirSync(dir)) {
+      const src = readFileSync(new URL(f, dir), 'utf8');
+      expect(src, f).not.toMatch(/(usePoll|getApi|getRead)(<[^>]*>)?\(\s*[`'"]\//);
+    }
+  });
+
+  it('unwraps each /v1 read into the value with its freshness beside it', () => {
+    const meta = { apiVersion: '1', asOf: { hedera: 1, arbitrum: 2, hcs: 3 }, degraded: ['hcs'], vaultToken: { mode: 'mock' }, configLock: { allLocked: false, notice: 'n' } };
+    const fresh = { asOf: meta.asOf, degraded: meta.degraded, vaultToken: meta.vaultToken, configLock: meta.configLock };
+    expect(fromV1({ claims: [{ claimId: 'x' }], party: null, meta })).toEqual({ rows: [{ claimId: 'x' }], ...fresh });
+    expect(fromV1({ claims: [], party: { standing: { role: 'shop' }, groups: { finished: [] } }, meta })).toEqual({ rows: [], standing: { role: 'shop' }, groups: { finished: [] }, ...fresh });
+    expect(fromV1({ claim: { claimId: 'x', statusKey: 'settled' }, meta })).toEqual({ claimId: 'x', statusKey: 'settled', ...fresh });
+    expect(fromV1({ params: { params: { claims: {} }, schemeWallet: null, actions: ['settle'] }, meta })).toEqual({ params: { claims: {} }, schemeWallet: null, actions: ['settle'], ...fresh });
+    expect(fromV1({ party: { role: 'platform', balance: '1' }, meta })).toEqual({ role: 'platform', balance: '1', ...fresh });
+    expect(fromV1({ search: { hits: [] }, meta })).toEqual({ hits: [], ...fresh });
+    expect(fromV1({ order: { orderId: 'o', claimId: null, records: [] }, meta })).toEqual({ orderId: 'o', claimId: null, records: [], ...fresh });
+    expect(fromV1({ claim: {}, meta })).not.toHaveProperty('apiVersion');
+  });
+
+  it('reads a v1 rebuild as rebuilding, and another unavailable source as unreachable', () => {
+    const rebuilding = failureFrom(503, { error: { code: 'upstream_unavailable', message: 'The index is rebuilding.', details: { upstream: 'index', rebuilding: true } } });
+    expect(isRebuilding(rebuilding)).toBe(true);
+    expect(renderToString(<Banner error={rebuilding} />)).toContain('rebuilding its index');
+    const down = failureFrom(503, { error: { code: 'upstream_unavailable', message: 'Hedera is not answering.', details: { upstream: 'hedera_rpc' } } });
+    expect(isRebuilding(down)).toBe(false);
+    expect(renderToString(<Banner error={down} />)).toContain('cannot be reached');
   });
 });
