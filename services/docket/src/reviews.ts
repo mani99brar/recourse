@@ -6,7 +6,7 @@
 // the docket carries on. Each side goes to the agent id of the case's own platform or shop, by
 // address. Each (claim, side) is sent at most once; before a retry or a restart can resend, the
 // receipt of the transaction it last sent and the registry's own `NewFeedback` logs since its
-// first try are checked for it.
+// first try are checked for it, and a try cut off mid-send is given retrySeconds to show up.
 
 import type { Journal, Logger } from '@recourse/records';
 import { erc8004ReputationAbi } from '@recourse/shared';
@@ -85,12 +85,15 @@ export type ReviewJournal = Journal<ReviewRow>;
 export type { ReviewRow };
 
 interface SideState {
+  /** The last try has no recorded end: the run was cut off mid-send. */
   intent: boolean;
   tx: string | null;
-  /** The last transaction sent whose end is not recorded. */
+  /** The transaction the last try sent, when it has no recorded end. */
   broadcast: string | null;
   /** Time of the first intent: no review can have been sent before it. */
   since: number | null;
+  /** Time of the last intent. */
+  triedAt: number;
   skipped: boolean;
   attempts: number;
   retryAt: number;
@@ -130,7 +133,7 @@ export class ReviewWriter implements ReviewPort {
   private stateOf(claimId: Hex, side: Side): SideState {
     let s = this.states.get(this.key(claimId, side));
     if (s === undefined) {
-      s = { intent: false, tx: null, broadcast: null, since: null, skipped: false, attempts: 0, retryAt: 0 };
+      s = { intent: false, tx: null, broadcast: null, since: null, triedAt: 0, skipped: false, attempts: 0, retryAt: 0 };
       this.states.set(this.key(claimId, side), s);
     }
     return s;
@@ -141,6 +144,8 @@ export class ReviewWriter implements ReviewPort {
     if (row.phase === 'intent') {
       s.intent = true;
       s.since ??= row.at;
+      s.triedAt = row.at;
+      s.broadcast = null;
     } else if (row.phase === 'broadcast') s.broadcast = row.tx;
     else if (row.phase === 'sent') {
       s.intent = false;
@@ -253,10 +258,17 @@ export class ReviewWriter implements ReviewPort {
           feedbackURI: row.reasonCid ? `ipfs://${row.reasonCid}` : '',
           feedbackHash: doc.hash,
         };
-        // A previous try may have landed without being recorded: a receipt wait that timed out, or
-        // a run cut off mid-send.
-        if (s.broadcast !== null && (await this.chain.receipt(s.broadcast)) === 'success') {
-          this.write({ t: 'r', claimId, side, phase: 'sent', tx: s.broadcast, at: this.now() });
+        // The last try may have landed without being recorded: a receipt wait that timed out, or
+        // a run cut off mid-send. The relay's receipts and the registry logs both come from the
+        // mirror node, so not finding it yet may be lag: until retrySeconds after that try began,
+        // only its receipt is asked and nothing is sent.
+        const end = s.broadcast === null ? null : await this.chain.receipt(s.broadcast);
+        if (end === 'success') {
+          this.write({ t: 'r', claimId, side, phase: 'sent', tx: s.broadcast!, at: this.now() });
+          continue;
+        }
+        if (end === null && (s.intent || s.broadcast !== null) && this.now() < s.triedAt + this.cfg.retrySeconds) {
+          this.log.info('review_unconfirmed', { claimId, side, tx: s.broadcast ?? 'none' });
           continue;
         }
         if (s.since !== null) {

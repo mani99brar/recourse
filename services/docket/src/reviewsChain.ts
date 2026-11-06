@@ -3,7 +3,6 @@
 import { addressBook, erc8004IdentityAbi, erc8004ReputationAbi } from '@recourse/shared';
 import {
   BaseError,
-  ContractFunctionRevertedError,
   ExecutionRevertedError,
   TransactionReceiptNotFoundError,
   createPublicClient,
@@ -36,9 +35,13 @@ const EXISTING_MARGIN_S = 3600;
 /** Pages of registry logs read per lookup; a lookup that needs more fails rather than miss a review. */
 const EXISTING_MAX_PAGES = 50;
 
-/** The contract reverted, as against a request that failed (timeout, rate limit, HTTP error). */
+/**
+ * The node said the call reverted (JSON-RPC code 3, or an "execution reverted" message), as against
+ * a request that failed (timeout, rate limit, HTTP error, internal error). viem's
+ * ContractFunctionRevertedError is no proof: readContract also builds one from a bare -32603.
+ */
 function isRevert(error: unknown): boolean {
-  return error instanceof BaseError && error.walk((e) => e instanceof ContractFunctionRevertedError || e instanceof ExecutionRevertedError) !== null;
+  return error instanceof BaseError && error.walk((e) => e instanceof ExecutionRevertedError) !== null;
 }
 
 export function viemReviewChain(o: ViemReviewChainOptions): ReviewChain {

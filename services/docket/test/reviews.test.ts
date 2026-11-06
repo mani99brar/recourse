@@ -221,6 +221,36 @@ describe('ReviewWriter', () => {
     expect(chain.existingCalls).toHaveLength(0);
   });
 
+  it('after a restart mid-send, waits for a try it cannot see yet instead of sending again', async () => {
+    const chain = new FakeChain();
+    chain.mirrorBlind = true; // neither the relay nor the registry logs show the first tries yet
+    const dir = mkdtempSync(join(tmpdir(), 'reviews-'));
+    const j = Journal.open<ReviewRow>(join(dir, 'reviews.jsonl'));
+    // the run died waiting for the platform review's receipt, and before the shop review's hash came back
+    j.append({ t: 'r', claimId: cid(1), side: 'platform', phase: 'intent', at: NOV });
+    j.append({ t: 'r', claimId: cid(1), side: 'platform', phase: 'broadcast', tx: '0xfirst', at: NOV });
+    j.append({ t: 'r', claimId: cid(1), side: 'shop', phase: 'intent', at: NOV });
+    j.close();
+    const { w, clock } = writer(chain, dir);
+    const rows = [written(1, { outcome: 1 })];
+    clock.t = NOV + 10;
+    await w.process(rows);
+    expect(chain.sent).toHaveLength(0);
+    expect(w.statusOf(cid(1))).toMatchObject({ platform: { status: 'pending' }, shop: { status: 'pending' } });
+
+    chain.onChain.push({ agentId: 11n, hash: cid(9), txHash: '0xfirst' }); // the platform's tx shows up
+    clock.t += 60;
+    await w.process(rows);
+    expect(chain.sent).toHaveLength(0);
+    expect(w.statusOf(cid(1))).toMatchObject({ platform: { status: 'sent', tx: '0xfirst' }, shop: { status: 'pending' } });
+
+    clock.t = NOV + 601; // the shop's try never showed: it is sent again, once
+    await w.process(rows);
+    await w.process(rows);
+    expect(chain.sent.map((a) => a.agentId)).toEqual([22n]);
+    expect(chain.existingCalls).toEqual([{ agentId: 22n, since: NOV }]);
+  });
+
   it('asks the registry logs only from the first try on, and not at all for a side never sent', async () => {
     const chain = new FakeChain();
     chain.failSends = [new Error('transaction reverted')];
@@ -274,6 +304,13 @@ describe('viem review chain', () => {
     const account = privateKeyToAccount(`0x${'11'.repeat(32)}`);
     const reverting = custom({ request: async () => Promise.reject(Object.assign(new Error('execution reverted'), { code: 3, data: '0x' })) }, { retryCount: 0 });
     expect(await viemReviewChain({ account, transport: reverting, mirrorUrl: 'https://mirror.test' }).ownerOf(9n)).toBeNull();
+    // the testnet relay's answer for an id never minted: ERC721NonexistentToken(9)
+    const relayRevert = Object.assign(new Error('[Request ID: 1] execution reverted: CONTRACT_REVERT_EXECUTED'), { code: 3, data: `0x7e273289${(9).toString(16).padStart(64, '0')}` });
+    const unminted = custom({ request: async () => Promise.reject(relayRevert) }, { retryCount: 0 });
+    expect(await viemReviewChain({ account, transport: unminted, mirrorUrl: 'https://mirror.test' }).ownerOf(9n)).toBeNull();
+    // an internal error is no answer, though viem's readContract reports it as a revert
+    const internal = custom({ request: async () => Promise.reject(Object.assign(new Error('Internal error'), { code: -32603 })) }, { retryCount: 0 });
+    await expect(viemReviewChain({ account, transport: internal, mirrorUrl: 'https://mirror.test' }).ownerOf(9n)).rejects.toThrow(/Internal error/);
     const failing = custom({ request: async () => Promise.reject(new Error('request timed out')) }, { retryCount: 0 });
     const chain = viemReviewChain({ account, transport: failing, mirrorUrl: 'https://mirror.test' });
     await expect(chain.ownerOf(9n)).rejects.toThrow(/timed out/);
