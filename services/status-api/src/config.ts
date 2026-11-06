@@ -56,9 +56,11 @@ export interface Config {
   actionDeadlineMs: number;
   /**
    * How long a request waits on live chain reads, all of them together: past it a read is served
-   * its last good value (meta.stale) and an action's chain read fails as upstream_unavailable.
+   * its last good value (meta.stale).
    */
   readWaitMs: number;
+  /** How long one chain read of an action waits before it fails as upstream_unavailable; reads have no last good value to fall back on. */
+  actionReadWaitMs: number;
 }
 
 export function loadConfig(env: Env = process.env): Config {
@@ -88,6 +90,7 @@ export function loadConfig(env: Env = process.env): Config {
     },
   });
   const hedera = [v.HEDERA_RPC_URL_1, env.HEDERA_RPC_URL_2 ?? ''].filter((s) => s !== '');
+  const readWaitMs = positiveMs(env.READ_WAIT_MS, 3_000);
   return {
     mirrorUrl: v.HEDERA_MIRROR_URL.replace(/\/+$/, ''),
     hederaRpcUrls: hedera,
@@ -112,9 +115,11 @@ export function loadConfig(env: Env = process.env): Config {
     actionsPerMin: 30,
     actionBurst: 10,
     actionConcurrency: 4,
-    // How long an action may take in all, and how long it waits on one chain read; raise both for a slow relay.
+    // How long an action may take in all, how long a read waits before its last good values stand, and how
+    // long an action's chain read waits. For a slow relay raise the action pair; keep reads under the web's 15 s.
     actionDeadlineMs: positiveMs(env.ACTION_DEADLINE_MS, 12_000),
-    readWaitMs: positiveMs(env.READ_WAIT_MS, 3_000),
+    readWaitMs,
+    actionReadWaitMs: positiveMs(env.ACTION_READ_WAIT_MS, readWaitMs),
   };
 }
 

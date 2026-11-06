@@ -176,8 +176,8 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
   const cfg = svc.d.cfg;
   const buckets = new Buckets(cfg.actionsPerMin, cfg.actionBurst, opts.nowMs);
   const creditWaitMs = opts.creditWaitMs ?? CREDIT_WAIT_MS;
-  // Each chain read of an action waits cfg.readWaitMs at most, then fails as that chain's RPC unavailable.
-  const actionReads = opts.chain ? boundedReads(opts.chain, cfg.readWaitMs) : null;
+  // Each chain read of an action waits cfg.actionReadWaitMs at most, then fails as that chain's RPC unavailable.
+  const actionReads = opts.chain ? boundedReads(opts.chain, cfg.actionReadWaitMs) : null;
   let building = 0;
 
   // A read asks for the config lock when it starts, alongside its own reads; `degraded` and `stale`

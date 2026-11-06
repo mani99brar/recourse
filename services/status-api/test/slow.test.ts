@@ -45,7 +45,7 @@ async function boot(reader: Reader, chain: ActionReads | null = null) {
   ingest(store, sim);
   const now = built.reduce((m, b) => (b.now > m ? b.now : m), 0n);
   for (const s of ['hedera', 'arbitrum', 'hcs'] as const) store.status[s].indexedThrough = Number(now);
-  const h = harness({ store, now: Number(now), reader, deployments: { arbitrumChainId: 421_614 }, cfg: { readWaitMs: WAIT_MS, actionDeadlineMs: 10_000 } });
+  const h = harness({ store, now: Number(now), reader, deployments: { arbitrumChainId: 421_614 }, cfg: { readWaitMs: WAIT_MS, actionReadWaitMs: WAIT_MS, actionDeadlineMs: 10_000 } });
   const app = createApp(h.svc, { chain, creditWaitMs: WAIT_MS });
   const url = await new Promise<string>((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
