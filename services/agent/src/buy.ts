@@ -14,6 +14,8 @@
 //
 // Terms that change after the records were written end the order (`abandoned`); a new order with a
 // new nonce is the way forward, because the shown record of this one is already on the topic.
+// The ordered record states the offer that was shown and approved. A paid reply from the shop that
+// names a different offer is journaled (`offer_mismatch`) and ends the order before that record.
 
 import type { Address, Hex, LocalAccount } from 'viem';
 import { bytesToHex, hexToBytes } from 'viem';
@@ -67,7 +69,10 @@ export type AgentRow =
   | (At & { type: 'pay_attempt'; startedAt: number })
   | (At & { type: 'pay_signed'; txId: string; feePayer: string })
   | (At & { type: 'pay_dead'; txId: string; reason: string })
+  /** `offer` is what the shop's paid reply stated, kept as evidence; the ordered record never uses it. */
   | (At & { type: 'paid'; txId: string; source: 'settlement' | 'shop' | 'mirror'; offer: Omit<Attrs, 'price'> | null })
+  /** The shop's paid reply named an offer other than the one shown and approved. */
+  | (At & { type: 'offer_mismatch'; txId: string; keys: string[]; shown: Omit<Attrs, 'price'>; replied: Omit<Attrs, 'price'> })
   | (At & { type: 'pay_failed'; status: number; error: string })
   | (At & { type: 'abandoned'; reason: string })
   | (At & { type: 'done' })
@@ -142,6 +147,17 @@ function salt(): Hex {
 
 function lastOf<T extends AgentRow['type']>(rows: readonly AgentRow[], orderId: Hex, type: T): Extract<AgentRow, { type: T }> | undefined {
   return rows.filter((r) => r.type === type && 'orderId' in r && r.orderId === orderId).at(-1) as Extract<AgentRow, { type: T }> | undefined;
+}
+
+const OFFER_KEYS = ['brand', 'size', 'colour', 'quantity', 'merchant'] as const;
+
+/**
+ * The offer fields a shop's paid reply states differently from the offer that was shown. A field
+ * the reply leaves out is not a difference.
+ */
+export function offerDifferences(shown: Omit<Attrs, 'price'>, replied: Omit<Attrs, 'price'> | null | undefined): string[] {
+  if (!replied || typeof replied !== 'object') return [];
+  return OFFER_KEYS.filter((k) => typeof replied[k] === 'string' && replied[k] !== shown[k]);
 }
 
 /** The approval an order is waiting on, with what the buyer must sign; null when none is open. */
@@ -234,6 +250,12 @@ export class Buyer {
       if (id === except) continue;
       const d = this.last(id, 'draft');
       if (d?.day !== day) continue;
+      const paidProbe = this.last(id, 'probed');
+      // Money that moved counts even when the order ended afterwards (an offer mismatch).
+      if (paidProbe && this.last(id, 'paid')) {
+        sum += toMicroUsdcEquivalent(BigInt(paidProbe.terms.amount), paidProbe.terms.asset);
+        continue;
+      }
       const end = this.rowsOf(id).find((r) => r.type === 'refused' || r.type === 'abandoned' || (r.type === 'approved' && r.decision !== 'approved'));
       if (end) continue;
       const probed = this.last(id, 'probed');
@@ -396,12 +418,23 @@ export class Buyer {
     }
 
     if (!paid.txId) throw new Error('paid without a transaction id');
+    // The ordered record states only what was shown and approved. A paid reply naming another
+    // offer stops the order before that record: the shop's word never becomes the platform's.
+    const differs = offerDifferences(probed.offer, paid.offer);
+    if (differs.length > 0) {
+      if (!this.last(orderId, 'offer_mismatch')) {
+        this.write({ type: 'offer_mismatch', at: iso(), orderId, txId: paid.txId, keys: differs, shown: probed.offer, replied: paid.offer! });
+      }
+      this.deps.log?.error('offer_mismatch', { orderId, txId: paid.txId, keys: differs.join(',') });
+      this.write({ type: 'abandoned', at: iso(), orderId, reason: 'offer_mismatch' });
+      return { state: 'abandoned', orderId, reason: 'offer_mismatch' };
+    }
     await this.commit(
       orderId,
       RecordKind.Ordered,
       orderedDoc({
         orderId,
-        attrs: { ...(paid.offer ?? probed.offer), price: render(rendered.renderInput).shownAttrs.price! },
+        attrs: { ...probed.offer, price: render(rendered.renderInput).shownAttrs.price! },
         x402TxId: paid.txId,
         amount: probed.terms.amount,
         asset: probed.terms.asset,

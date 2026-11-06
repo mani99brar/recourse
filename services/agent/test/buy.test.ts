@@ -177,6 +177,49 @@ describe('terms that change', () => {
   });
 });
 
+describe('the shop reply after payment', () => {
+  /** Rewrites one field of the offer in the paid 200 body, keeping the headers (the settlement rides on them). */
+  function rewriteReplyOffer(field: string, value: string): typeof fetch {
+    return async (input, init) => {
+      const req = new Request(input, init);
+      const res = await fetch(req);
+      const paying = req.url.includes('/x402/orders/') && (req.headers.has('payment-signature') || req.headers.has('x-payment'));
+      if (!paying || res.status !== 200) return res;
+      const body = (await res.json()) as { offer?: Record<string, string> };
+      if (body.offer) body.offer[field] = value;
+      return new Response(JSON.stringify(body), { status: 200, headers: res.headers });
+    };
+  }
+
+  test('an offer in the reply that differs from the one shown stops the order before the ordered record', async () => {
+    w = await world();
+    const { buyer } = w.open({ fetchImpl: rewriteReplyOffer('size', 'XL') });
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'abandoned', orderId, reason: 'offer_mismatch' });
+    expect(w.fake.settled).toHaveLength(1);
+    const kinds = messages(w).filter((m) => m.orderId === orderId).map((m) => m.kind);
+    expect(kinds).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    const rows = readJournal<AgentRow>(join(w.dir, 'orders.jsonl')).rows.filter((r) => 'orderId' in r && r.orderId === orderId);
+    expect(rows.find((r) => r.type === 'offer_mismatch')).toMatchObject({ keys: ['size'], shown: { size: 'One size' }, replied: { size: 'XL' } });
+    expect(rows.find((r) => r.type === 'paid')).toMatchObject({ txId: w.fake.settled[0]!.txId });
+    // A fresh process on the same journal ends the same way and writes nothing more.
+    expect(await w.open().buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'offer_mismatch' });
+    expect(messages(w).filter((m) => m.orderId === orderId)).toHaveLength(3);
+    expect(w.fake.settled).toHaveLength(1);
+  });
+
+  test('the ordered record states the offer that was shown', async () => {
+    w = await world();
+    const { buyer } = w.open();
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    expect((await buyer.run(orderId)).state).toBe('done');
+    const msgs = messages(w).filter((m) => m.orderId === orderId);
+    const shown = await docAt(w, msgs.find((m) => m.kind === RecordKind.Shown)!.cid);
+    const ordered = await docAt(w, msgs.find((m) => m.kind === RecordKind.Ordered)!.cid);
+    expect(ordered.attrs).toEqual(shown.attrs);
+  });
+});
+
 describe('paid in HBAR', () => {
   test('the limits compare the micro-USDC equivalent; the records keep the tinybar amount', async () => {
     w = await world({ priceAsset: 'hbar' });
