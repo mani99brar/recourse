@@ -224,12 +224,15 @@ function add(r) {
 let state;
 async function readState() {
   const get = async (p) => {
+    let r;
     for (let i = 0; i < 4; i++) {
-      const r = await api.request('GET', p);
+      r = await api.request('GET', p);
       if (r.status === 200) return r.json;
       await sleep(4000);
     }
-    throw new Error(`GET ${p} did not answer 200`);
+    const e = new Error(`GET ${p} did not answer 200 (HTTP ${r.status}) in 4 tries`);
+    e.upstream = [0, 502, 503].includes(r.status);
+    throw e;
   };
   // The pages poll params themselves; this harness only needs the claims and parties.
   const params = (await get('/v1/params').catch(() => ({ params: null }))).params;
@@ -683,7 +686,13 @@ async function nextFlow(vp, account) {
 }
 
 async function main() {
-  await readState();
+  try {
+    await readState();
+  } catch (e) {
+    if (!e.upstream) throw e;
+    add({ path: 'UI (browser)', test: 'the web app in Chromium with an injected wallet', result: 'blocked', notes: [`not run: ${safeText(e)}; the status API could not serve the claims to test with`] });
+    return 0;
+  }
   let account = null;
   if (SEND) {
     account = await loadRoleSigner(o.as);

@@ -199,6 +199,8 @@ async function specChecks() {
 
 /** Upstream failures seen on the way (the proxy's 502 after its 15 s wait, the API's 503), for the summary. */
 const upstreamSeen = [];
+/** HTTP statuses that mean the status API or one of its sources did not answer. */
+const UPSTREAM_DOWN = [0, 502, 503];
 
 /** A read discovery depends on, tried up to four times through upstream outages. */
 async function getRetry(path, tries = 4) {
@@ -216,6 +218,10 @@ async function getRetry(path, tries = 4) {
 async function discover() {
   const p = await getRetry('/v1/params', 8);
   const c = await getRetry('/v1/claims');
+  if (UPSTREAM_DOWN.includes(c.status)) {
+    res.add({ test: 'discovery: /v1/claims did not answer in 4 tries', path: 'GET /v1/claims', http: c.status, ms: c.ms, result: 'blocked', notes: ['the status API could not serve reads (an upstream down): the reads and actions were not run'] });
+    return false;
+  }
   if (c.status !== 200) throw new Error(`claims ${c.status}: the API is not serving reads`);
   if (p.status !== 200) {
     // The rest still runs: chain ids are fixed, and the address checks on built answers are skipped.
@@ -239,6 +245,7 @@ async function discover() {
     test: 'discovery from the API', path: 'GET /v1/params + /v1/claims', result: 'pass',
     data: { claims: ctx.claims.map((x) => `${x.claimId.slice(0, 10)} ${x.statusKey}`), addresses: { claims: ctx.params.addresses.claims, vault: ctx.params.addresses.vault, recourseCase: ctx.params.addresses.recourseCase }, credit },
   });
+  return true;
 }
 
 // ---- reads ----
@@ -682,6 +689,10 @@ async function selftest() {
   if (r0.status !== 200 || !r0.json) throw new Error(`GET /v1/openapi.json answered ${r0.status}`);
   spec = new Spec(r0.json);
   const list = await getRetry('/v1/claims');
+  if (UPSTREAM_DOWN.includes(list.status)) {
+    res.add({ test: 'selftest: /v1/claims did not answer in 4 tries', path: 'selftest GET /v1/claims', http: list.status, result: 'blocked', notes: ['no real answer to test the checks with (an upstream down)'] });
+    return 0;
+  }
   if (list.status !== 200 || !list.json?.claims?.length) throw new Error(`claims ${list.status}: no claim to take an answer from`);
   const id = list.json.claims[0].claimId;
   const detail = await getRetry(`/v1/claims/${id}`);
@@ -809,7 +820,7 @@ async function main() {
   if (o.wait) return wait();
   if (o.send) return send();
   await specChecks();
-  await discover();
+  if (!(await discover())) return res.rows.some((r) => r.result === 'fail') ? 1 : 0;
   if (only.has('reads')) await reads();
   if (only.has('actions')) await actions();
   if (only.has('shop')) await shop();

@@ -62,8 +62,8 @@ enabled() { # enabled <group>: on by its flag (send, restarts, suites) and by --
 
 # row <path> <result> <test> [note] [tx hashes]
 row() {
-  jq -c -n --arg path "$1" --arg result "$2" --arg test "$3" --arg note "${4:-}" --arg tx "${5:-}" \
-    '{t: (now | todate), suite: "run", path: $path, result: $result, test: $test}
+  jq -c -n --arg t "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" --arg path "$1" --arg result "$2" --arg test "$3" --arg note "${4:-}" --arg tx "${5:-}" \
+    '{t: $t, suite: "run", path: $path, result: $result, test: $test}
      + (if $note == "" then {} else {notes: [$note]} end) + (if $tx == "" then {} else {txHash: $tx} end)' >>"$RUNLOG"
   printf 'run: %-8s %s: %s%s%s\n' "$2" "$1" "$3" "${4:+ ($4)}" "${5:+ tx $5}" >&2
 }
@@ -124,21 +124,21 @@ api_group() { # api_group <test name> [api-agent args]
   node "$HERE/api-agent.mjs" "$@" >"$RAW/$name.out" 2>"$RAW/$name.err" || rc=$?
   # Exit 1 with rows is a failed check (in the rows); a run that stopped early says so on its last line.
   if grep -q '^api-agent: ' "$RAW/$name.err"; then
-    row "api-agent.mjs $*" fail "api-agent stopped early" "$(grep '^api-agent: ' "$RAW/$name.err" | tail -1 | cut -c1-300)"
+    row "api-agent.mjs${*:+ $*}" fail "api-agent stopped early" "$(grep '^api-agent: ' "$RAW/$name.err" | tail -1 | cut -c1-300)"
   elif [ "$rc" -gt 1 ]; then
-    row "api-agent.mjs $*" fail "api-agent exit $rc" "$(last_line "$RAW/$name.err")"
+    row "api-agent.mjs${*:+ $*}" fail "api-agent exit $rc" "$(last_line "$RAW/$name.err")"
   fi
 }
 
 ui_group() { # ui_group <name> [ui-wallet args]: one browser run under the lock
   local name=$1 rc=0; shift
   if ! mem_ok 1200; then
-    row "UI (browser) $*" blocked "not run: ${MEM_SEEN} MB available, a browser needs 1200"
+    row "UI (browser)${*:+ $*}" blocked "not run: ${MEM_SEEN} MB available, a browser needs 1200"
     return 1
   fi
   flock -w 1800 "$LOCK" node "$HERE/ui-wallet.mjs" "$@" >"$RAW/$name.out" 2>"$RAW/$name.err" || rc=$?
   if grep -q '^ui-wallet: ' "$RAW/$name.err"; then
-    row "ui-wallet.mjs $*" fail "ui-wallet stopped early" "$(grep '^ui-wallet: ' "$RAW/$name.err" | tail -1 | cut -c1-300)"
+    row "ui-wallet.mjs${*:+ $*}" fail "ui-wallet stopped early" "$(grep '^ui-wallet: ' "$RAW/$name.err" | tail -1 | cut -c1-300)"
     return 1
   fi
   return "$rc"
