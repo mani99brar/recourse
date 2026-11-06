@@ -16,6 +16,7 @@ export * from './ids.js';
 export * from './hashing.js';
 export * from './cid.js';
 export * from './recordMsg.js';
+export * from './signatures.js';
 export * from './codec.js';
 export * from './faultRule.js';
 export * from './settle.js';
