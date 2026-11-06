@@ -45,6 +45,7 @@ import {
   addressBook,
   erc8004IdentityAbi,
   parseParties,
+  partyWithRole,
   priceAssetIdOf,
   priceAssetOf,
   type Party,
@@ -344,10 +345,11 @@ async function main(): Promise<number> {
 
   // --- the selector guard: the running services must name their own party first ---
   const adding = new Set(identities.map((i) => i.role));
-  const unset = [...adding].filter((role) => parties.some((p) => p.role === role) && !env[PARTY_SELECTORS[role]]);
+  // Set, and naming a party of that role already in the map (not a mistyped address the services would meet at restart).
+  const unset = [...adding].filter((role) => parties.some((p) => p.role === role) && !partyWithRole(parties, role, env[PARTY_SELECTORS[role]] ?? ''));
   for (const role of unset) {
     const first = parties.find((p) => p.role === role)!;
-    console.log(`guard ${PARTY_SELECTORS[role]} is not set: add ${PARTY_SELECTORS[role]}=${first.evmAddress} (${first.displayName}) to recourse.env before --send, so the running services keep their own ${role}`);
+    console.log(`guard ${PARTY_SELECTORS[role]} names no ${role} party of the party map: add ${PARTY_SELECTORS[role]}=${first.evmAddress} (${first.displayName}) to recourse.env before --send, so the running services keep their own ${role}`);
   }
   if (!send) {
     console.log('dry run complete; rerun with --send to send');

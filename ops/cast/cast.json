@@ -162,10 +162,11 @@
       "sku": "jacket-navy-m",
       "fault": null,
       "through": "pack",
+      "shopMode": "port",
       "asked": { "brand": "Northwind", "size": "M", "colour": "Navy", "price": "2.00" },
       "arrived": null,
       "outcome": "awaiting-approval",
-      "shows": "A 3 USDC order above Tallyhouse's 1 USDC spend limit waits for the buyer: orders.sh approve tallyhouse-kestrel-approval signs it (pnpm --filter @recourse/agent approve <id> --yes), then a rerun pays and the shop packs. No claim."
+      "shows": "A 3 USDC order above Tallyhouse's 1 USDC spend limit waits for the buyer: orders.sh approve tallyhouse-kestrel-approval signs it (pnpm --filter @recourse/agent approve <id> --yes) and pays, then the shop packs. Kestrel runs as its own process on its registered port for this order, since the payment comes on a later run to the URL the agent journaled at the first 402. No claim."
     },
     {
       "id": "wren-fernhill-no-claim",

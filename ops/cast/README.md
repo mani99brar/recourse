@@ -46,7 +46,7 @@ The fault rule compares six attributes across the order's records: brand, size, 
 |---|---|---|
 | `wren-kestrel-payout` | Wren, Kestrel, `shell-navy-m`, `--fault ordered-size=S` | A claim nobody contests. The pre-check answers 1 (agent company) at step 2a-ii. After the contest window the claim closes, the shop is paid from Wren's deposit, and the shop withdraws its credit. |
 | `wren-kestrel-neither` | Wren, Kestrel, `shell-navy-l` | The buyer asked for M. The screen showed L, flagged the change, and Wren approved it, so L is what was packed and received. The pre-check answers neither (step 11), and nothing is paid. |
-| `tallyhouse-kestrel-approval` | Tallyhouse, Kestrel, `jacket-navy-m` (3 USDC) | The order waits for the buyer, then `orders.sh approve tallyhouse-kestrel-approval --send` signs it, pays, and the shop packs. No claim. |
+| `tallyhouse-kestrel-approval` | Tallyhouse, Kestrel, `jacket-navy-m` (3 USDC) | The order waits for the buyer, then `orders.sh approve tallyhouse-kestrel-approval --send` signs it, pays, and the shop packs. No claim. The agent pays to the shop URL it saved at the first 402, so for this order Kestrel runs as its own process (the shop service's code with Kestrel's settings) on its registered port, 8731, for as long as each command runs. |
 | `wren-fernhill-no-claim` | Wren, Fernhill, `tulips-white-10` | Paid and packed, with no claim. A late delivery is refunded by the shop. |
 | `lumen-quillon-calls` | Lumen, Quillon, `forecast-100` | Paid with x402. The shop records the plan it delivered. No claim. |
 

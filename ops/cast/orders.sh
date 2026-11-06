@@ -17,6 +17,9 @@
 # ~/.local/state/recourse/cast): <shop>/shop is a shop's journals, <company>/agent an agent's, and
 # orders/<order id>.order the order id live-order printed, so a rerun carries the order on with --order.
 #
+# An order with "shopMode": "port" (the approval order) runs without --local-shop, against its shop
+# started as its own process on its registered port for the length of the command (see with_shop).
+#
 # live-order states what the buyer asked for and what arrived (asked Northwind, M, Navy, up to 2.00;
 # arrived the staged fault size, else L). An order whose planned asked or arrived differs would get
 # records that misstate it, so --send skips it until live-order takes them from the order.
@@ -98,18 +101,57 @@ states_honestly() { # live-order's fixed asked and arrived attributes are this o
   [ "$(jq -r '.arrived // empty' <<<"$o")" = "" ] || [ "$(jq -cS .arrived <<<"$o")" = "$(jq -cS --arg s "$size" '{brand:"Northwind",size:$s,colour:"Navy"}' <<<'{}')" ] || return 1
 }
 
+# with_shop <order json> <command...>: the command while the order's shop runs as its own process
+# (the shop service's code with the shop's env) on the port its registration names. For an order
+# with shopMode "port": the agent journals the shop URL of its first 402 and pays to it, so an order
+# paid on a later run (after a buyer's approval) needs the shop at the same URL then, which an
+# in-process shop on a random port is not. Stops the shop afterwards; the shop's journals stay in
+# its state folder.
+SHOP_UP=0
+with_shop() {
+  local o=$1; shift
+  if [ "$SHOP_UP" = 1 ]; then "$@"; return $?; fi
+  local shop port pid code=0 _
+  shop=$(jq -r .shop <<<"$o"); port=$(jq -r --arg s "$shop" '.shops[] | select(.id == $s) | .port' "$CAST")
+  local health=http://127.0.0.1:$port/health
+  if curl -fs -m 2 "$health" >/dev/null 2>&1; then die "port $port already answers: is a $shop shop running already?"; fi
+  local -a assign=()
+  mapfile -t assign < <(env_for "$o")
+  (cd "$ROOT/services/shop" && exec env -u SHOP_PUBLIC_URL -u SHOP_BASE_URL "${assign[@]}" SHOP_PORT="$port" node --import tsx src/main.ts) >>"$STATE/$shop/shop.log" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 60); do curl -fs -m 2 "$health" >/dev/null 2>&1 && break; sleep 1; done
+  if ! curl -fs -m 2 "$health" >/dev/null 2>&1; then
+    kill "$pid" 2>/dev/null || true
+    die "the $shop shop did not answer on port $port; see $STATE/$shop/shop.log"
+  fi
+  echo "  $shop shop on port $port (pid $pid)"
+  # live-order reads a running shop's journals only from a folder that shop has written.
+  [ -f "$STATE/$shop/shop/journal.jsonl" ] || : > "$STATE/$shop/shop/journal.jsonl"
+  SHOP_UP=1
+  set +e; "$@"; code=$?; set -e
+  SHOP_UP=0
+  kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  return "$code"
+}
+
 live_order() { # live_order <order json> [extra args]
   local o=$1; shift
-  local id sku through fault saved log
+  local id sku through fault saved log mode
   id=$(jq -r .id <<<"$o"); sku=$(jq -r .sku <<<"$o"); through=$(jq -r .through <<<"$o"); fault=$(jq -r '.fault // empty' <<<"$o")
+  mode=$(jq -r '.shopMode // "local"' <<<"$o")
   mkdir -p "$STATE/orders"; saved=$STATE/orders/$id.order; log=$STATE/orders/$id.log
-  local -a args=(--local-shop --sku "$sku" --through "$through")
+  local -a args=(--sku "$sku" --through "$through")
+  [ "$mode" = port ] || args=(--local-shop "${args[@]}")
   [ -z "$fault" ] || args+=(--fault "$fault")
   [ ! -s "$saved" ] || args+=(--order "$(cat "$saved")")
   [ "$SEND" = 0 ] || args+=(--send)
   echo "  live-order ${args[*]}"
   set +e
-  run_with "$o" pnpm --silent --filter @recourse/agent live-order "${args[@]}" "$@" 2>&1 | tee -a "$log"
+  if [ "$mode" = port ]; then
+    with_shop "$o" run_with "$o" pnpm --silent --filter @recourse/agent live-order "${args[@]}" "$@" 2>&1 | tee -a "$log"
+  else
+    run_with "$o" pnpm --silent --filter @recourse/agent live-order "${args[@]}" "$@" 2>&1 | tee -a "$log"
+  fi
   local code=${PIPESTATUS[0]}
   set -e
   local got; got=$(grep -o '^order 0x[0-9a-f]\{64\}' "$log" | tail -1 | awk '{print $2}' || true)
@@ -125,10 +167,14 @@ if [ "$CMD" = approve ]; then
   aid=$([ -f "$log" ] && grep -o 'approve [0-9a-f]\{16\} --yes' "$log" | tail -1 | awk '{print $2}' || true)
   [ -n "$aid" ] || die "no approval waiting for ${NAMES[0]}: run orders.sh --send ${NAMES[0]} first"
   if [ "$SEND" = 0 ]; then run_with "$o" pnpm --silent --filter @recourse/agent approve "$aid"; exit $?; fi
-  # approve signs and journals the decision, then tries to pay through the shop's registered
-  # endpoint, where no cast shop listens; the payment is made by the live-order rerun below.
-  run_with "$o" pnpm --silent --filter @recourse/agent approve "$aid" --yes || echo "  (approve's own payment attempt failed; the decision is journaled, live-order pays)"
-  live_order "$o"
+  [ "$(jq -r '.shopMode // "local"' <<<"$o")" = port ] || die "${NAMES[0]} ran on an in-process shop, which is gone: its payment URL cannot be reached again"
+  # approve signs and journals the decision and pays the shop at the URL of the first 402; the
+  # live-order rerun then carries the order on to its last step.
+  approve_and_finish() {
+    run_with "$o" pnpm --silent --filter @recourse/agent approve "$aid" --yes || return $?
+    live_order "$o"
+  }
+  with_shop "$o" approve_and_finish
   exit $?
 fi
 
@@ -153,7 +199,7 @@ for name in "${NAMES[@]}"; do
   fi
   if ! ready "$o"; then
     if [ "$SEND" = 0 ]; then
-      echo "  would run: live-order --local-shop --sku $(jq -r .sku <<<"$o") --through $(jq -r .through <<<"$o")$(jq -r 'if .fault then " --fault \(.fault)" else "" end' <<<"$o")"
+      echo "  would run: live-order $(jq -r 'if .shopMode == "port" then "(shop on its port \(.shop))" else "--local-shop" end' <<<"$o") --sku $(jq -r .sku <<<"$o") --through $(jq -r .through <<<"$o")$(jq -r 'if .fault then " --fault \(.fault)" else "" end' <<<"$o")"
       echo "  with: $(env_for "$o" | grep -v '_ADDRESS=$' | tr '\n' ' ')"
     else failed+=("$name"); fi
     continue
