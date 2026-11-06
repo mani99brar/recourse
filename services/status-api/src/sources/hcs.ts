@@ -26,18 +26,35 @@ export interface HcsOptions {
   maxForeign?: number;
 }
 
-/** Messages in the store from known non-writers, counted once per store and then kept up to date. */
+/**
+ * Messages in the store from known non-writers: counted over the whole store once the parties are
+ * known, then kept up to date. Absent while the parties are unknown, since messages kept then
+ * could not be told apart and the count would start low.
+ */
 const foreignKept = new WeakMap<Store, number>();
+
+/** The stored foreign-message count, counted now if needed; null while the parties are unknown. */
+function foreignCount(store: Store, isWriter: (kind: number, payer: string) => boolean | null): number | null {
+  const known = foreignKept.get(store);
+  if (known !== undefined) return known;
+  let n = 0;
+  for (const r of store.hcs.values()) {
+    const w = isWriter(r.kind, r.payer);
+    if (w === null) return null;
+    if (w === false) n++;
+  }
+  foreignKept.set(store, n);
+  return n;
+}
 
 export async function pollHcs(store: Store, d: MirrorDeps, topic: string, opts: HcsOptions = {}): Promise<void> {
   const st = store.status.hcs;
   const isWriter = opts.isWriter;
   const maxForeign = opts.maxForeign ?? MAX_FOREIGN_RECORDS;
-  if (isWriter && !foreignKept.has(store)) {
-    let n = 0;
-    for (const r of store.hcs.values()) if (isWriter(r.kind, r.payer) === false) n++;
-    foreignKept.set(store, n);
-  }
+  const counted = isWriter ? foreignCount(store, isWriter) : null;
+  // Within this poll; written back only when every message's payer could be judged.
+  let kept = counted ?? 0;
+  let unknown = counted === null;
   const head = await mirrorHeadSeconds(d);
   try {
     // gte:<seq+1>, not gt:<seq>: the mirror refuses a sequencenumber filter of 0 with a 400
@@ -56,11 +73,13 @@ export async function pollHcs(store: Store, d: MirrorDeps, topic: string, opts: 
         const r = decodeRecordMsg(bytes);
         // Anyone can post to the topic: messages from payers that are not writers of their kind
         // are only ever shown as "wrong payer", so past a cap they are counted and dropped.
-        const foreign = r.ok && isWriter !== undefined && isWriter(r.value.kind, m.payer_account_id) === false;
-        if (foreign && (foreignKept.get(store) ?? 0) >= maxForeign) {
+        const writer = r.ok && isWriter !== undefined ? isWriter(r.value.kind, m.payer_account_id) : true;
+        if (writer === null) unknown = true;
+        const foreign = writer === false;
+        if (foreign && kept >= maxForeign) {
           st.foreignDropped++;
         } else if (r.ok) {
-          if (foreign) foreignKept.set(store, (foreignKept.get(store) ?? 0) + 1);
+          if (foreign) kept++;
           records.push({
             topic,
             seq: m.sequence_number,
@@ -89,5 +108,10 @@ export async function pollHcs(store: Store, d: MirrorDeps, topic: string, opts: 
     st.failing = true;
     st.lastError = safeError(e);
     st.lastErrorAt = d.nowS();
+  } finally {
+    if (isWriter) {
+      if (unknown) foreignKept.delete(store);
+      else foreignKept.set(store, kept);
+    }
   }
 }

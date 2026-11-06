@@ -200,6 +200,30 @@ describe('record checks', () => {
     expect(open.hcs.size).toBe(6);
   });
 
+  it('counts the foreign messages kept while the parties were unknown once they are known', async () => {
+    const m = new FakeMirror();
+    const orderId = ('0x' + '5b'.repeat(32)) as `0x${string}`;
+    const bytes = docFor(0, orderId);
+    const hash = recordHash(bytes);
+    const at = (seq: number, payer: string) => ({ seq, ts: `1700000000.00000000${seq}`, payer, body: encodeRecordMsg({ cid: cidOfHash(hash).toString(), hash, kind: 0, orderId }) });
+    m.topics.set(TOPIC, [at(1, '0.0.9999'), at(2, '0.0.9999'), at(3, '0.0.9999')]);
+    const deps = { fetch: m.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 };
+    const store = new Store();
+    let known = false;
+    const isWriter = (_k: number, payer: string) => (known ? payer === AGENT_ACCOUNT : null);
+    // The party map is not loaded yet: every message is kept, none can be judged.
+    await pollHcs(store, deps, TOPIC, { isWriter, maxForeign: 3 });
+    expect(store.hcs.size).toBe(3);
+    expect(store.status.hcs.foreignDropped).toBe(0);
+    // Once it is, the three kept earlier fill the cap: the next stranger's message is dropped.
+    known = true;
+    m.topics.get(TOPIC)!.push(at(4, '0.0.9999'), at(5, AGENT_ACCOUNT));
+    await pollHcs(store, deps, TOPIC, { isWriter, maxForeign: 3 });
+    expect(store.status.hcs.foreignDropped).toBe(1);
+    expect(store.hcs.size).toBe(4);
+    expect([...store.hcs.values()].some((r) => r.payer === AGENT_ACCOUNT)).toBe(true);
+  });
+
   it('reports unknown (null), never false, when the gateway cannot be reached', async () => {
     const s = await setup();
     s.h.svc.d.docs['opts'].fetch = async () => {
