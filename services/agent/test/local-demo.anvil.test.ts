@@ -40,7 +40,7 @@ describe('local demo order', () => {
 
     // Another process reads the topic through the mirror port and documents through the gateway path.
     const mirror = result.env.HEDERA_MIRROR_URL!;
-    const page = (await (await fetch(`${mirror}/api/v1/topics/${DEMO_TOPIC}/messages?sequencenumber=gt:0&order=asc&limit=100`)).json()) as {
+    const page = (await (await fetch(`${mirror}/api/v1/topics/${DEMO_TOPIC}/messages?sequencenumber=gte:1&order=asc&limit=100`)).json()) as {
       messages: { sequence_number: number; payer_account_id: string }[];
     };
     expect(page.messages.length).toBeGreaterThanOrEqual(6);

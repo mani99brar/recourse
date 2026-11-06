@@ -65,8 +65,13 @@ export class FakeMirror {
     m = /^\/api\/v1\/topics\/([\d.]+)\/messages$/.exec(u.pathname);
     if (m) {
       const all = this.topics.get(m[1]!) ?? [];
-      const gt = Number((u.searchParams.get('sequencenumber') ?? 'gt:0').split(':')[1]);
-      const matching = all.filter((x) => x.seq > gt);
+      // Like the testnet mirror: gt or gte with a value of at least 1; 0 answers 400.
+      const f = /^(gt|gte):(\d+)$/.exec(u.searchParams.get('sequencenumber') ?? 'gte:1');
+      if (!f || Number(f[2]) < 1) {
+        return { ok: false, status: 400, json: async () => ({ _status: { messages: [{ message: 'Invalid parameter: sequencenumber' }] } }), arrayBuffer: async () => new ArrayBuffer(0) };
+      }
+      const from = f[1] === 'gt' ? Number(f[2]) + 1 : Number(f[2]);
+      const matching = all.filter((x) => x.seq >= from);
       const page = matching.slice(skip, skip + this.pageSize);
       return ok({
         messages: page.map((x) => ({

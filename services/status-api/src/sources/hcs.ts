@@ -19,8 +19,10 @@ export async function pollHcs(store: Store, d: MirrorDeps, topic: string): Promi
   const st = store.status.hcs;
   const head = await mirrorHeadSeconds(d);
   try {
+    // gte:<seq+1>, not gt:<seq>: the mirror refuses a sequencenumber filter of 0 with a 400
+    // ("Invalid parameter: sequencenumber"), and a fresh store starts at seq 0.
     let url: string | null =
-      `${d.baseUrl}/api/v1/topics/${topic}/messages?order=asc&limit=100&sequencenumber=gt:${store.cursors.hcs.seq}`;
+      `${d.baseUrl}/api/v1/topics/${topic}/messages?order=asc&limit=100&sequencenumber=gte:${store.cursors.hcs.seq + 1}`;
     let pages = 0;
     let through = false;
     while (url !== null) {

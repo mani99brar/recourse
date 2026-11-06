@@ -137,6 +137,9 @@ export class MemoryLedger {
       const filter = /^(gt|gte|lt|lte|eq)?:?(\d+)$/.exec(url.searchParams.get('sequencenumber') ?? 'gte:1');
       const op = filter?.[1] ?? 'eq';
       const n = Number(filter?.[2] ?? '1');
+      // The testnet mirror refuses any sequencenumber filter whose value is below 1 (gt:0, gte:0,
+      // lte:0 and a bare 0 all answer 400), so a reader that starts from gt:0 never gets a page.
+      if (!filter || n < 1) return json(400, { _status: { messages: [{ message: 'Invalid parameter: sequencenumber' }] } });
       const keep = (seq: number) =>
         op === 'gt' ? seq > n : op === 'gte' ? seq >= n : op === 'lt' ? seq < n : op === 'lte' ? seq <= n : seq === n;
       const limit = Number(url.searchParams.get('limit') ?? '25');
