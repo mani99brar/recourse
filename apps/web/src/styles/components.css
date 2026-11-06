@@ -910,3 +910,11 @@ main > h2 {
   font-size: clamp(26px, 2.7vw, 40px);
   margin-bottom: 12px;
 }
+
+/* ids and addresses keep their case inside the uppercase heads: wrap them in .mono */
+h1 .mono,
+.eyebrow .mono,
+.page-head .mono {
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
