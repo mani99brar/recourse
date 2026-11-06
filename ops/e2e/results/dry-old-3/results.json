@@ -29,7 +29,7 @@
       "hedera": 296,
       "arbitrum": 421614
     },
-    "recordsTopic": "0.0.11335218",
+    "recordsTopic": null,
     "topicFrom": "HCS_RECORDS_TOPIC_ID"
   },
   "counts": {

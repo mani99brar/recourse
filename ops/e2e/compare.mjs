@@ -7,7 +7,8 @@
 // Rows are matched on suite, path and test with claim and order ids, statuses in parentheses and
 // numbers (amounts, counts, times) taken out, so a check of "the claim" matches across deployments
 // whose claims differ, and an ops row matches when its counts have moved on. A row
-// with no partner is listed as only in A or only in B. Exit 1 when a row passed in only one run.
+// with no partner is listed as only in A or only in B; one that passed there is also a row that passed in only
+// one run (it was not run, or not reached, in the other). Exit 1 when a row passed in only one run.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -52,13 +53,17 @@ for (const k of keys) {
   const r = ka.get(k) ?? kb.get(k);
   lines.push(`| ${cell(r.path)} | ${cell(r.test)} | ${cell(res(ka.get(k)))} | ${cell(res(kb.get(k)))} |`);
 }
-const onlyOne = keys.filter((k) => ka.has(k) && kb.has(k) && (ka.get(k).result === 'pass') !== (kb.get(k).result === 'pass'));
+const passed = (m, k) => m.get(k)?.result === 'pass';
+const onlyOne = keys.filter((k) => passed(ka, k) !== passed(kb, k));
 const onlyA = keys.filter((k) => ka.has(k) && !kb.has(k));
 const onlyB = keys.filter((k) => !ka.has(k) && kb.has(k));
 const list = (title, ks, f) => [`## ${title} (${ks.length})`, '', ...(ks.length ? ks.map(f) : ['none']), ''];
 lines.push(
   '',
-  ...list('Passed in only one run', onlyOne, (k) => `- ${named(kb.get(k))}: A ${ka.get(k).result}, B ${kb.get(k).result}${(ka.get(k).result === 'pass' ? kb : ka).get(k).note ? ` (${(ka.get(k).result === 'pass' ? kb : ka).get(k).note})` : ''}`),
+  ...list('Passed in only one run', onlyOne, (k) => {
+    const other = (passed(ka, k) ? kb : ka).get(k);
+    return `- ${named(ka.get(k) ?? kb.get(k))}: A ${ka.get(k)?.result ?? 'not in this run'}, B ${kb.get(k)?.result ?? 'not in this run'}${other?.note ? ` (${other.note})` : ''}`;
+  }),
   ...list(`Only in A (${a})`, onlyA, (k) => `- ${named(ka.get(k))}: ${ka.get(k).result}`),
   ...list(`Only in B (${b})`, onlyB, (k) => `- ${named(kb.get(k))}: ${kb.get(k).result}`),
 );

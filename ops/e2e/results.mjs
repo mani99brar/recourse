@@ -21,6 +21,8 @@ if (!existsSync(raw)) throw new Error(`no run ${label}: ${raw} does not exist`);
 const json = (f, fallback) => (existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : fallback);
 const meta = json(join(raw, 'meta.json'), {});
 const deployments = json(join(raw, 'deployments.json'), null);
+// A topic set in the environment is not copied into the table (state.mjs no longer writes it; older runs did).
+if (deployments?.topicFrom === 'HCS_RECORDS_TOPIC_ID') deployments.recordsTopic = null;
 
 const rows = [];
 for (const f of readdirSync(raw).filter((n) => n.endsWith('.jsonl')).sort()) {
