@@ -2,11 +2,17 @@
 // claim's refs name if it passes every check, else the earliest message the topic index holds for
 // the order and kind that passes them. A slot ends as held, absent or rejected. A failure to look
 // at the mirror (lag, errors, a message not yet visible) is a retry and is never turned into an
-// absence. A record document that cannot be read is a retry only for a bounded time: once the
-// claim is `docWaitS` past its filing (and the document has failed for at least DOC_RETRY_MIN_MS),
-// it is rejected as doc_unavailable, so a writer cannot hold a claim open by pointing at a document
-// nobody can fetch. A document over RECORD_DOC_MAX_BYTES is rejected at once (its size is fixed by
-// its hash), so the court evidence always has room for every held record.
+// absence.
+//
+// A record document that cannot be read is a retry only for a bounded time. It is rejected as
+// doc_unavailable once the claim is `docWaitS` past its filing, the document has failed on every
+// read for at least DOC_RETRY_MIN_MS, and the store has just served one of this service's own
+// documents (so the store works and the document is what is missing). Every candidate of a slot is
+// read on every pass, even behind one that is still waited for, so all their waits run at once:
+// however many unreadable messages a writer posts, the slot settles by the same time. While the
+// store serves nothing, no document is held against its writer and the claim waits (and alerts).
+// A document over RECORD_DOC_MAX_BYTES is rejected at once (its size is fixed by its hash), so the
+// court evidence always has room for every held record.
 
 import { TransientError, tsSeconds, type MirrorClient } from '@recourse/keeper';
 import {
@@ -24,7 +30,7 @@ import {
 } from '@recourse/shared';
 import type { Hex } from 'viem';
 import type { Clock } from './clock.js';
-import { DocTooLarge, type DocStore } from './docs.js';
+import { DocTooLarge, StoreBusy, type DocStore } from './docs.js';
 import type { Reason, SlotOutcome } from './slots.js';
 import { toIndexed, type IndexedMessage, type TopicIndex } from './topicIndex.js';
 
@@ -58,10 +64,17 @@ export interface ProofPorts {
    * same bytes makes the mismatch final. Kept by the caller for the life of the claim.
    */
   suspects: Map<string, Hex>;
-  /** First time (clock ms) each document, by CID, failed to read. Kept by the caller for the life of the claim. */
+  /**
+   * First time (clock ms) each document, by CID, failed to read, cleared when it reads. Kept by the
+   * caller for the life of the claim.
+   */
   unread: Map<string, number>;
+  /** Told each time `unread` gains (a time) or loses (null) a document, so the caller can journal it. */
+  noteUnread?: (cid: string, at: number | null) => void;
   /** Seconds after the filing from which a document that still cannot be read is rejected (doc_unavailable). */
   docWaitS: number;
+  /** Whether the store is serving documents right now (StoreHealth); shared by every claim. */
+  health: { serving(): Promise<boolean> };
 }
 
 /** No payer could be found for a message from any of the three sources. */
@@ -102,15 +115,24 @@ async function messageAt(seq: bigint, ports: ProofPorts): Promise<IndexedMessage
 }
 
 /**
- * A document that could not be read: pending until the claim is `docWaitS` past its filing and the
- * document has failed for DOC_RETRY_MIN_MS, then rejected as doc_unavailable.
+ * A document that could not be read: pending until the claim is `docWaitS` past its filing, the
+ * document has failed for DOC_RETRY_MIN_MS and the store is shown to serve documents; then
+ * rejected as doc_unavailable.
  */
-function unreadable(cid: string, why: string, known: Omit<Rejection, 'ok' | 'reason'>, claim: ProofClaim, ports: ProofPorts): Verdict {
+async function unreadable(cid: string, why: string, known: Omit<Rejection, 'ok' | 'reason'>, claim: ProofClaim, ports: ProofPorts): Promise<Verdict> {
   const now = ports.clock.now();
-  const first = ports.unread.get(cid) ?? now;
-  ports.unread.set(cid, first);
+  let first = ports.unread.get(cid);
+  if (first === undefined) {
+    first = now;
+    ports.unread.set(cid, now);
+    ports.noteUnread?.(cid, now);
+  }
   const waitedOut = now >= Number(claim.filedAt + BigInt(ports.docWaitS)) * 1000 && now - first >= DOC_RETRY_MIN_MS;
-  return waitedOut ? { ok: false, reason: 'doc_unavailable', ...known } : { ok: 'pending', why };
+  if (!waitedOut) return { ok: 'pending', why };
+  if (!(await ports.health.serving())) {
+    return { ok: 'pending', why: `${why}; the store is not serving this service's own documents either, so the document is not held against its writer yet` };
+  }
+  return { ok: false, reason: 'doc_unavailable', ...known };
 }
 
 /** Runs the checks in their fixed order against one candidate message. */
@@ -150,6 +172,8 @@ async function check(
     bytes = await ports.docs.fetch(cid, suspect === undefined ? undefined : { fresh: true });
   } catch (err) {
     if (err instanceof DocTooLarge) return { ok: false, reason: 'doc_too_large', ...known };
+    // This service's own request budget: a retry of the slot, not a failure of the document.
+    if (err instanceof StoreBusy) throw err;
     if (err instanceof TransientError) return unreadable(cid, err.message, known, claim, ports);
     throw err;
   }
@@ -161,7 +185,7 @@ async function check(
     return unreadable(cid, `document ${cid} does not match its hash; fetching again`, known, claim, ports);
   }
   ports.suspects.delete(cid);
-  ports.unread.delete(cid);
+  if (ports.unread.delete(cid)) ports.noteUnread?.(cid, null);
   // 9 size: every held record must fit in the court evidence
   if (bytes.length > RECORD_DOC_MAX_BYTES) return { ok: false, reason: 'doc_too_large', ...known };
   // 10 the document itself
@@ -187,13 +211,16 @@ export async function proveSlot(kind: RecordKind, claim: ProofClaim, ports: Proo
     const refsSeq = claim.refs.seq[kind];
     const refsNamed = named.toLowerCase() !== ZERO_HASH;
 
+    // A candidate still waited for keeps the slot open, but the ones after it are read all the same,
+    // so the wait of every unreadable document starts on the first pass, not one after another.
+    let waiting: string | undefined;
     let refsVerdict: Rejection | undefined;
     if (refsNamed) {
       const v = await check({ from: 'refs', hash: named }, refsSeq, kind, claim, ports);
       if (v.ok === true) return { final: true, slot: { kind, outcome: 'held', ...v.held } };
       // The named record wins if it passes, so nothing else can be chosen while it may still.
-      if (v.ok === 'pending') return { final: false, why: `slot ${kind}: ${v.why}` };
-      refsVerdict = v;
+      if (v.ok === 'pending') waiting = `slot ${kind}: ${v.why}`;
+      else refsVerdict = v;
     }
 
     // Read the index's progress and its candidates together (no await between): the list is
@@ -203,18 +230,25 @@ export async function proveSlot(kind: RecordKind, claim: ProofClaim, ports: Proo
     const list = ports.index.candidates(claim.orderId, kind).filter((m) => tsSeconds(m.consensusAt) <= claim.filedAt);
     let firstReject: Rejection | undefined;
     for (const m of list) {
+      // The named message, waited for above: the index path would read the same document again.
+      if (waiting !== undefined && refsVerdict === undefined && m.seq === refsSeq) continue;
       const v = await check({ from: 'index' }, m.seq, kind, claim, ports);
       if (v.ok === true) {
+        // The earliest record that passes is used, so this one cannot be chosen while one before it may still pass.
+        if (waiting !== undefined) return { final: false, why: waiting };
         const refs =
           refsVerdict !== undefined
             ? { seq: refsSeq, hash: named, reason: refsVerdict.reason }
             : { seq: 0n, hash: ZERO_HASH, reason: 'not_named' as const };
         return { final: true, slot: { kind, outcome: 'held', ...v.held, refs } };
       }
-      // The earliest record that passes is used, so a later one cannot be chosen while this one may still pass.
-      if (v.ok === 'pending') return { final: false, why: `slot ${kind}: ${v.why}` };
+      if (v.ok === 'pending') {
+        waiting ??= `slot ${kind}: ${v.why}`;
+        continue;
+      }
       firstReject ??= v;
     }
+    if (waiting !== undefined) return { final: false, why: waiting };
 
     // Nothing passed. That is only final once the index has read every message up to the filing.
     if (!complete) {

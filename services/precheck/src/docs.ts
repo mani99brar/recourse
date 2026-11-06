@@ -20,6 +20,17 @@ export class DocTooLarge extends Error {
   }
 }
 
+/**
+ * This service's own request budget for the store is spent. It says nothing about the store or the
+ * document, so the proof retries the slot later and never counts it against the document.
+ */
+export class StoreBusy extends TransientError {
+  constructor() {
+    super('gateway request budget spent; retry shortly');
+    this.name = 'StoreBusy';
+  }
+}
+
 /** Largest document a store reads: the records package's fetch limit. */
 export const DOC_FETCH_MAX_BYTES = 256 * 1024;
 
@@ -118,8 +129,79 @@ export class GatewayDocStore implements DocStore {
   private spendRequest(): void {
     const now = (this.o.now ?? Date.now)();
     while (this.sent.length > 0 && now - this.sent[0]! >= 60_000) this.sent.shift();
-    if (this.sent.length >= (this.o.maxPerMinute ?? 180)) throw new TransientError('gateway request budget spent; retry shortly');
+    if (this.sent.length >= (this.o.maxPerMinute ?? 180)) throw new StoreBusy();
     this.sent.push(now);
+  }
+}
+
+/** Bytes of the document the store-health probe pins when this service has pinned nothing of its own yet. */
+export const CANARY_DOC = new TextEncoder().encode('{"note":"recourse pre-check store probe","v":"1"}');
+
+export interface StoreHealthOptions {
+  docs: DocStore;
+  clock: { now(): number };
+  /** False in a dry run: nothing may be pinned, so only documents this service already pinned are read. */
+  mayPin: boolean;
+  /** How long a probe that read a document counts, ms. Default 30 s. */
+  okForMs?: number;
+  /** How long a probe that read nothing counts before the store is asked again, ms. Default 60 s. */
+  failForMs?: number;
+}
+
+/**
+ * Says whether the document store is serving documents at all, so a record document that cannot be
+ * read is held against its writer only when the store is shown to work. The probe reads back,
+ * fresh, a document this service pinned itself (its result documents, newest first, or a small
+ * fixed document it pins once when it has none), never one a writer chose: a writer cannot make the
+ * store look down, and a store that is down cannot make an honest record look missing.
+ */
+export class StoreHealth {
+  private readonly own: string[] = [];
+  private canary: string | undefined;
+  private last: { at: number; ok: boolean } | undefined;
+
+  constructor(private readonly o: StoreHealthOptions) {}
+
+  /** Notes a document this service pinned (kept: the four newest). */
+  addOwn(cid: string): void {
+    if (this.own.includes(cid)) return;
+    this.own.push(cid);
+    if (this.own.length > 4) this.own.shift();
+  }
+
+  /** True when the store has just served one of this service's own documents. */
+  async serving(): Promise<boolean> {
+    const now = this.o.clock.now();
+    const last = this.last;
+    if (last !== undefined && now - last.at < (last.ok ? (this.o.okForMs ?? 30_000) : (this.o.failForMs ?? 60_000))) return last.ok;
+    const ok = await this.probe();
+    this.last = { at: this.o.clock.now(), ok };
+    return ok;
+  }
+
+  private async probe(): Promise<boolean> {
+    for (const cid of [...this.own].reverse()) if (await this.reads(cid)) return true;
+    // Its own documents exist but none reads: the store is not serving. Pinning the probe document
+    // now would only show that writing works.
+    if (this.own.length > 0) return false;
+    if (this.canary === undefined) {
+      if (!this.o.mayPin) return false;
+      try {
+        this.canary = await this.o.docs.pin(CANARY_DOC);
+      } catch {
+        return false;
+      }
+    }
+    return this.reads(this.canary);
+  }
+
+  private async reads(cid: string): Promise<boolean> {
+    try {
+      const bytes = await this.o.docs.fetch(cid, { fresh: true });
+      return bytes !== null && rawBlockCid(bytes) === cid;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -173,7 +255,8 @@ export interface PinnedDocStoreOptions {
  * gateway). A definite miss (`not_found`: not in the store and no gateway, a gateway 404, a CID
  * that is not raw SHA-256) is null; a document over the fetch limit is DocTooLarge; every other
  * failure (a gateway error, bytes that do not match their CID) is a retry. The pre-check turns a
- * miss or a retry that lasts past its wait into a rejection.
+ * miss or a retry that lasts past its wait into a rejection, but only while StoreHealth shows the
+ * store serving the pre-check's own documents.
  */
 export class PinnedDocStore implements DocStore {
   private readonly cache = new Map<string, Uint8Array>();

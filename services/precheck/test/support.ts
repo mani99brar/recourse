@@ -48,7 +48,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Clock } from '../src/clock.js';
 import type { PrecheckConfig } from '../src/config.js';
-import { GatewayDocStore, LocalDocStore, rawBlockCid, type DocStore } from '../src/docs.js';
+import { GatewayDocStore, LocalDocStore, rawBlockCid, StoreHealth, type DocStore } from '../src/docs.js';
 import type { ProofClaim, ProofPorts } from '../src/proof.js';
 import { PrecheckService, type ServiceDeps } from '../src/service.js';
 import { TopicIndex } from '../src/topicIndex.js';
@@ -566,7 +566,8 @@ export function makeRig(): Rig {
  * and are mirrored onto the fake gateway, as a real pin makes the document readable there.
  */
 export function gatewayBackedDocs(world: World, local: LocalDocStore): DocStore {
-  const store = new GatewayDocStore({ gatewayUrl: GATEWAY, fetch: world.fetch });
+  // The request budget runs on the test clock, as the service's own does on the wall clock.
+  const store = new GatewayDocStore({ gatewayUrl: GATEWAY, fetch: world.fetch, now: () => world.clock.now() });
   return {
     fetch: (cid, options) => store.fetch(cid, options),
     async pin(bytes) {
@@ -581,10 +582,11 @@ export function gatewayBackedDocs(world: World, local: LocalDocStore): DocStore 
 export async function proofKit(rig: Rig, over: { quietS?: number; docWaitS?: number; parties?: Parties } = {}) {
   const parties = over.parties ?? PARTIES;
   const index = TopicIndex.open({ mirror: rig.world.mirror(), topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock, parties });
+  const docs = gatewayBackedDocs(rig.world, rig.docs);
   const ports: ProofPorts = {
     index,
     mirror: rig.world.mirror(),
-    docs: gatewayBackedDocs(rig.world, rig.docs),
+    docs,
     parties,
     topicNum: 500n,
     quietS: over.quietS ?? 120,
@@ -592,6 +594,7 @@ export async function proofKit(rig: Rig, over: { quietS?: number; docWaitS?: num
     suspects: new Map(),
     unread: new Map(),
     docWaitS: over.docWaitS ?? 3600,
+    health: new StoreHealth({ docs, clock: rig.clock, mayPin: true }),
   };
   return { index, ports };
 }

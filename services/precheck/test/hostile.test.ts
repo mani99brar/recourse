@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { APPROVAL_DOMAIN, APPROVAL_TYPES, REPORT_TYPES, ZERO_HASH } from '@recourse/shared';
 import { getAddress } from 'viem';
 import * as agentSigning from '../../agent/src/approval.js';
-import { alertKinds, cleanupRigs, FILED_AT, journalRecords, makeRig, orderIdOf, PARTIES, refsOf, setupClaim } from './support.js';
+import { DOC_WAIT_S } from '../src/proof.js';
+import { alertKinds, ATTRS, cleanupRigs, FILED_AT, journalRecords, makeRig, orderIdOf, PARTIES, recordDoc, refsOf, setupClaim } from './support.js';
 
 afterEach(cleanupRigs);
 
@@ -33,6 +34,69 @@ describe('a writer that points a record at a document nobody can read', () => {
     svc.close();
   });
 
+  it('cannot stall the claim with many unreadable messages: 120 of them settle at the hour, like one', async () => {
+    const rig = makeRig();
+    const orderId = orderIdOf(1);
+    for (let i = 0; i < 120; i++) {
+      const decoy = rig.world.addRecord({ kind: 1, orderId, doc: recordDoc(1, orderId, { ...ATTRS, size: `decoy-${i}` }) });
+      rig.world.gatewayDocs.delete(decoy.cid); // never pinned
+    }
+    const { claimId } = setupClaim(rig, { orderId, omit: [1], later: true });
+    const svc = await rig.start();
+    // The wait (one hour after the filing) and ten minutes since the first failed read, plus two ticks.
+    const deadline = Number(FILED_AT) * 1000 + DOC_WAIT_S * 1000 + 2 * 60_000;
+    while (rig.clock.now() < deadline && (svc.result(claimId)?.state ?? 'seen') === 'seen') {
+      await svc.tick();
+      rig.clock.advance(60_000);
+    }
+    const view = svc.result(claimId);
+    expect(view).toMatchObject({ state: 'intent', answer: '1', reasonKey: 'missing_record_platform' });
+    expect(view?.slots[1]).toEqual({ kind: '1', outcome: 'rejected', reason: 'doc_unavailable' });
+    expect(rig.node.broadcasts).toHaveLength(1);
+    svc.close();
+  });
+
+  it('a restart does not start the wait again: the first failed read is journaled', async () => {
+    const rig = makeRig();
+    const { claimId, added } = setupClaim(rig, { later: true });
+    rig.world.gatewayDocs.delete(added[1]!.cid);
+    rig.clock.setSeconds(FILED_AT + 55n * 60n); // the service first looks late, five minutes before the hour
+    const first = await rig.start();
+    await first.tick();
+    expect(journalRecords(rig).filter((r) => r.t === 'docUnread')).toMatchObject([{ claimId, cid: added[1]!.cid }]);
+    rig.clock.advance(7 * 60_000);
+    await first.tick();
+    first.close();
+    // Back three minutes later: ten minutes after the first failed read, the slot is settled.
+    rig.clock.advance(3 * 60_000);
+    const again = await rig.start();
+    await again.tick();
+    expect(again.result(claimId)).toMatchObject({ state: 'intent', answer: '1', reasonKey: 'missing_record_platform' });
+    again.close();
+  });
+});
+
+describe('a store outage', () => {
+  it('holds no honest record against its writer: the claim waits, and is answered on its records once the store is back', async () => {
+    const rig = makeRig();
+    const { claimId } = setupClaim(rig, { later: true });
+    rig.world.fail(/gateway\.example\/ipfs\//, 503, 1_000_000);
+    const svc = await rig.start();
+    await tickFor(svc, rig, 70);
+    expect(svc.result(claimId)?.state).toBe('seen');
+    expect(journalRecords(rig).some((r) => r.t === 'claimResolved')).toBe(false);
+    expect(alertKinds(rig)).toContain('precheck_stalled');
+    rig.world.faults.length = 0; // the store is back
+    await tickFor(svc, rig, 3);
+    const view = svc.result(claimId);
+    expect(view?.slots.map((s) => s.outcome)).toEqual(['held', 'held', 'held', 'held', 'held', 'held']);
+    expect(view?.reasonKey).not.toBe('not_enough_record');
+    expect(rig.node.broadcasts).toHaveLength(1);
+    svc.close();
+  });
+});
+
+describe('a claim whose records cannot be proved', () => {
   it('a claim that left Filed on chain while its records could not be proved is closed, not retried for ever', async () => {
     const rig = makeRig();
     const orderId = orderIdOf(4);

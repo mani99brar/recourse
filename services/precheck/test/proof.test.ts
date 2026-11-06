@@ -1,7 +1,7 @@
 import { RECORD_DOC_MAX_BYTES, canonicalBytes, encodeRecordMsg, recordHash, ruleSlotFromDoc, type Parties } from '@recourse/shared';
 import { getAddress } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
-import { rawBlockCid } from '../src/docs.js';
+import { GatewayDocStore, rawBlockCid } from '../src/docs.js';
 import { proveClaim, proveSlot } from '../src/proof.js';
 import {
   addLaterMessage,
@@ -9,6 +9,7 @@ import {
   ATTRS,
   cleanupRigs,
   FILED_AT,
+  GATEWAY,
   makeRig,
   orderIdOf,
   PARTIES,
@@ -286,10 +287,28 @@ describe('slot proof: documents a writer can point at but nobody can read', () =
     expect(await proveSlot(0, claim, ports)).toMatchObject({ final: true, slot: { outcome: 'held' } });
   });
 
-  it('gateway errors that never clear end the same way', async () => {
+  it('a store that serves nothing holds no document against its writer: the slot waits past the hour, then the record is used', async () => {
     const rig = makeRig();
     const rec = rig.world.addRecord({ kind: 0, orderId });
-    rig.world.fail(/gateway\.example/, 503, 1000);
+    rig.world.fail(/gateway\.example/, 503, 1000); // every read, the pre-check's own documents too
+    addLaterMessage(rig.world);
+    const { index, ports } = await proofKit(rig);
+    await index.advance();
+    const claim = proofClaim(orderId, refsOf(500n, { 0: { seq: rec.seq, hash: rec.hash } }));
+    expect(await proveSlot(0, claim, ports)).toMatchObject({ final: false });
+    rig.clock.advance(2 * HOUR);
+    const waiting = await proveSlot(0, claim, ports);
+    expect(waiting).toMatchObject({ final: false });
+    expect((waiting as { why: string }).why).toContain('not serving');
+    rig.world.faults.length = 0; // the store is back
+    rig.clock.advance(2 * 60_000);
+    expect(await proveSlot(0, claim, ports)).toMatchObject({ final: true, slot: { outcome: 'held', seq: BigInt(rec.seq) } });
+  });
+
+  it('a document the store will not serve while it serves the pre-check\'s own is doc_unavailable once the wait is over', async () => {
+    const rig = makeRig();
+    const rec = rig.world.addRecord({ kind: 0, orderId });
+    rig.world.fail(new RegExp(`/ipfs/${rec.cid}$`), 503, 1000); // a gateway that times out on a CID nobody pinned looks like this
     addLaterMessage(rig.world);
     const { index, ports } = await proofKit(rig);
     await index.advance();
@@ -297,6 +316,60 @@ describe('slot proof: documents a writer can point at but nobody can read', () =
     expect(await proveSlot(0, claim, ports)).toMatchObject({ final: false });
     rig.clock.advance(HOUR);
     expect(await proveSlot(0, claim, ports)).toMatchObject({ final: true, slot: { outcome: 'rejected', reason: 'doc_unavailable' } });
+  });
+
+  it('several unreadable messages before a valid record all wait at once: the slot settles at the hour, not ten minutes per message', async () => {
+    const rig = makeRig();
+    for (let i = 0; i < 7; i++) {
+      const decoy = rig.world.addRecord({ kind: 1, orderId, doc: recordDoc(1, orderId, { ...ATTRS, size: `decoy-${i}` }) });
+      rig.world.gatewayDocs.delete(decoy.cid);
+    }
+    const valid = rig.world.addRecord({ kind: 1, orderId });
+    addLaterMessage(rig.world);
+    const { index, ports } = await proofKit(rig);
+    await index.advance();
+    const claim = proofClaim(orderId, refsOf(500n, {}));
+    expect(await proveSlot(1, claim, ports)).toMatchObject({ final: false });
+    expect(ports.unread.size).toBe(7); // every decoy's wait started on the first pass
+    rig.clock.advance(HOUR);
+    expect(await proveSlot(1, claim, ports)).toMatchObject({ final: true, slot: { outcome: 'held', seq: BigInt(valid.seq), refs: { reason: 'not_named' } } });
+  });
+
+  it('a named unreadable record and unreadable index messages behind it settle together', async () => {
+    const rig = makeRig();
+    const named = rig.world.addRecord({ kind: 1, orderId, doc: recordDoc(1, orderId, { ...ATTRS, size: 'named' }) });
+    rig.world.gatewayDocs.delete(named.cid);
+    for (let i = 0; i < 4; i++) {
+      const decoy = rig.world.addRecord({ kind: 1, orderId, doc: recordDoc(1, orderId, { ...ATTRS, size: `decoy-${i}` }) });
+      rig.world.gatewayDocs.delete(decoy.cid);
+    }
+    const valid = rig.world.addRecord({ kind: 1, orderId });
+    addLaterMessage(rig.world);
+    const { index, ports } = await proofKit(rig);
+    await index.advance();
+    const claim = proofClaim(orderId, refsOf(500n, { 1: { seq: named.seq, hash: named.hash } }));
+    expect(await proveSlot(1, claim, ports)).toMatchObject({ final: false });
+    rig.clock.advance(HOUR);
+    expect(await proveSlot(1, claim, ports)).toMatchObject({
+      final: true,
+      slot: { outcome: 'held', seq: BigInt(valid.seq), refs: { seq: BigInt(named.seq), reason: 'doc_unavailable' } },
+    });
+  });
+
+  it('a spent request budget is a retry of the slot and never starts a document\'s wait', async () => {
+    const rig = makeRig();
+    const rec = rig.world.addRecord({ kind: 0, orderId });
+    addLaterMessage(rig.world);
+    const { index, ports } = await proofKit(rig);
+    await index.advance();
+    const store = new GatewayDocStore({ gatewayUrl: GATEWAY, fetch: rig.world.fetch, now: () => rig.clock.now(), maxPerMinute: 1 });
+    ports.docs = { fetch: (cid, o) => store.fetch(cid, o), pin: ports.docs.pin };
+    rig.clock.setSeconds(FILED_AT + 2n * 3600n);
+    await store.fetch(rawBlockCid(new Uint8Array([1]))); // spends the minute's one request
+    const claim = proofClaim(orderId, refsOf(500n, { 0: { seq: rec.seq, hash: rec.hash } }));
+    const p = await proveSlot(0, claim, ports);
+    expect(p).toMatchObject({ final: false });
+    expect(ports.unread.size).toBe(0);
   });
 
   it('a CIDv0, a string that is no CID, or the CID of another document: the message never decodes, so doc_invalid at once', async () => {

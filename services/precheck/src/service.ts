@@ -3,7 +3,9 @@
 // signed transaction is journaled by the sender) -> recorded (PreCheckRecorded seen on the mirror
 // with our packHash), or conflict (the chain holds a different packHash) or closed (the claim left
 // Filed with no pre-check) or skipped (the claim names a platform or shop that is not a party).
-// State is a fold over the journal, so a restart rebuilds it exactly.
+// State is a fold over the journal, so a restart rebuilds it exactly. The journal also holds, per
+// claim, when each record document that could not be read first failed (`docUnread`), so a restart
+// does not start its wait again.
 //
 // Only claims between parties of the party map are answered. Anyone can file a claim naming any
 // shop address (an address the platform controls, say) against a registered platform, and the
@@ -43,7 +45,7 @@ import {
 import { decodeEventLog, getAddress, hexToBytes, bytesToHex, type Address, type Hex } from 'viem';
 import { systemClock, type Clock } from './clock.js';
 import type { PrecheckConfig } from './config.js';
-import type { DocStore } from './docs.js';
+import { StoreHealth, type DocStore } from './docs.js';
 import { DOC_WAIT_S, proveClaim, type ProofClaim, type ProofPorts } from './proof.js';
 import { runRule } from './ruleAdapter.js';
 import { buildResultDoc } from './resultDoc.js';
@@ -165,9 +167,12 @@ export class PrecheckService {
   private reader!: HederaLogReader;
   private lastError: string | undefined;
   private mirrorLagS: number | undefined;
+  /** Whether the store serves documents: read back from this service's own pinned documents. */
+  private readonly storeHealth: StoreHealth;
 
   private constructor(private readonly d: ServiceDeps) {
     this.clock = d.clock ?? systemClock;
+    this.storeHealth = new StoreHealth({ docs: d.docs, clock: this.clock, mayPin: d.dryRun !== true });
   }
 
   /** Opens the state directory, rebuilds claim state from the journal and settles open transactions. */
@@ -303,6 +308,15 @@ export class PrecheckService {
         const c = this.claim(rec);
         c.cid = str(rec, 'cid');
         c.state = 'pinned';
+        this.storeHealth.addOwn(c.cid);
+        return;
+      }
+      case 'docUnread': {
+        const c = this.claim(rec);
+        const cid = str(rec, 'cid');
+        // `since` is the clock time of the first failed read, or null once the document read.
+        if (rec.since === null) c.unread.delete(cid);
+        else if (!c.unread.has(cid)) c.unread.set(cid, Number(str(rec, 'since')));
         return;
       }
       case 'intent': {
@@ -443,7 +457,9 @@ export class PrecheckService {
       clock: this.clock,
       suspects: c.suspects,
       unread: c.unread,
+      noteUnread: (cid, at) => this.record({ t: 'docUnread', claimId: c.claimId, cid, since: at === null ? null : String(at) }),
       docWaitS: this.d.config.docWaitS ?? DOC_WAIT_S,
+      health: this.storeHealth,
     };
   }
 
