@@ -2,11 +2,11 @@
 
 Recourse lets a shop recover money when an AI shopping agent buys the wrong thing.
 
-An agent pays a shop over x402 on Hedera. Before it pays, it commits what it was asked, what it showed the buyer, the approval and the order to a Hedera Consensus Service topic; the shop commits what it packed. If the wrong goods arrive, the shop files a claim on Hedera and escrows a court fee. A rule-based pre-check compares the records, names the gap and the side at fault, and the losing side may contest. A contest crosses Chainlink CCIP to Arbitrum Sepolia, where a Kleros court rules. The ruling crosses back, and a USDC deposit posted by the agent company pays the shop. A docket on Arkiv publishes fault rates per agent company.
+An agent pays a shop over x402 (an HTTP payment protocol: the shop answers `402 Payment Required` with a price, and the client pays and asks again) on Hedera. Before it pays, it commits three records to a Hedera Consensus Service (HCS) topic: what it was asked, what it showed the buyer, and the approval. After the payment settles it commits a fourth, the ordered record, which carries the payment's transaction id; the shop commits what it packed. If the wrong goods arrive, the shop files a claim on Hedera and escrows a court fee. A rule-based pre-check compares the records, names the gap and the side at fault, and the losing side may contest. A contest crosses Chainlink CCIP (Cross-Chain Interoperability Protocol) to Arbitrum Sepolia, where a Kleros court rules. The ruling crosses back, and a deposit posted by the agent company pays the shop. On the testnet demo the deposit, the court fee and any payout are in mUSDC, a mock USDC token deployed for the demo, because Circle's testnet USDC faucet did not deliver. A docket service counts ruled cases per agent company and shop, for fault rates; it can publish them on Arkiv, but the running docket keeps them in a store on its own host, and nothing has been written to Arkiv yet.
 
 Built at ETHGlobal Mumbai, 5-7 Nov 2026. Testnets only. All shop and agent-company names are fictional.
 
-> **Status, 6 Nov 2026: running on testnets, configuration not locked.** The contracts are deployed on Hedera testnet and Arbitrum Sepolia, the services run on one host, and one contested claim has been ruled by Kleros court 8 (dispute 212), with the ruling on its way back to Hedera. None of the three contracts is locked yet, so the deployer key can still change every setting, including ones that decide claims ([owner powers](#owner-powers-and-spend-paths)). See [What is live and what is not](#what-is-live-and-what-is-not).
+> **Status, 6 Nov 2026: running on testnets, configuration not locked.** The contracts are deployed on Hedera testnet and Arbitrum Sepolia and the services run on one host. Two claims have run to the end: one closed uncontested, and one was contested, ruled 3 ("neither side at fault") by Kleros court 8 (dispute 212), sent back to Hedera over CCIP and settled there on 6 Nov at 11:10 UTC. Both found nobody at fault, so no shop has yet been paid from a deposit. <!-- BUILD: payout case: one sentence and a link to its row in "Deployed addresses and transactions" once the shop has been paid from the deposit and has withdrawn. --> None of the three contracts is locked yet, so the deployer key can still change every setting, including ones that decide claims ([owner powers](#owner-powers-and-spend-paths)). See [What is live and what is not](#what-is-live-and-what-is-not).
 
 ## Contents
 
@@ -48,8 +48,8 @@ flowchart LR
   V -- "applyOutcome: pays the shop's credit" --> SH
   ST["Status API + web app"] -. reads .-> CL
   ST -. reads .-> RC
-  DK["Docket<br/>(services/docket)"] -- "ruled cases" --> AR[("Arkiv")]
-  DK -- "reviews" --> ER["ERC-8004 registries"]
+  DK["Docket<br/>(services/docket)"] -- "ruled cases, with DOCKET_STORE=arkiv (a local store today)" --> AR[("Arkiv")]
+  DK -- "reviews, with REVIEWS_ENABLED (off today)" --> ER["ERC-8004 registries"]
   IN["Intake<br/>(services/intake)"] -- "tags public feedback" --> DK
 ```
 
@@ -67,8 +67,9 @@ sequenceDiagram
   participant KP as Keeper
   participant RC as RecourseCase (Arbitrum)
   participant K as Kleros court 8
-  Ag->>HCS: records I S A O (asked, shown, approval, ordered)
-  Ag->>Sh: x402 payment, HBAR with PRICE_ASSET=hbar, else USDC (settlement tx id goes in record O)
+  Ag->>HCS: records I S A (asked, shown, approval)
+  Ag->>Sh: x402 payment, HBAR with PRICE_ASSET=hbar, else USDC
+  Ag->>HCS: record O (ordered, with the payment's settlement tx id)
   Sh->>HCS: record D (packed)
   Note over Ag,Sh: the wrong goods arrive
   Ag->>HCS: record R (arrived), signed by the buyer
@@ -86,11 +87,11 @@ sequenceDiagram
   end
   KP->>CL: settle (anyone may call)
   CL->>CL: vault pays the shop's credit from the platform deposit
-  Sh->>CL: withdrawCredit (USDC out to the shop)
+  Sh->>CL: withdrawCredit on the DepositVault (the vault token out to the shop)
 ```
 
-1. **Records.** Six records per order, one HCS message each ([interfaces](docs/spec/interfaces.md), section 2): asked (I), shown (S), approval (A), ordered (O), packed (D), arrived (R). Each message holds the IPFS CID of a canonical document and its SHA-256. A record counts only if the HCS message payer is a known writer for that kind.
-2. **Pre-check.** The fault rule is a fixed 12-step comparison over the six attributes (brand, size, colour, quantity, price, merchant): what was asked against what was shown, whether a change was approved, and what was shown against what was ordered, packed and received. It is a pure function in `packages/shared`; the pre-check service runs it, pins the result document and signs the finding. Anyone can re-run it from the public records.
+1. **Records.** Six records per order, one HCS message each ([interfaces](docs/spec/interfaces.md), section 2): asked (I), shown (S), approval (A), ordered (O), packed (D), arrived (R). The agent writes asked, shown and approval before it pays and ordered after the payment settles (`services/agent/src/buy.ts`); the shop writes packed; the agent writes arrived, signed by the buyer. Each message holds the IPFS CID (content identifier) of a canonical document and its SHA-256. A record counts only if the HCS message payer is a known writer for that kind.
+2. **Pre-check.** The fault rule is a fixed 12-step comparison over the six attributes (brand, size, colour, quantity, price, merchant): what was asked against what was shown, whether a change was approved, and what was shown against what was ordered, packed and received. It is a pure function in `packages/shared`; the pre-check service runs it, pins the result document and signs the finding. The hashes are public; anyone can check a document against them (the claim page's "Check a record" box hashes pasted text in the browser). The documents themselves are not on public IPFS yet: they sit in a content store on the demo host, and the status API serves them with each order's records (see [Disclosures](#disclosures)). The web app's "Check or file an order" page (`#/file`) re-runs the rule in the browser, on the records that API serves.
 3. **Contest.** The finding names a side. If the finding is against the platform, the platform contests; otherwise the shop. The window is closed at the end of the contest period.
 4. **Court.** A contested claim goes to Arbitrum by CCIP. `RecourseCase` opens a Kleros dispute in court 8, with a three-way answer (agent company at fault, shop at fault, neither) and a published policy, and the keeper posts the evidence. The court's ruling comes back as a second CCIP message.
 5. **Refused ruling.** A ruling of 0 (refused) is refiled once. A second 0 counts as a ruling equal to the pre-check answer.
@@ -105,8 +106,8 @@ sequenceDiagram
 | **HTS USDC, or the testnet mock** | The platform deposit, the court-fee escrow and the shop's payout are all in the vault's token, which `deployments/hedera.json` records as `usdc.mode`; every reader takes it from that record, so one deployment never mixes tokens. In `circle` mode it is Circle's testnet USDC `0.0.429274`, used through its ERC-20 facade: the vault associates the token explicitly after deploy, and nothing moves before the mirror node shows the association. The current deployment is in `mock` mode, because Circle's faucet did not deliver: the token is `mUSDC`, a plain 6-decimal ERC-20 minted by the deployer, with no HTS token id and no mirror row, so the checks are `Vault.usdcAssociated()` and `Vault.usdc()` equal to the recorded address. With `PRICE_ASSET=hbar` the x402 order payments are in HBAR. | `contracts/src/hedera`, `contracts/script/hedera`, `contracts/src/testnet/MockUsdc.sol`, `packages/shared/src/vaultToken.ts`, `ops/lib/vault-token.sh` |
 | **Chainlink CCIP, both ways** | `RecourseClaims` sends `ClaimToCourt` to `RecourseCase`; `RecourseCase` sends `RulingBack`. Each contract is its own receiver and sender, with V2 extra args, out-of-order execution on and full finality. Fees are paid in LINK (or HBAR on the Hedera side). Resend is open to anyone, capped in count and spacing, so a lost message costs a bounded amount of LINK. | `contracts/src/hedera/RecourseClaims.sol`, `contracts/src/arbitrum/RecourseCase.sol`, `contracts/src/shared` |
 | **Kleros court on Arbitrum Sepolia** | `RecourseCase` creates the dispute on the live KlerosCore in court 8 (testnet), registers the dispute template, and receives the ruling through `rule`. The keeper pays the arbitration cost from the case's fee pool and posts the evidence. | `contracts/src/arbitrum`, `packages/court`, `services/keeper` |
-| **Arkiv docket** | The docket service writes one de-identified `case` entity per ruled claim and a monthly count, from one writer wallet. The docket page reads them back and computes fault rates (Wilson 95% interval) in the browser. | `services/docket`, `arkiv/`, `apps/web/src/pages/Docket.tsx` |
-| **ERC-8004 identity and reviews** | The platform, agent and shop register agent identities; after a case is written to the docket, the scheme wallet leaves a review in the reputation registry. A self-review is rejected by the registry, which is why the reviewer is a separate wallet. | `packages/shared/src/abi/erc8004.ts`, `services/docket/src/reviews.ts` |
+| **Arkiv docket** | The docket service turns each ruled claim into one de-identified `case` row and keeps a monthly count per agent company and shop. With `DOCKET_STORE=arkiv` it writes them as Arkiv entities from one writer wallet; the running docket leaves `DOCKET_STORE` unset, so it keeps them in a local store in its own state folder (`local-store.jsonl`), and no entity has been written to the Arkiv testnet. The docket page reads Arkiv in the browser and computes fault rates (Wilson 95% interval) there; while the docket's store is local, the page says so and shows no rates. | `services/docket`, `arkiv/`, `apps/web/src/pages/Docket.tsx` |
+| **ERC-8004 identity and reviews** | ERC-8004 is a set of on-chain registries for AI agents: identity, reputation and validation. The platform (the agent company) and the shop are registered in the identity registry, and the agent finds the shop's x402 endpoint from its registration (`SHOP_BASE_URL` is used only when that lookup fails, `services/agent/src/setup.ts`). With `REVIEWS_ENABLED` set, the docket's scheme wallet leaves a review in the reputation registry after each case it writes; it is off on the running docket, so no review has been written. A self-review is rejected by the registry, which is why the reviewer is a separate wallet. | `packages/shared/src/abi/erc8004.ts`, `services/docket/src/reviews.ts` |
 
 Other parts: a status API and web app (case status, filing, docket), and an intake service whose only job is to tag public feedback text with an LLM. **No model decides money at any point at runtime.** Money moves only by the contracts' rules.
 
@@ -164,7 +165,7 @@ The deployer key owns all three contracts (two-step ownership transfer only). Ea
 | `setFeeToken` (LINK or HBAR for CCIP fees) | yes | yes |
 | `lockConfig` | once | |
 
-The owner cannot change a finding or ruling once it is recorded, file a claim for a shop, or move the vault's USDC itself; before the lock it can still choose who records the findings and rulings of claims not yet decided, as above. Trusted roles: the **pre-check signer** is the one trusted step (it signs the finding; anyone can re-run the check from the public records, and a wrong finding can be contested). The **ruling relayer** can record rulings only in the one-leg modes; in the default two-way mode that call is refused, and only the owner can change the mode, before the lock.
+The owner cannot change a finding or ruling once it is recorded, file a claim for a shop, or move the vault's USDC itself; before the lock it can still choose who records the findings and rulings of claims not yet decided, as above. Trusted roles: the **pre-check signer** is the one trusted step (it signs the finding; the record hashes are public, so anyone can check a document against them and re-run the rule on documents that match, and a wrong finding can be contested). The **ruling relayer** can record rulings only in the one-leg modes; in the default two-way mode that call is refused, and only the owner can change the mode, before the lock.
 
 Spend paths: LINK or HBAR leaves for CCIP fees only, through `sendToCourt` and `resend` (permissionless, at most `maxSends` per claim and `resendGap` apart), and through `sweepLink` and `sweepNative` before the lock. No function accepts USDC.
 
@@ -208,10 +209,13 @@ Ten roles, each with its own Foundry keystore kept outside the repo ([docs/keys.
 | Funding | Small. The Hedera roles hold a few HBAR each from the faucet (at most 10 HBAR per address). On Arbitrum Sepolia the deployer and `ops-arb` hold test ETH and RecourseCase's fee pool, funded with 0.01 ETH for Kleros fees, held 0.00919 ETH after dispute 212; RecourseCase holds no LINK, so the keeper pays the ruling's CCIP fee in ETH from `ops-arb`. The claims contract holds test LINK for CCIP fees (`ops/wire/12-set-fee-token.sh` switches it between LINK and HBAR). Circle testnet USDC was requested for the platform, shop and agent and never arrived; the vault's `mUSDC` is minted by the deployer, the mock's owner. With orders paid in HBAR (`PRICE_ASSET=hbar`) the agent needs no USDC; its HBAR floor is then 8 (`ops/fund/lib.sh`). |
 | CCIP lanes | Public lanes exist on both testnets and the peers are set both ways. Two messages so far, both for claim `0x392d…` and both executed: `ClaimToCourt` to Arbitrum (sent 09:07 UTC on 6 Nov, executed within a minute) and `RulingBack` to Hedera (sent 10:51 UTC, executed 11:10 UTC). |
 | Kleros dispute | Dispute 212 in court 8, opened by RecourseCase on 6 Nov at 09:08 UTC with the order records as evidence, ruled 3 ("neither") at 10:43 UTC, and executed at 10:51 UTC. |
-| Arkiv docket | The docket runs on its local store; no entity has been written to the Arkiv testnet. |
-| ERC-8004 identities | Registered in the identity registry `0x8004A818BFB912233c491871b3d84c89A494BD9e` on Hedera testnet: agent 149 is the platform ("Parcel Minds"), agent 150 the shop ("Halden Supply"). No review has been written; reviews follow a case on the docket. |
+| Arkiv docket | The docket runs on its local store (`DOCKET_STORE` unset): it holds the ruled case of dispute 212 and that month's count there, and no entity has been written to the Arkiv testnet. |
+| ERC-8004 identities | Registered in the identity registry `0x8004A818BFB912233c491871b3d84c89A494BD9e` on Hedera testnet: agent 149 is the platform ("Parcel Minds"), agent 150 the shop ("Halden Supply"). No review has been written: reviews are off on the running docket (`REVIEWS_ENABLED` defaults to off). |
 | Source verification | Not done for any contract yet. |
-| Hedera testnet upgrade | Scheduled Fri 6 Nov 2026, 18:00-18:40 UTC; no Hedera sends are planned in that window. |
+| Hedera testnet upgrade | Fri 6 Nov 2026, 17:50-18:55 UTC: Hedera testnet is paused, and its public JSON-RPC relay (`testnet.hashio.io`) has answered 502 since about 16:50 UTC. No Hedera sends are planned in that window; the services' Hedera reads fail until it ends and resume on their own. |
+
+<!-- BUILD: redeployed contracts: update the "Solidity contracts" row above (new Hedera ids and addresses, lock state) and the "Source verification" row (verified on HashScan and Arbiscan, with links). -->
+<!-- BUILD: remove or update the "Hedera testnet upgrade" row once the upgrade is over. -->
 
 What is mocked in tests and local runs, which deploy their own mocks: HTS and the PRNG system contract, the USDC token, the CCIP router (a local simulator with a relay that can drop and delay), and KlerosCore (a mock arbitrator that accepts a chosen ruling). One mock is live: the testnet demo's current Hedera deployment runs on a testnet mock USDC (`mUSDC`, "Mock USD Coin (testnet)", 6 decimals, minted only by its owner) because Circle's testnet USDC faucet did not deliver to our accounts. It is not Circle's token and is worth nothing; the status API and the web app label its amounts "mUSDC (testnet mock)". The first deployment, on Circle USDC, is retired and listed in `deployments/retired.json`. Order payments (x402) are in HBAR and never touch the vault token. Nothing in this repository fabricates a ruling, a payment or a transaction hash for display.
 
@@ -238,9 +242,13 @@ Taken from `deployments/`, `deployments/wiring.json`, `packages/records/h0-ids.j
 | First credit withdrawn (claim `0x9cd7…412c`'s 1 mUSDC, to the shop) | Hedera testnet | vault `0.0.11336129` | `0x082d0148c6773a8c6f0b4e62db4a9cb28d88e6d41285380728a428cb3b57f050` | [HashScan](https://hashscan.io/testnet/contract/0.0.11336129) | n/a |
 | Arkiv writer wallet | Arkiv testnet | `0x54E4545AFcf8960884A750320e70aFE16b2b3CaE` (address only, no entity written yet) | n/a | n/a | n/a |
 
+<!-- BUILD: payout case: add its rows inside the table above (x402 payment, the six records, fileClaim, recordPreCheck, closeUncontested or settle, withdrawCredit), each with its hash and explorer link. -->
+<!-- BUILD: redeployed contracts: add the new DepositVault, RecourseClaims, MockUsdc and RecourseCase rows inside the table above (address, deploy tx, explorer), keep the old rows marked retired, and fill the "Source verification" column with the HashScan and Arbiscan verification links. -->
+<!-- BUILD: the two test runs side by side: add a "### Test runs on testnet" heading here and one table with a column per run (the same command against the old and the redeployed contracts: command, order id, claim id, each step's tx hash, result). -->
+
 ## Disclosures
 
-- Records are meant to be public by CID. Each record's CID and SHA-256 are on the public HCS topic, but the documents are not on public IPFS yet: Filebase pinning is not configured, so the demo host keeps them in its own content store and nobody off the host can fetch them. Buyer fields inside them are salted; once they are pinned publicly, anyone who has the CID can read them.
+- Record documents: the hashes are public; anyone can check a document against them. Each record's CID and SHA-256 are on the public HCS topic, but the documents are not on public IPFS: Filebase pinning (`IPFS_PIN_API_KEY`, `IPFS_PIN_API_SECRET`, `IPFS_PIN_BUCKET`) is not configured, so every service pins to a content store on the demo host instead (`IPFS_PIN_API_URL=file://…`, one file per CID in `~/.local/state/recourse/ipfs`, `packages/records/src/ipfs.ts`). The CIDs are the ones a public pin of the same bytes would get. Off the host, the documents can be read only through the status API (`GET /orders/<orderId>/records` returns each record's document after checking it against its hash), which the web app shows, and only while the host is up. Buyer fields inside them are salted; anyone who can read a document can read the rest of it.
 - The shop attests its own net loss when it files (capped at the basket value); the pre-check signer is a trusted step; the docket is de-identified, and the scheme wallet that writes it also receives any unrefunded escrow.
 - A platform with no deposit can still be claimed against; the shortfall is shown, not hidden.
 - The court is Kleros testnet court 8, a test court with test jurors, not a production one.
