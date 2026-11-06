@@ -19,7 +19,7 @@ import { SdkArkivIo, arkivChain } from './store/arkivSdk.js';
 import { LocalStore } from './store/local.js';
 import type { DocketStore } from './store/types.js';
 
-type Poller = { name: string; poll(cursor: string | undefined): Promise<{ events: import('./events.js').DocketEvent[]; cursor: string | undefined }> };
+export type Poller = { name: string; poll(cursor: string | undefined): Promise<{ events: import('./events.js').DocketEvent[]; cursor: string | undefined }> };
 
 export async function startDocket(env: Record<string, string | undefined> = process.env): Promise<void> {
   const cfg = loadConfig(env);
@@ -65,17 +65,7 @@ export async function startDocket(env: Record<string, string | undefined> = proc
   app.listen(cfg.port, '127.0.0.1', () => log.info('listening', { port: cfg.port, store: store.kind, sources: pollers.length }));
 
   const tick = oneAtATime(async (): Promise<void> => {
-    for (const p of pollers) {
-      try {
-        const r = await p.poll(docket.cursor(p.name));
-        docket.ingest(r.events);
-        if (r.cursor !== undefined) docket.setCursor(p.name, r.cursor);
-        lastError = null;
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-        log.warn('poll_failed', { source: p.name, error: lastError });
-      }
-    }
+    lastError = await pollSources(pollers, docket, log);
     try {
       await docket.flush();
     } catch (error) {
@@ -85,6 +75,26 @@ export async function startDocket(env: Record<string, string | undefined> = proc
   await tick();
   setInterval(() => void tick(), cfg.pollSeconds * 1000);
   if (store.kind === 'arkiv') void watchBalances(cfg, env, alert);
+}
+
+/**
+ * Polls each source once and returns the pass's last failure, or null when every source answered. A
+ * source that answers after one that failed does not clear the failure: the Arbitrum source is polled
+ * last, and a Hedera failure in the same pass must still show at GET /sources.
+ */
+export async function pollSources(pollers: readonly Poller[], docket: Pick<Docket, 'cursor' | 'ingest' | 'setCursor'>, log: ReturnType<typeof createLogger>): Promise<string | null> {
+  let failure: string | null = null;
+  for (const p of pollers) {
+    try {
+      const r = await p.poll(docket.cursor(p.name));
+      docket.ingest(r.events);
+      if (r.cursor !== undefined) docket.setCursor(p.name, r.cursor);
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error);
+      log.warn('poll_failed', { source: p.name, error: failure });
+    }
+  }
+  return failure;
 }
 
 /**

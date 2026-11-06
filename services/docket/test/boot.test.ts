@@ -1,6 +1,26 @@
+import { memoryLogger } from '@recourse/records';
 import { describe, expect, it } from 'vitest';
-import { oneAtATime } from '../src/boot.js';
+import { oneAtATime, pollSources, type Poller } from '../src/boot.js';
 import { E, rig } from './helpers.js';
+
+describe('docket source polls', () => {
+  const answers = (name: string, cursor: string): Poller => ({ name, poll: async () => ({ events: [E.filed(1)], cursor }) });
+  const fails = (name: string, message: string): Poller => ({ name, poll: async () => Promise.reject(new Error(message)) });
+
+  it('a source that answers after one that failed keeps the pass failed', async () => {
+    const r = rig();
+    const log = memoryLogger();
+    const failure = await pollSources([fails('hedera-claims', 'mirror 502'), answers('arbitrum-case', '42')], r.docket, log);
+    expect(failure).toBe('mirror 502');
+    expect(r.docket.cursor('arbitrum-case')).toBe('42');
+    expect(log.lines.filter((l) => l.event === 'poll_failed').map((l) => l.fields.source)).toEqual(['hedera-claims']);
+  });
+
+  it('a pass where every source answers has no failure', async () => {
+    const r = rig();
+    expect(await pollSources([answers('hedera-claims', '7'), answers('arbitrum-case', '42')], r.docket, memoryLogger())).toBeNull();
+  });
+});
 
 describe('docket passes', () => {
   it('a pass started while the last one is still running does nothing', async () => {
