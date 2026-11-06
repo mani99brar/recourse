@@ -1,0 +1,55 @@
+{
+  "v": 1,
+  "network": "hedera:testnet",
+  "chainId": 296,
+  "agents": {
+    "platform": {
+      "agentId": "149",
+      "owner": "0xff845c7d57eb58f30dEEE83a96010FeE055FdaF6",
+      "agentUri": "data:application/json;base64,eyJ0eXBlIjoiaHR0cHM6Ly9laXBzLmV0aGVyZXVtLm9yZy9FSVBTL2VpcC04MDA0I3JlZ2lzdHJhdGlvbi12MSIsIm5hbWUiOiJQYXJjZWwgTWluZHMiLCJkZXNjcmlwdGlvbiI6IlNob3BwaW5nIGFnZW50IHRoYXQgcGF5cyBvdmVyIHg0MDIgb24gSGVkZXJhLCByZWNvcmRzIHdoYXQgaXQgd2FzIGFza2VkLCBzaG93biBhbmQgYXBwcm92ZWQsIGFuZCBwb3N0cyBhIGRlcG9zaXQgdGhhdCBjb3ZlcnMgaXRzIG1pc3Rha2VzLiIsInNlcnZpY2VzIjpbXSwieDQwMlN1cHBvcnQiOnRydWUsImFjdGl2ZSI6dHJ1ZX0=",
+      "txHash": "0xea5d875c0d3ac84055636ee4f082a8bfe3acb495885e5baf32f2e8ef8c5eaa64",
+      "registeredAt": "2026-11-06T06:11:05.540Z",
+      "uriKind": "data"
+    },
+    "shop": {
+      "agentId": "150",
+      "owner": "0x0d87ED2F5D792561B53043Ff028956125c820287",
+      "agentUri": "data:application/json;base64,eyJ0eXBlIjoiaHR0cHM6Ly9laXBzLmV0aGVyZXVtLm9yZy9FSVBTL2VpcC04MDA0I3JlZ2lzdHJhdGlvbi12MSIsIm5hbWUiOiJIYWxkZW4gU3VwcGx5IiwiZGVzY3JpcHRpb24iOiJTaG9wIHRoYXQgc2VsbHMgb3ZlciB4NDAyIG9uIEhlZGVyYSBhbmQgcmVjb3JkcyBlYWNoIG9yZGVyIG9uIHRoZSBSZWNvdXJzZSBIQ1MgdG9waWMuIiwic2VydmljZXMiOlt7Im5hbWUiOiJ4NDAyIiwiZW5kcG9pbnQiOiJodHRwOi8vMTI3LjAuMC4xOjg3MjAveDQwMi8iLCJuZXR3b3JrIjoiaGVkZXJhOnRlc3RuZXQiLCJwYXlUbyI6IjAuMC4xMTMyOTY4MCIsImFzc2V0IjoiMC4wLjQyOTI3NCJ9XSwieDQwMlN1cHBvcnQiOnRydWUsImFjdGl2ZSI6dHJ1ZX0=",
+      "txHash": "0xd7e03c68f1240111c45d7af8d5a581614ce234a3a0a29ae93c8b91bc7ae5314a",
+      "registeredAt": "2026-11-06T06:11:09.798Z",
+      "uriKind": "data"
+    }
+  },
+  "parties": [
+    {
+      "role": "platform",
+      "evmAddress": "0xff845c7d57eb58f30dEEE83a96010FeE055FdaF6",
+      "hederaAccountId": "0.0.11329672",
+      "hcsWriters": [
+        "0.0.11329682"
+      ]
+    },
+    {
+      "role": "agent",
+      "evmAddress": "0xC9d6E94A0Ada9293ACbf871c4bC15c580355b623",
+      "hederaAccountId": "0.0.11329682",
+      "hcsWriters": []
+    },
+    {
+      "role": "shop",
+      "evmAddress": "0x0d87ED2F5D792561B53043Ff028956125c820287",
+      "hederaAccountId": "0.0.11329680",
+      "hcsWriters": [
+        "0.0.11329680"
+      ]
+    }
+  ],
+  "topic": {
+    "topicId": "0.0.11335218",
+    "memo": "recourse.records.v1",
+    "adminKey": null,
+    "submitKey": null,
+    "txId": "0.0.11329551@1793945456.221613303",
+    "createdAt": "2026-11-06T06:11:00.719Z"
+  }
+}

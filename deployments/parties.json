@@ -33,7 +33,8 @@
       "0.0.11329682"
     ],
     "displayName": "Parcel Minds",
-    "hederaAccountId": "0.0.11329672"
+    "hederaAccountId": "0.0.11329672",
+    "agentId": "149"
   },
   {
     "role": "agent",
@@ -49,7 +50,8 @@
       "0.0.11329680"
     ],
     "displayName": "Halden Supply",
-    "hederaAccountId": "0.0.11329680"
+    "hederaAccountId": "0.0.11329680",
+    "agentId": "150"
   },
   {
     "role": "scheme",
