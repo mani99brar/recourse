@@ -5,7 +5,8 @@
 //   node compare.mjs <labelA> <labelB>
 //
 // Rows are matched on suite, path and test with claim and order ids, statuses in parentheses and
-// amounts taken out, so a check of "the claim" matches across deployments whose claims differ. A row
+// numbers (amounts, counts, times) taken out, so a check of "the claim" matches across deployments
+// whose claims differ, and an ops row matches when its counts have moved on. A row
 // with no partner is listed as only in A or only in B. Exit 1 when a row passed in only one run.
 
 import { readFileSync } from 'node:fs';
@@ -23,7 +24,7 @@ const norm = (s) =>
   String(s ?? '')
     .replace(/0x[0-9a-fA-F]{8,}/g, '{id}')
     .replace(STATUS, '({status})')
-    .replace(/\b(credit|balance) [0-9]+/g, '$1 {n}')
+    .replace(/\d+(?:\.\d+)?/g, '{n}')
     .replace(/: (filed|finding_made|no_finding|window_lapsed|closed_uncontested|contested|settled)$/, ': {status}');
 
 /** Rows keyed by their normalised name; the n-th row of a name gets #n. */
@@ -43,6 +44,7 @@ const kb = keyed(B);
 const keys = [...new Set([...ka.keys(), ...kb.keys()])];
 const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 const res = (r) => (r ? `${r.result}${r.txHash ? ` ${r.txHash}` : ''}` : '-');
+const named = (r) => `${r.suite} | ${r.path} | ${r.test}`;
 
 const head = (run) => `${run.label}: commit ${run.commit ?? '?'}, ${run.started ?? '?'}; claims ${run.deployments?.claims ?? '?'}, vault ${run.deployments?.vault ?? '?'}, case ${run.deployments?.recourseCase ?? '?'}; pass ${run.counts.pass}, fail ${run.counts.fail}, blocked ${run.counts.blocked}, dry-only ${run.counts['dry-only']}`;
 const lines = [`# ${a} and ${b} side by side`, '', `- A ${head(A)}`, `- B ${head(B)}`, '', `| Path | Test | A: ${cell(a)} | B: ${cell(b)} |`, '|---|---|---|---|'];
@@ -56,9 +58,9 @@ const onlyB = keys.filter((k) => !ka.has(k) && kb.has(k));
 const list = (title, ks, f) => [`## ${title} (${ks.length})`, '', ...(ks.length ? ks.map(f) : ['none']), ''];
 lines.push(
   '',
-  ...list('Passed in only one run', onlyOne, (k) => `- ${k}: A ${ka.get(k).result}, B ${kb.get(k).result}${(ka.get(k).result === 'pass' ? kb : ka).get(k).note ? ` (${(ka.get(k).result === 'pass' ? kb : ka).get(k).note})` : ''}`),
-  ...list(`Only in A (${a})`, onlyA, (k) => `- ${k}: ${ka.get(k).result}`),
-  ...list(`Only in B (${b})`, onlyB, (k) => `- ${k}: ${kb.get(k).result}`),
+  ...list('Passed in only one run', onlyOne, (k) => `- ${named(kb.get(k))}: A ${ka.get(k).result}, B ${kb.get(k).result}${(ka.get(k).result === 'pass' ? kb : ka).get(k).note ? ` (${(ka.get(k).result === 'pass' ? kb : ka).get(k).note})` : ''}`),
+  ...list(`Only in A (${a})`, onlyA, (k) => `- ${named(ka.get(k))}: ${ka.get(k).result}`),
+  ...list(`Only in B (${b})`, onlyB, (k) => `- ${named(kb.get(k))}: ${kb.get(k).result}`),
 );
 process.stdout.write(`${lines.join('\n')}\n`);
 process.exit(onlyOne.length ? 1 : 0);
