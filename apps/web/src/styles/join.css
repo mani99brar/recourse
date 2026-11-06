@@ -1,0 +1,221 @@
+/*
+ * The shop's sign-up page: what it agrees to and what it costs side by side, then the register panel
+ * (the form with the registration document it puts on chain beside it), then what agent companies
+ * see and the operator's next step. Scoped under .join-page; reads the tokens only. Shared pieces
+ * (cards, fields, .kv rows, buttons, pills, the preview) come from components.css and case.css.
+ */
+
+.join-page .page-head {
+  margin-bottom: var(--sp-5);
+}
+.join-page .page-head .lead {
+  max-width: 44em;
+}
+
+/* ---------- the terms and the costs ---------- */
+.join-page .join-terms,
+.join-page .join-after {
+  align-items: start;
+}
+.join-page ul.join-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-md);
+  line-height: 1.42;
+}
+.join-page ul.join-list > li {
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+.join-page ul.join-list > li:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+.join-page ul.join-list b {
+  font-weight: 600;
+  color: var(--fg);
+}
+.join-page ul.join-list + p,
+.join-page dl + p {
+  margin-top: 12px;
+}
+
+/* ---------- the register panel: the form, and the record it puts on chain ---------- */
+.join-page .act {
+  margin-top: var(--sp-5);
+}
+/* the panel spans the page: its small notes keep to a readable line */
+.join-page .act .muted.small {
+  max-width: 72ch;
+}
+.join-page .join-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-5) var(--sp-6);
+  margin-top: var(--sp-4);
+}
+@media (min-width: 1000px) {
+  .join-page .join-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+.join-page fieldset {
+  min-width: 0;
+  margin: 0 0 var(--sp-5);
+  padding: 0;
+  border: 0;
+}
+.join-page fieldset:last-child {
+  margin-bottom: 0;
+}
+.join-page legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--fg);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  font-stretch: 108%;
+  line-height: 1.25;
+}
+.join-page .join-x402 {
+  max-width: 60ch;
+  margin-bottom: 12px;
+}
+
+/* the shop types: one hairline row each */
+.join-page .join-types label.check-row {
+  margin: 0;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.join-page .join-types label.check-row:last-of-type {
+  border-bottom: 1px solid var(--line);
+}
+.join-page .join-types label.check-row .mono {
+  margin-left: 4px;
+  font-size: 13px;
+}
+.join-page .join-other {
+  margin-top: 14px;
+}
+
+/* a field that needs fixing: strong ink round the input, its sentence under it (red stays a rule) */
+.join-page input[aria-invalid='true'] {
+  border-color: var(--w);
+  box-shadow: inset 0 0 0 1px var(--w);
+}
+.join-page p.join-err {
+  margin: -6px 0 14px;
+  font-size: var(--fs-sm);
+  line-height: 1.38;
+}
+.join-page .join-field .hint + p.join-err {
+  margin-top: -4px;
+}
+.join-page .join-todo {
+  margin-top: var(--sp-4);
+  color: var(--fg2);
+}
+.join-page .join-todo .linkish {
+  font-weight: 500;
+}
+
+/* the registration document, as JSON: its indents hold, and a long line scrolls inside the block, never the page */
+.join-page .join-record h3,
+.join-page .join-done h3 {
+  margin: 0 0 6px;
+}
+.join-page .join-done h3 + dl,
+.join-page .join-done h3 + pre {
+  margin-top: 8px;
+}
+.join-page .join-done dl + h3,
+.join-page .join-done p + h3 {
+  margin-top: var(--sp-5);
+}
+.join-page pre.join-json {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  background: var(--g);
+  color: var(--fg);
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font: 500 13px/1.5 var(--font);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.join-page .join-record p.error,
+.join-page .join-record pre + p {
+  margin-top: 12px;
+}
+
+/* ---------- a registration as the cast page shows it ---------- */
+.join-page .member {
+  margin-top: 14px;
+  padding: 16px 18px 14px;
+  background: var(--g);
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.join-page .member-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+.join-page .member-head h3 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  font-stretch: 112%;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.join-page .member-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.join-page .member .member-sum {
+  margin-bottom: 12px;
+  max-width: 60ch;
+}
+.join-page .member dd .muted {
+  font-weight: 400;
+}
+.join-page .member .member-pay {
+  margin-top: 10px;
+}
+
+/* ---------- after the register mined, and the next step ---------- */
+/* the result sits under the steps as the preview does: a strong rule above it */
+.join-page .join-done {
+  margin-top: var(--sp-5);
+  padding-top: 14px;
+  border-top: 1px solid var(--rule2);
+}
+.join-page .join-done .next {
+  margin-top: var(--sp-5);
+}
+.join-page .join-after {
+  margin-top: var(--sp-5);
+}
+.join-page #join-next h3 {
+  margin: var(--sp-5) 0 8px;
+}
+
+@media (max-width: 480px) {
+  .join-page pre.join-json {
+    padding: 10px 12px;
+    font-size: 12.5px;
+  }
+  .join-page .member {
+    padding: 14px 14px 12px;
+  }
+}

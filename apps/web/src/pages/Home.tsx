@@ -98,6 +98,9 @@ export function HomePage() {
                 Check or file an order
               </a>
             </div>
+            <p className="hero-more">
+              New here? <a href="#/story">How it works</a>, told through one claim from start to end.
+            </p>
           </div>
           <img className="hero-art" src={hand} width={880} height={700} alt="" aria-hidden="true" decoding="async" />
         </div>
@@ -139,6 +142,21 @@ export function HomePage() {
           </Door>
         )}
       </nav>
+
+      <section className="starts" aria-label="New here">
+        <p className="starts-head">New here?</p>
+        <ul>
+          <li>
+            <a href="#/story">How it works</a>
+          </li>
+          <li>
+            <a href="#/join">I run a shop</a>
+          </li>
+          <li>
+            <a href="#/bond">I run a shopping agent</a>
+          </li>
+        </ul>
+      </section>
 
       <Card title="Find a claim">
         <form

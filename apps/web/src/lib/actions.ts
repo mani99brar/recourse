@@ -14,7 +14,8 @@ export const ACTION_NAMES = [
 ] as const;
 export type ActionName = (typeof ACTION_NAMES)[number];
 
-export type Movement = 'escrow' | 'reserve' | 'credit' | 'receive' | 'send' | 'contract_pays' | 'info';
+/** The API's movements, and `deposit`: a payment into the vault as an agent company's deposit (only this page builds it). */
+export type Movement = 'escrow' | 'reserve' | 'credit' | 'receive' | 'send' | 'contract_pays' | 'info' | 'deposit';
 
 export interface UnsignedTx {
   chainId: number;
@@ -180,7 +181,7 @@ export function signingProblems(resp: ActionResponse, asked: { name: ActionName;
   return out;
 }
 
-export function isStale(resp: ActionResponse, nowS: number = Date.now() / 1000): boolean {
+export function isStale(resp: Pick<ActionResponse, 'builtAt'>, nowS: number = Date.now() / 1000): boolean {
   return nowS - Number(resp.builtAt) > STALE_AFTER_S;
 }
 
@@ -253,6 +254,8 @@ export function movementWords(a: Pick<PreviewAmount, 'movement' | 'account'>, fr
       return `Paid from ${w} wallet with the transaction`;
     case 'contract_pays':
       return 'Paid by the contract from its own balance';
+    case 'deposit':
+      return `Leaves your wallet into ${w} deposit in the vault`;
     default:
       return 'Shown for information; nothing moves';
   }

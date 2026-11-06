@@ -61,6 +61,15 @@
   padding: 0 26px;
   font-size: 16px;
 }
+/* a plain link under the two buttons, for a first visit */
+.hero-more {
+  margin-top: 18px;
+  color: var(--fg2);
+  font-size: var(--fs-md);
+}
+.hero-more a {
+  font-weight: 600;
+}
 /* the still bleeds to the window's right edge, as the design's head stills do; the words stay clear of it */
 .hero-art {
   position: absolute;
@@ -253,4 +262,32 @@
   .with {
     flex-wrap: wrap;
   }
+}
+
+/* ---------- new here: three plain links to the story and the two sign-up pages ---------- */
+.starts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2) var(--sp-5);
+  margin-bottom: var(--sp-6);
+}
+/* the label reads as the doors' kickers do, just above it */
+.starts-head {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--r);
+  color: var(--fg3);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.starts ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }

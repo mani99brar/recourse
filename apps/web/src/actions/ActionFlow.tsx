@@ -146,7 +146,7 @@ export interface ActionFlowViewProps extends ActionFlowProps {
 const STAGES = ['Preview', 'Sign', 'Read the result'] as const;
 
 /** Which of the three stages a phase is in: 0 preview, 1 sign, 2 read back; 3 once all are done. */
-export function stageOf(phase: Phase): number {
+export function stageOf(phase: Pick<Phase, 'kind'>): number {
   switch (phase.kind) {
     case 'form':
     case 'building':
@@ -164,7 +164,7 @@ export function stageOf(phase: Phase): number {
 }
 
 /** The three stages of every action, the one it is in marked. */
-function Stages({ at }: { at: number }) {
+export function Stages({ at }: { at: number }) {
   return (
     <ol className="act-stages" aria-label="Stages">
       {STAGES.map((s, i) => (
@@ -254,7 +254,7 @@ export function ActionFlowView(v: ActionFlowViewProps) {
   );
 }
 
-function WalletLine({ wallet, onConnect }: { wallet: WalletState; onConnect?: (() => void) | undefined }) {
+export function WalletLine({ wallet, onConnect }: { wallet: WalletState; onConnect?: (() => void) | undefined }) {
   if (!wallet.available) {
     return <p className="muted small">To do this, open the page in a browser with a wallet (one that can add Hedera testnet and Arbitrum Sepolia). Everything else on this site works without one.</p>;
   }
@@ -275,7 +275,7 @@ function WalletLine({ wallet, onConnect }: { wallet: WalletState; onConnect?: ((
   );
 }
 
-function ProblemLine({ problem }: { problem: Problem }) {
+export function ProblemLine({ problem }: { problem: Problem }) {
   return (
     <p className="error" role="alert">
       {problem.text}
@@ -290,8 +290,14 @@ function ProblemLine({ problem }: { problem: Problem }) {
   );
 }
 
-/** The preview the API built, in the app's words: amounts with units, the network and the fee. */
-export function PreviewView({ resp, names = {} }: { resp: ActionResponse; names?: Record<string, string> | undefined }) {
+/** What a preview needs: the API's answer, or one this page built itself (LocalFlow). */
+export type Previewable = Pick<ActionResponse, 'chainId' | 'from' | 'transactions' | 'preview' | 'builtAt' | 'notAfter'>;
+
+/**
+ * The preview the API built, in the app's words: amounts with units, the network and the fee.
+ * `checkedBy` names who checked a step it could not simulate ("the API" unless the page built it).
+ */
+export function PreviewView({ resp, names = {}, checkedBy = 'the API' }: { resp: Previewable; names?: Record<string, string> | undefined; checkedBy?: string }) {
   const p = resp.preview;
   const native = CHAINS[resp.chainId]?.nativeCurrency.symbol ?? 'native units';
   const n = resp.transactions.length;
@@ -350,7 +356,7 @@ export function PreviewView({ resp, names = {} }: { resp: ActionResponse; names?
               </span>{' '}
               at <ExtLink href={addressLink(t.chainId, t.to)}>{short(t.to)}</ExtLink>
               {t.value !== '0' && <>; sends {units(t.value, 18, native)}</>}
-              {!t.simulated && '; checked by the API but not simulated, because it needs the step before it mined first: its gas is estimated again once that step has mined'}
+              {!t.simulated && `; checked by ${checkedBy} but not simulated, because it needs the step before it mined first: its gas is estimated again once that step has mined`}
             </span>
           </li>
         ))}
@@ -386,7 +392,7 @@ const STEP_WORDS: Record<StepState, string> = {
   failed: 'stopped',
 };
 
-export function StepsView({ resp, steps }: { resp: ActionResponse; steps: Step[] }) {
+export function StepsView({ resp, steps }: { resp: Pick<ActionResponse, 'transactions'>; steps: Step[] }) {
   return (
     <ol className="steps">
       {resp.transactions.map((t, i) => {

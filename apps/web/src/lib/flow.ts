@@ -19,7 +19,10 @@ export interface Step {
   hash: Hash | null;
 }
 
-export function freshSteps(resp: ActionResponse): Step[] {
+/** The parts of a built action that signing needs: the API's answer, or one this page built itself (LocalFlow). */
+export type Signable = Pick<ActionResponse, 'transactions' | 'from' | 'notAfter' | 'builtAt'>;
+
+export function freshSteps(resp: Pick<ActionResponse, 'transactions'>): Step[] {
   return resp.transactions.map(() => ({ state: 'waiting', hash: null }));
 }
 
@@ -33,7 +36,7 @@ export function freshSteps(resp: ActionResponse): Step[] {
  * budget.
  */
 export async function signAll(
-  resp: ActionResponse,
+  resp: Signable,
   ops: WalletOps,
   on: (i: number, step: Step) => void,
   nowS: () => number = () => Date.now() / 1000,
