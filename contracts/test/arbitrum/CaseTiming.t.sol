@@ -6,6 +6,7 @@ import {CaseState, ClaimToCourt} from "../../src/shared/RecourseTypes.sol";
 import {RecourseCase} from "../../src/arbitrum/RecourseCase.sol";
 import {IRecourseCase} from "../../src/arbitrum/IRecourseCase.sol";
 import {CaseBase} from "./CaseBase.sol";
+import {MockArbitrator} from "./mocks/MockArbitrator.sol";
 
 /// @notice Court timing against a realistic claim timeout: a case waits for a slot or the fee pool instead of
 /// going Stale, never pays for a dispute that cannot finish before `expiresAt`, and drops a ruling that arrives at
@@ -69,6 +70,28 @@ contract CaseTimingTest is CaseBase {
         assertGt(rc.openCase(second), 0);
         assertEq(uint8(stateOf(idOf(2))), uint8(CaseState.Opened));
         assertEq(rc.openCases(), 1);
+    }
+
+    /// With the court taking a full round (the mock refuses to rule earlier), a cap that stays full for that round
+    /// keeps the next claim waiting past the old 2 h cliff, and it opens when the round ends.
+    function test_capFullForARealRound_caseOpensWhenTheRoundEnds() public {
+        arb.setMinTimeToRuling(ROUND);
+        (, uint256 first) = _open(1, 30 minutes);
+        uint256 openedAt = block.timestamp;
+        bytes memory second = _payload(2, 30 minutes);
+        deliver(second);
+        vm.warp(openedAt + 2 hours);
+        vm.expectRevert(abi.encodeWithSelector(MockArbitrator.MockTooEarly.selector, openedAt + ROUND));
+        arb.giveRuling(first, 1);
+        vm.expectRevert(IRecourseCase.CapReached.selector);
+        rc.openCase(second);
+
+        vm.warp(openedAt + ROUND);
+        arb.giveRuling(first, 1);
+        assertGt(rc.openCase(second), 0);
+        assertEq(uint8(stateOf(idOf(2))), uint8(CaseState.Opened));
+        // The second case keeps a full round before its own cut-off.
+        assertGe(uint256(rc.expiresAt(idOf(2))) - block.timestamp, ROUND);
     }
 
     /// The fee pool is short for hours. Once it is funded, the waiting claim opens.

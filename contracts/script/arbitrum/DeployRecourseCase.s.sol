@@ -8,6 +8,7 @@ import {IArbitratorV2} from "@kleros/kleros-v2-contracts/arbitration/interfaces/
 import {RecourseAddresses as A} from "../../src/shared/RecourseAddresses.sol";
 import {RecourseCase} from "../../src/arbitrum/RecourseCase.sol";
 import {CaseScript} from "./CaseScript.sol";
+import {CaseTimeouts, IKlerosCoreTimes} from "./CaseTimeouts.sol";
 
 /// @notice Deploys RecourseCase on Arbitrum Sepolia against the live KlerosCore, DisputeTemplateRegistry, CCIP
 /// Router and LINK, then sets the template text of the chosen variant and the court policy URI. The broadcaster
@@ -17,7 +18,11 @@ import {CaseScript} from "./CaseScript.sol";
 /// `deployTx` and `startBlock` from the receipt and merges the deploy keys into deployments/arbitrum.json. This
 /// script writes the deploy keys to deployments/arbitrum.deploy.local.json (gitignored) with those two as null.
 ///
-/// Env (optional): CASE_TEMPLATE_VARIANT (1 default, or 2).
+/// Timing: the case's `claimTimeout` is Hedera's locked claim timeout less the relay budget (CaseTimeouts), and the
+/// shared `caseDeadline` is the time one court round needs; the preflight refuses one shorter than court 8's periods
+/// as KlerosCore reports them now.
+///
+/// Env (optional): CASE_TEMPLATE_VARIANT (1 default, or 2), CASE_RELAY_BUDGET (seconds, default 7200).
 contract DeployRecourseCase is CaseScript {
     string internal constant FRAGMENT = "arbitrum.deploy.local.json";
 
@@ -26,6 +31,7 @@ contract DeployRecourseCase is CaseScript {
         _preflight();
 
         (, address sender,) = vm.readCallers();
+        uint64 budget = uint64(vm.envOr("CASE_RELAY_BUDGET", uint256(CaseTimeouts.RELAY_BUDGET)));
         CaseDeploy memory d;
         d.router = A.ARBITRUM_ROUTER;
         d.link = A.ARBITRUM_LINK;
@@ -35,10 +41,11 @@ contract DeployRecourseCase is CaseScript {
         d.owner = sender;
         d.params = _sharedParams();
         d.relayGas = _relayGas();
-        d.claimTimeout = _claimTimeout();
+        d.claimTimeout = CaseTimeouts.caseClaimTimeout(_claimTimeout(), budget);
         d.variant = vm.envOr("CASE_TEMPLATE_VARIANT", uint256(1));
         d.parts = _parts(d.variant);
         d.policyURI = _policyURI();
+        _checkTiming(d);
 
         vm.startBroadcast();
         rc = _deployCase(d);
@@ -49,6 +56,8 @@ contract DeployRecourseCase is CaseScript {
         vm.writeFile(path, string.concat("{", _deployKeys(d, "null", "null"), "}\n"));
         console2.log("RecourseCase", address(rc));
         console2.log("owner", sender);
+        console2.log("claimTimeout (Hedera's less the relay budget)", d.claimTimeout);
+        console2.log("caseDeadline (time one court round needs)", d.params.caseDeadline);
         console2.log("live arbitration cost (wei)", rc.costNow());
         console2.log("deploy keys written to", path);
     }
@@ -68,6 +77,15 @@ contract DeployRecourseCase is CaseScript {
         require(cost > 0, "DeployRecourseCase: court 8 cost is zero");
     }
 
+    /// @dev The case must be able to fit a court-8 round as KlerosCore runs it now, and the claim timeout must leave
+    /// room for at least one round after the time a claim needs to reach court.
+    function _checkTiming(CaseDeploy memory d) internal view {
+        uint256 round = CaseTimeouts.roundOf(IKlerosCoreTimes(A.KLEROS_CORE).getTimesPerPeriod(CaseTimeouts.COURT));
+        require(round > 0, "DeployRecourseCase: court 8 has no periods");
+        require(d.params.caseDeadline >= round, "DeployRecourseCase: caseDeadline is shorter than a court 8 round");
+        require(d.claimTimeout > 2 * uint256(d.params.caseDeadline), "DeployRecourseCase: claimTimeout fits no refile");
+    }
+
     /// @dev The deployed contract reads back exactly what was configured.
     function _check(RecourseCase rc, CaseDeploy memory d) internal view {
         require(rc.owner() == d.owner, "DeployRecourseCase: owner");
@@ -76,6 +94,9 @@ contract DeployRecourseCase is CaseScript {
         require(keccak256(abi.encode(rc.templateParts())) == keccak256(abi.encode(d.parts)), "DeployRecourseCase: text");
         require(keccak256(bytes(rc.policyURI())) == keccak256(bytes(d.policyURI)), "DeployRecourseCase: policy");
         require(rc.peer() == address(0) && !rc.locked() && rc.feePool() == 0, "DeployRecourseCase: fresh state");
+        require(rc.claimTimeout() == d.claimTimeout, "DeployRecourseCase: claimTimeout");
+        (uint64 deadline,,,) = rc.params();
+        require(deadline == d.params.caseDeadline, "DeployRecourseCase: caseDeadline");
         require(rc.costNow() > 0, "DeployRecourseCase: cost");
     }
 }

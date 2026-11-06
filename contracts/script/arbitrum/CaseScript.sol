@@ -45,8 +45,8 @@ abstract contract CaseScript is Script {
         return _param(vm.readFile(PARAMS), "gasRulingBack");
     }
 
-    /// @dev Hedera's claim timeout after lock (the longer one), so a case is never marked expired while Hedera can
-    /// still take its ruling.
+    /// @dev Hedera's claim timeout after lock. The testnet deploy passes it less the relay budget
+    /// (`CaseTimeouts.caseClaimTimeout`); the local stack uses it as it is.
     function _claimTimeout() internal view returns (uint64 t) {
         t = uint64(vm.parseJsonUint(vm.readFile(PARAMS), ".locked.claimTimeout"));
         require(t > 0, "CaseScript: zero claimTimeout");

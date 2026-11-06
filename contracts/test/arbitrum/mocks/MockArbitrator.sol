@@ -7,7 +7,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice TEST MOCK, local runs only. Stands in for KlerosCore: a settable cost, a record of every dispute and the
 /// exact value paid for it, and `giveRuling`, which calls the arbitrable's `rule` like the real court does after
-/// appeals close. It never decides anything itself.
+/// appeals close. It never decides anything itself. `setMinTimeToRuling` makes `giveRuling` refuse until that long
+/// after the dispute was created, the way a real court round takes its periods (0 by default: rule at once).
 contract MockArbitrator is IArbitratorV2 {
     struct Dispute {
         IArbitrableV2 arbitrable;
@@ -21,9 +22,12 @@ contract MockArbitrator is IArbitratorV2 {
     uint256 public cost;
     uint256 public immutable firstId;
     uint256 public nextId;
+    uint256 public minTimeToRuling;
     Dispute[] internal list;
+    mapping(uint256 disputeID => uint256) public createdAt;
 
     error MockWrongValue(uint256 paid, uint256 cost);
+    error MockTooEarly(uint256 rulableAt);
     error MockUnknownDispute();
     error MockErc20Unsupported();
 
@@ -35,6 +39,10 @@ contract MockArbitrator is IArbitratorV2 {
 
     function setCost(uint256 cost_) external {
         cost = cost_;
+    }
+
+    function setMinTimeToRuling(uint256 seconds_) external {
+        minTimeToRuling = seconds_;
     }
 
     function arbitrationCost(bytes calldata) external view returns (uint256) {
@@ -49,6 +57,7 @@ contract MockArbitrator is IArbitratorV2 {
     function createDispute(uint256 choices, bytes calldata extraData) external payable returns (uint256 disputeID) {
         if (msg.value < cost) revert MockWrongValue(msg.value, cost);
         disputeID = nextId++;
+        createdAt[disputeID] = block.timestamp;
         list.push(Dispute(IArbitrableV2(msg.sender), choices, extraData, msg.value, 0, false));
         emit DisputeCreation(disputeID, IArbitrableV2(msg.sender));
     }
@@ -65,6 +74,8 @@ contract MockArbitrator is IArbitratorV2 {
     /// @notice Delivers a ruling to the dispute's arbitrable. Anyone may call: this is a mock.
     function giveRuling(uint256 disputeID, uint256 ruling) external {
         Dispute storage d = _get(disputeID);
+        uint256 rulableAt = createdAt[disputeID] + minTimeToRuling;
+        if (block.timestamp < rulableAt) revert MockTooEarly(rulableAt);
         d.ruling = ruling;
         d.ruled = true;
         emit Ruling(d.arbitrable, disputeID, ruling);
