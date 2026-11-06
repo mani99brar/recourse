@@ -9,7 +9,8 @@
 //   3. reads the resolver's own evidence group id from its DisputeRequest log;
 //   4. records the case in deployments/arbitrum.json under `testCases` at once (so a rerun never sends twice);
 //   5. builds the evidence for that group id and submits it to the EvidenceModule.
-// A case id already in `testCases` is never sent again.
+// A case id already in `testCases` is never opened again. One recorded with no `evidenceTx` (its
+// evidence send failed or never ran) gets its evidence posted on the next run with --send.
 //
 // Env: ARB_RPC_URL, OPS_ARB_KEY_FILE (keystore path; password in the file next to it), DEPLOYMENTS_DIR.
 
@@ -29,7 +30,7 @@ import { arbitrumSepolia } from 'viem/chains';
 import { addressBook } from '@recourse/shared';
 import { loadSigner } from '@recourse/shared/node';
 import { POLICY } from '../src/policy.js';
-import { TRIAL_CASES, buildTrialCase, trialEvidence } from '../src/trial.js';
+import { TRIAL_CASES, buildTrialCase, trialEvidence, type TrialCaseBuilt } from '../src/trial.js';
 import { validateTemplate } from '../src/validate.js';
 import { PACKAGE_ROOT } from './fixtures.js';
 
@@ -111,9 +112,41 @@ async function main(): Promise<void> {
   const balance = await pub.getBalance({ address: account.address });
   console.log(`ops-arb ${account.address} balance ${balance} wei; output ${path}`);
 
+  const postEvidence = async (record: TestCaseRecord, built: TrialCaseBuilt): Promise<void> => {
+    const externalId = BigInt(record.externalId);
+    const bundle = trialEvidence(built, externalId);
+    const evidenceTx = await wallet.writeContract({
+      address: book.evidenceModule,
+      abi: evidenceAbi,
+      functionName: 'submitEvidence',
+      args: [externalId, bundle.evidence],
+      account,
+    });
+    const er = await pub.waitForTransactionReceipt({ hash: evidenceTx });
+    if (er.status !== 'success') throw new Error(`${record.caseId}: submitEvidence reverted in ${evidenceTx}`);
+    record.evidenceTx = evidenceTx;
+    record.evidenceAt = now();
+    record.evidenceSha256 = bundle.sha256;
+    writeTestCases(path, existing);
+    console.log(`${record.caseId}: evidence ${bundle.byteLength} bytes in ${evidenceTx}`);
+  };
+
   for (const def of defs) {
-    if (existing.some((c) => c.caseId === def.id)) {
-      console.log(`${def.id}: already opened (${existing.find((c) => c.caseId === def.id)!.disputeId}); not sending again`);
+    const opened = existing.find((c) => c.caseId === def.id);
+    if (opened !== undefined) {
+      if (opened.evidenceTx !== undefined) {
+        console.log(`${def.id}: already opened (${opened.disputeId}); not sending again`);
+        continue;
+      }
+      // Opened by an earlier run whose evidence never landed: post it, built as that run built it.
+      const built = buildTrialCase(def, opened.policyURI);
+      if (built.claimId.toLowerCase() !== opened.claimId.toLowerCase()) throw new Error(`${def.id}: the case builds claim ${built.claimId}, the record has ${opened.claimId}`);
+      trialEvidence(built, BigInt(opened.externalId));
+      if (!send) {
+        console.log(`${def.id}: dispute ${opened.disputeId} has no evidence yet; --send posts it to evidence group ${opened.externalId}`);
+        continue;
+      }
+      await postEvidence(opened, built);
       continue;
     }
     const built = buildTrialCase(def, POLICY.uri);
@@ -174,22 +207,7 @@ async function main(): Promise<void> {
     existing.push(record);
     writeTestCases(path, existing);
     console.log(`${def.id}: dispute ${record.disputeId}, evidence group ${record.externalId}, tx ${createTx}`);
-
-    const bundle = trialEvidence(built, req.args._externalDisputeID);
-    const evidenceTx = await wallet.writeContract({
-      address: book.evidenceModule,
-      abi: evidenceAbi,
-      functionName: 'submitEvidence',
-      args: [req.args._externalDisputeID, bundle.evidence],
-      account,
-    });
-    const er = await pub.waitForTransactionReceipt({ hash: evidenceTx });
-    if (er.status !== 'success') throw new Error(`${def.id}: submitEvidence reverted in ${evidenceTx}`);
-    record.evidenceTx = evidenceTx;
-    record.evidenceAt = now();
-    record.evidenceSha256 = bundle.sha256;
-    writeTestCases(path, existing);
-    console.log(`${def.id}: evidence ${bundle.byteLength} bytes in ${evidenceTx}`);
+    await postEvidence(record, built);
   }
 }
 
