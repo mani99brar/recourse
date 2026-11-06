@@ -104,15 +104,25 @@ function handle(req, res) {
     return;
   }
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
-    if (!takeToken(clientOf(req))) {
+    const client = clientOf(req);
+    // The v1 routes answer errors as {error: {code, message}}; the older read routes keep their shape.
+    const v1 = url.pathname.startsWith('/api/v1/');
+    const fail = (status, code, message, extra = {}) => {
+      if (!res.headersSent) res.writeHead(status, { 'content-type': 'application/json', ...extra });
+      res.end(JSON.stringify(v1 ? { error: { code, message } } : { error: code === 'rate_limited' ? code : message }));
+    };
+    if (!takeToken(client)) {
       req.resume();
-      res.writeHead(429, { 'content-type': 'application/json', 'retry-after': String(Math.ceil(1 / apiRate)) });
-      res.end('{"error":"rate_limited"}');
+      fail(429, 'rate_limited', 'Too many requests from this client; try again shortly.', { 'retry-after': String(Math.ceil(1 / apiRate)) });
       return;
     }
+    // The status API reads a POST body as JSON and limits actions per client, so the body's type and length
+    // and the client this server counted are passed on; nothing else from the request is.
+    const headers = { accept: req.headers.accept ?? '*/*', 'cf-connecting-ip': client };
+    for (const h of ['content-type', 'content-length']) if (req.headers[h] !== undefined) headers[h] = req.headers[h];
     const up = http.request(
       { host: '127.0.0.1', port: apiPort, method: req.method, path: (url.pathname.slice(4) || '/') + url.search,
-        headers: { accept: req.headers.accept ?? '*/*' }, timeout: 15000 },
+        headers, timeout: 15000 },
       (r) => {
         // Hop-by-hop headers describe the upstream connection, not this one: passing on its
         // `connection: keep-alive` overrode a client's `Connection: close`.
@@ -122,7 +132,7 @@ function handle(req, res) {
       },
     );
     up.on('timeout', () => up.destroy(new Error('timeout')));
-    up.on('error', () => { if (!res.headersSent) res.writeHead(502, { 'content-type': 'application/json' }); res.end('{"error":"status API unreachable"}'); });
+    up.on('error', () => fail(502, 'upstream_unavailable', 'status API unreachable'));
     req.pipe(up);
     return;
   }

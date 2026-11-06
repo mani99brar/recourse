@@ -76,9 +76,12 @@ test('files, client routes, missing assets and HEAD', async () => {
   assert.equal(head.body, '');
 });
 
-test('an unreachable status API is a 502, not a crash', async () => {
+test('an unreachable status API is a 502, not a crash, in the v1 error shape on v1 routes', async () => {
   const r = await raw('/api/params');
   assert.equal(r.status, 502);
+  const v1 = await raw('/api/v1/health');
+  assert.equal(v1.status, 502);
+  assert.deepEqual(JSON.parse(v1.body.trim().split('\r\n').find((l) => l.startsWith('{')) ?? v1.body).error.code, 'upstream_unavailable');
   assert.equal((await raw('/health')).status, 200);
 });
 
@@ -105,7 +108,7 @@ test('a large request body to /api with the status API down is answered, not a c
   assert.equal(child.exitCode, null);
 });
 
-test('/api forwards the path without /api, keeps the query, and sends no client headers but accept', async () => {
+test('/api forwards the path without /api, keeps the query, and passes on only accept, the body type and length, and the client', async () => {
   const seen = [];
   const api = http.createServer((req, res) => {
     seen.push({ url: req.url, headers: req.headers });
@@ -122,8 +125,18 @@ test('/api forwards the path without /api, keeps the query, and sends no client 
     assert.equal(seen[0].url, '/claims?party=0xabc');
     assert.equal(seen[0].headers.accept, 'application/json');
     assert.equal(seen[0].headers.cookie, undefined);
+    assert.equal(seen[0].headers['cf-connecting-ip'], '198.51.100.20');
     assert.equal((await raw('/api', 'GET', '', webPort)).status, 200);
     assert.equal(seen[1].url, '/');
+    // A request that did not come through Cloudflare counts by its socket address, and the API sees that one.
+    assert.equal(seen[1].headers['cf-connecting-ip'], '127.0.0.1');
+    const body = '{"claimId":"0x01"}';
+    const post = await raw('/api/v1/actions/contest', 'POST', `Content-Type: application/json\r\nContent-Length: ${body.length}\r\nAuthorization: Bearer x\r\n`, webPort, body);
+    assert.equal(post.status, 200);
+    assert.equal(seen[2].url, '/v1/actions/contest');
+    assert.equal(seen[2].headers['content-type'], 'application/json');
+    assert.equal(seen[2].headers['content-length'], String(body.length));
+    assert.equal(seen[2].headers.authorization, undefined);
   } finally {
     web.kill('SIGTERM');
     api.close();
