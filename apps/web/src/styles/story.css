@@ -382,8 +382,8 @@
 /* sized to the ring and to the figure's length (--chars), so a longer amount stays inside the inner circle */
 .story-page .pay-n {
   color: var(--s);
-  font-size: 24px;
-  font-size: min(17cqi, calc(76cqi / var(--chars, 5)));
+  font-size: 21px;
+  font-size: min(15cqi, calc(64cqi / var(--chars, 5)));
   white-space: nowrap;
   font-weight: 800;
   font-stretch: var(--wide);

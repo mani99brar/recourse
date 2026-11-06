@@ -148,7 +148,8 @@
   overflow-x: auto;
   tab-size: 2;
 }
-.join-page .join-record p.error {
+.join-page .join-record p.error,
+.join-page .join-record pre + p {
   margin-top: 12px;
 }
 

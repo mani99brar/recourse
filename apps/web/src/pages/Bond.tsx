@@ -436,7 +436,7 @@ export function OperatorSteps() {
           <b>Party map:</b> {OPERATOR_STEPS.partyMap}
         </li>
         <li>
-          <b>mUSDC:</b> {OPERATOR_STEPS.mint}
+          <b>Minting:</b> {OPERATOR_STEPS.mint}
         </li>
         <li>
           <b>Required deposits:</b> {OPERATOR_STEPS.required}
