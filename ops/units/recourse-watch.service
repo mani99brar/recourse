@@ -21,8 +21,8 @@ Environment=WATCH_STATE_DIR=%h/.local/state/recourse/watch
 UnsetEnvironment=SSH_AUTH_SOCK
 ExecStart=/bin/bash @REPO@/ops/watch/watch.sh
 # The run's time: no send starts after WATCH_BUDGET_S (80 s, counted from the start, which includes the
-# health read: at most 5 s per service), and a send started near the end is cut to what is left of it, plus
-# 5 s for the notifier to die. 80 + 5 and a little jq stay under 120. Each send gets at most 40 s
+# health read: at most 5 s per service, and 5 s more for the docket's /sources), and a send started near the
+# end is cut to what is left of it, plus 5 s for the notifier to die. 80 + 5 and a little jq stay under 120. Each send gets at most 40 s
 # (WATCH_SEND_TIMEOUT_S), above the notify script's 15 s Telegram call plus its 15 s ntfy call. A run stopped
 # here anyway only defers what it had not sent: the journal place moves after each send, not before.
 TimeoutStartSec=120
