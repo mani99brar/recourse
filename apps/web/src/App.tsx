@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { WalletBar } from './actions/WalletBar.js';
-import { ThemeSwitch } from './components.js';
+import { Loading, ThemeSwitch } from './components.js';
 import { CasePage } from './pages/Case.js';
 import { CastPage } from './pages/Cast.js';
 import { DocketPage } from './pages/Docket.js';
@@ -8,13 +8,23 @@ import { FilePage } from './pages/File.js';
 import { HomePage } from './pages/Home.js';
 import { PartyPage } from './pages/Party.js';
 
-export function route(hash: string): { name: 'home' | 'claim' | 'party' | 'docket' | 'file' | 'cast'; arg: string } {
+// The story and the two sign-up pages load on their own when opened, so the home page never fetches them.
+const StoryPage = lazy(() => import('./pages/Story.js').then((m) => ({ default: m.StoryPage })));
+const JoinPage = lazy(() => import('./pages/Join.js').then((m) => ({ default: m.JoinPage })));
+const BondPage = lazy(() => import('./pages/Bond.js').then((m) => ({ default: m.BondPage })));
+
+export type RouteName = 'home' | 'claim' | 'party' | 'docket' | 'file' | 'cast' | 'story' | 'join' | 'bond';
+
+export function route(hash: string): { name: RouteName; arg: string } {
   const [, a = '', b = ''] = hash.replace(/^#/, '').split('/');
   if (a === 'claim' && b) return { name: 'claim', arg: b };
   if (a === 'party' && b) return { name: 'party', arg: b };
   if (a === 'docket') return { name: 'docket', arg: '' };
   if (a === 'file') return { name: 'file', arg: '' };
   if (a === 'cast') return { name: 'cast', arg: '' };
+  if (a === 'story') return { name: 'story', arg: '' };
+  if (a === 'join') return { name: 'join', arg: '' };
+  if (a === 'bond') return { name: 'bond', arg: '' };
   return { name: 'home', arg: '' };
 }
 
@@ -42,6 +52,7 @@ export function Shell({ hash }: { hash: string }) {
           <a href="#/docket" aria-current={r.name === 'docket' ? 'page' : undefined}>Docket</a>
           <a href="#/cast" aria-current={r.name === 'cast' ? 'page' : undefined}>Shops and agents</a>
           <a href="#/file" aria-current={r.name === 'file' ? 'page' : undefined}>Check or file an order</a>
+          <a href="#/story" aria-current={r.name === 'story' ? 'page' : undefined}>How it works</a>
         </nav>
         <div className="top-end">
           <ThemeSwitch />
@@ -55,6 +66,13 @@ export function Shell({ hash }: { hash: string }) {
         {r.name === 'docket' && <DocketPage />}
         {r.name === 'file' && <FilePage />}
         {r.name === 'cast' && <CastPage />}
+        {(r.name === 'story' || r.name === 'join' || r.name === 'bond') && (
+          <Suspense fallback={<Loading what="the page" />}>
+            {r.name === 'story' && <StoryPage />}
+            {r.name === 'join' && <JoinPage />}
+            {r.name === 'bond' && <BondPage />}
+          </Suspense>
+        )}
       </main>
       <footer className="foot">
         <div className="foot-in">

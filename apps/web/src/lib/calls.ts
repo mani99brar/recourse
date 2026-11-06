@@ -16,7 +16,7 @@ export const CALL_ABIS = {
     'function expireClaim(bytes32 claimId)',
     'function settle(bytes32 claimId)',
   ]),
-  DepositVault: parseAbi(['function withdrawCredit()']),
+  DepositVault: parseAbi(['function withdrawCredit()', 'function postDeposit(address platform, uint256 amount)']),
   RecourseCase: parseAbi(['function openCase(bytes payload)', 'function refile(bytes payload)', 'function relayRuling(bytes32 claimId) payable']),
   EvidenceModule: parseAbi(['function submitEvidence(uint256 _externalDisputeID, string _evidence)']),
   VaultToken: parseAbi(['function approve(address spender, uint256 amount) returns (bool)']),
@@ -63,8 +63,9 @@ function norm(v: unknown): unknown {
  * Null when `data` decodes, against this app's own fragment for `call.contract`, to `call.function`
  * with exactly `call.args`; otherwise why not, in plain words. Nothing is signed unless this is null.
  */
-export function callProblem(data: Hex, call: ShownCall): string | null {
-  const abi = (CALL_ABIS as Record<string, Abi>)[call.contract];
+export function callProblem(data: Hex, call: ShownCall, own?: Abi): string | null {
+  // `own`: a contract outside CALL_ABIS that the page builds calls for itself (the ERC-8004 registry).
+  const abi = own ?? (CALL_ABIS as Record<string, Abi>)[call.contract];
   if (!abi) return `it calls ${call.contract}, a contract this page does not sign for`;
   let decoded: { functionName: string; args?: readonly unknown[] };
   try {

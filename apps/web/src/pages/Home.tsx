@@ -140,6 +140,21 @@ export function HomePage() {
         )}
       </nav>
 
+      <section className="starts" aria-label="New here">
+        <p className="starts-head">New here?</p>
+        <ul>
+          <li>
+            <a href="#/story">How it works</a>
+          </li>
+          <li>
+            <a href="#/join">I run a shop</a>
+          </li>
+          <li>
+            <a href="#/bond">I run a shopping agent</a>
+          </li>
+        </ul>
+      </section>
+
       <Card title="Find a claim">
         <form
           onSubmit={(e) => {

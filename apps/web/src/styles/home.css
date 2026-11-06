@@ -254,3 +254,28 @@
     flex-wrap: wrap;
   }
 }
+
+/* ---------- new here: three plain links to the story and the two sign-up pages ---------- */
+.starts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-2) var(--sp-5);
+  margin-bottom: var(--sp-6);
+}
+.starts-head {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--r);
+  color: var(--fg3);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+.starts ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
