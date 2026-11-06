@@ -34,11 +34,29 @@ function send(res, full, status = 200) {
   // Hashed asset files never change; the page itself is revalidated.
   const cache = full.includes(`${sep}assets${sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache';
   res.writeHead(status, { 'content-type': type, 'cache-control': cache });
-  createReadStream(full).pipe(res);
+  if (res.req.method === 'HEAD') { res.end(); return; }
+  createReadStream(full).on('error', () => res.destroy()).pipe(res);
+}
+
+// A target such as `//` is scheme-relative to the WHATWG parser and throws against a base URL,
+// so the path is appended to an absolute origin instead; anything still unparseable is a 400.
+function parseTarget(target) {
+  if (typeof target !== 'string' || !target.startsWith('/')) return null;
+  try { return new URL(`http://localhost${target}`); } catch { return null; }
 }
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url ?? '/', 'http://localhost');
+  try {
+    handle(req, res);
+  } catch {
+    if (!res.headersSent) res.writeHead(400, { 'content-type': 'text/plain' });
+    res.end('bad request');
+  }
+});
+
+function handle(req, res) {
+  const url = parseTarget(req.url);
+  if (!url) { res.writeHead(400, { 'content-type': 'text/plain' }); res.end('bad request'); return; }
   if (url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end('{"ok":true}');
@@ -62,6 +80,7 @@ const server = http.createServer((req, res) => {
   if (index && extname(url.pathname) === '') return send(res, index);
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('not found');
-});
+}
+server.on('clientError', (_e, socket) => { if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); else socket.destroy(); });
 server.listen(port, '127.0.0.1', () => console.log(`web listening on 127.0.0.1:${port} serving ${root}`));
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => server.close(() => process.exit(0)));
