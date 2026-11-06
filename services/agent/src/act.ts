@@ -112,7 +112,7 @@ export async function runAction(run: ActionRun): Promise<ActionResult> {
     return { code: 2, resp, hashes: [], after: null };
   }
   if (!run.send) {
-    out('dry run: the answer is the intended call and the API simulated it against the latest block; nothing signed; rerun with --send');
+    out(`dry run: the answer is the intended call and ${simulatedWords(resp)}; nothing signed; rerun with --send`);
     return { code: 0, resp, hashes: [], after: null };
   }
 
@@ -148,6 +148,15 @@ export async function runAction(run: ActionRun): Promise<ActionResult> {
   if (rb.body) for (const line of stateLines(rb.body, hashes)) out(line);
   if (!rb.shows) out(`the status API does not show the change yet; read ${run.client.base}${resp.readBack} again later`);
   return { code: 0, resp, hashes, after: rb.body };
+}
+
+/** What the API simulated: all of it, or (fileClaim after an approve) the steps before one that cannot run until they have mined. */
+function simulatedWords(resp: BuiltAction): string {
+  const steps = (want: boolean) => resp.transactions.flatMap((t, i) => (t.simulated === want ? [String(i + 1)] : []));
+  const not = steps(false);
+  if (not.length === 0) return 'the API simulated it against the latest block';
+  const done = steps(true);
+  return `the API simulated ${done.length > 0 ? `step ${done.join(', ')}` : 'none of it'}; step ${not.join(', ')} is on a fixed gas budget and is simulated only once the step before it has mined`;
 }
 
 /** The exit code and message for a failure before or around runAction. */
@@ -248,21 +257,72 @@ export function courtFeeOf(params: V1Params): bigint {
   return BigInt(fee);
 }
 
+interface OrderRecordsRead {
+  order: { orderId: string; records: { kind: number; key: string; seq: number }[] };
+}
+
+/**
+ * Waits until the status API's index holds every record the shop's refs name, read through
+ * GET /v1/orders/{orderId}/records with the order's platform and shop: a record written moments
+ * before (the buyer's arrived, the shop's packed) reaches the API only on its next poll of the topic,
+ * and a fileClaim built before then carries other refs and is refused. True once no record the refs
+ * name is missing from the API's read; false when `timeoutMs` passes first or the API refuses the
+ * read, and the build then shows what differs.
+ */
+export async function recordsIndexed(
+  client: V1Client,
+  q: { orderId: Hex; platform: Address; shop: Address; seq: readonly bigint[] },
+  opts: { timeoutMs?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void>; print?: Printer } = {},
+): Promise<boolean> {
+  const path = `/v1/orders/${q.orderId}/records?platform=${q.platform}&shop=${q.shop}`;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const interval = opts.intervalMs ?? 3000;
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const tries = Math.max(1, Math.ceil(timeoutMs / interval) + 1);
+  let said = false;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const records = (await client.get<OrderRecordsRead>(path)).order.records;
+      const missing = q.seq.flatMap((s, k) => {
+        const r = records.find((x) => x.kind === k);
+        return s > 0n && !(r && r.seq > 0) ? [`${r?.key ?? `kind ${k}`} (seq ${s})`] : [];
+      });
+      if (missing.length === 0) return true;
+      if (!said) (opts.print ?? CONSOLE).out(`the status API's index has not read ${missing.join(', ')} yet; waiting up to ${Math.round(timeoutMs / 1000)} s`);
+      said = true;
+    } catch (error) {
+      // A 503 while the index rebuilds, or a dropped connection: read again. A refusal will not change.
+      if (error instanceof V1Failure && error.refused) return false;
+    }
+    if (i < tries - 1) await sleep(interval);
+  }
+  return false;
+}
+
 /**
  * The shop's fileClaim through the API, for file-claim and live-order. The body carries the shop's
  * own order nonce, platform, basket and net loss, so the API refuses (basket_mismatch) a basket
  * other than the one the shop was paid. Each signed transaction, its receipt and the filing are
  * journaled in the shop's claims journal (the caller holds its lock). A claim already filed answers
- * claim_exists and nothing is sent.
+ * claim_exists and nothing is sent. It is built once the API's index has read the records the shop
+ * read (recordsIndexed), so a run straight after the complaint does not race the index.
  */
 export async function fileClaimRun(
   h: HederaSide,
   input: FileClaimInput & { orderId: Hex },
-  o: { send: boolean; journal: Journal<FilingJournalRow>; allowUnpacked?: boolean; print?: Printer; readBackTimeoutMs?: number },
+  o: {
+    send: boolean;
+    journal: Journal<FilingJournalRow>;
+    allowUnpacked?: boolean;
+    print?: Printer;
+    readBackTimeoutMs?: number;
+    records?: { timeoutMs?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> };
+  },
 ): Promise<ActionResult & { claimId: Hex }> {
   const claimId = claimIdOf(BigInt(h.deployment.chainId), h.deployment.claims, input.orderId);
   const fee = courtFeeOf(h.params);
   const at = () => new Date().toISOString();
+  await recordsIndexed(h.client, { orderId: input.orderId, platform: input.platform, shop: h.account.address, seq: input.refs.seq }, { ...o.records, ...(o.print ? { print: o.print } : {}) });
   let steps: ('approve' | 'file')[] = [];
   const r = await runAction({
     tool: 'file-claim',

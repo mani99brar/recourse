@@ -8,7 +8,8 @@
 // journaled, written or paid. `--send` runs it for real, step by step; a rerun with `--order <id>`
 // carries on where it stopped (every step is journaled and idempotent). The claim is built by the
 // status API's POST /v1/actions/fileClaim (STATUS_API_URL, default http://127.0.0.1:8787), checked
-// against what the shop files, and signed here with SHOP_KEY_FILE, as file-claim does. The court fee is the vault's
+// against what the shop files, and signed here with SHOP_KEY_FILE, as file-claim does, once the API's
+// index shows the arrived record the buyer has just written (up to a minute). The court fee is the vault's
 // token from the shop in either mode: the USDC deployments/hedera.json records, Circle's (checked on
 // the mirror node; also while there is no record yet) or the testnet mock (checked by balanceOf over
 // HEDERA_RPC_URL_1). The shop's vault token is checked only when the run goes on to the claim; with

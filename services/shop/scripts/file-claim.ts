@@ -15,6 +15,9 @@
 // otherwise it files on the Hedera testnet deployment (deployments/hedera.json) from SHOP_KEY_FILE
 // through HEDERA_RPC_URL_1. The status API is STATUS_API_URL (default http://127.0.0.1:8787).
 //
+// Before it builds, it waits (up to a minute) until GET /v1/orders/{orderId}/records shows every
+// record the shop read: a record written moments before reaches the API's index on its next poll.
+//
 // A claim with no packed record from the shop on the topic is refused (no_packed_record): the fault
 // rule would answer against the shop from step 6 on. `--unpacked` files it anyway, for an order whose
 // platform is at fault in an earlier step.

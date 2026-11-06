@@ -10,7 +10,8 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { RecordRefs } from '@recourse/shared';
 import { loadAbi } from '../../shop/src/chain.js';
 import type { FileClaimInput } from '../../shop/src/filing.js';
-import { Refused, exitFor, fileClaimCalls, runAction, type Printer } from '../src/act.js';
+import { claimIdOf } from '@recourse/shared';
+import { Refused, exitFor, fileClaimCalls, fileClaimRun, recordsIndexed, runAction, type HederaSide, type Printer } from '../src/act.js';
 import {
   SendStopped,
   V1Failure,
@@ -64,6 +65,8 @@ function txOf(contract: string, to: Address, abi: Abi, fn: string, args: readonl
 }
 
 function built(action: BuiltAction['action'], transactions: BuiltTx[], over: Partial<BuiltAction> = {}): BuiltAction {
+  // The fee as the API works it out: every step's gas limit at its gas price.
+  const fee = transactions.reduce((s, t) => s + BigInt(t.gas) * BigInt(t.gasPrice), 0n);
   return {
     action,
     chain: 'hedera',
@@ -74,7 +77,7 @@ function built(action: BuiltAction['action'], transactions: BuiltTx[], over: Par
     preview: {
       summary: `Do ${action}.`,
       amounts: [{ name: 'courtFee', amount: '1000000', decimals: 6, symbol: 'mUSDC', display: '1.00 mUSDC', movement: 'info', account: null }],
-      fee: { amount: '157200000000000000', decimals: 18, symbol: 'HBAR', display: '0.1572 HBAR', gas: '120000', gasPrice: '1310000000000', basis: 'estimate' },
+      fee: { amount: fee.toString(), decimals: 18, symbol: 'HBAR', display: '0.1572 HBAR', gas: '120000', gasPrice: '1310000000000', basis: 'estimate' },
       changes: ['The claim is contested (status contested).'],
       statusAfter: 'contested',
       notes: [],
@@ -138,12 +141,16 @@ interface FakeRpc extends ChainRpc {
   raws: Hex[];
 }
 
-function fakeRpc(opts: { chainId?: number; status?: (i: number) => 'success' | 'reverted'; refuse?: boolean } = {}): FakeRpc {
+function fakeRpc(opts: { chainId?: number; gasPrice?: bigint | null; status?: (i: number) => 'success' | 'reverted'; refuse?: boolean } = {}): FakeRpc {
   let nonce = 7;
   const rpc: FakeRpc = {
     events: [],
     raws: [],
     chainId: async () => opts.chainId ?? 296,
+    gasPrice: async () => {
+      if (opts.gasPrice === null) throw new Error('eth_gasPrice failed');
+      return opts.gasPrice ?? 1_250_000_000_000n;
+    },
     nonce: async () => nonce,
     sendRaw: async (raw) => {
       if (opts.refuse) throw new Error('INSUFFICIENT_TX_FEE\nmore text');
@@ -208,6 +215,10 @@ describe('the check before signing', () => {
       ['the API built closeUncontested', built('closeUncontested', [contestTx()])],
       ['2 transaction(s), not 1', built('contest', [contestTx(), contestTx()])],
       ['deadline for this call passed', built('contest', [contestTx()], { notAfter: String(NOW - 10) })],
+      ['above the 1000 the preview shows', (() => {
+        const b = built('contest', [contestTx()]);
+        return { ...b, preview: { ...b.preview, fee: { ...b.preview.fee, amount: '1000' } } };
+      })()],
     ];
     for (const [why, resp] of cases) {
       const problems = signingProblems(resp, asked, NOW);
@@ -277,6 +288,21 @@ describe('signing and sending', () => {
     expect(await reason(signAndSend(built('contest', [contestTx()], { notAfter: String(NOW - 1) }), { account: signer, rpc: fakeRpc(), nowS: () => NOW }))).toBe('too_late');
     expect(await reason(signAndSend(built('contest', [contestTx()], { builtAt: String(NOW - 301) }), { account: signer, rpc: fakeRpc(), nowS: () => NOW }))).toBe('stale');
     expect(rpc.raws).toHaveLength(0);
+  });
+
+  it('signs no gas price over twice what the RPC asks, nor one it cannot check', async () => {
+    // the built price is 1.31e12 weibar a gas: at most twice the RPC's 0.655e12 passes, above it stops
+    const atTwice = fakeRpc({ gasPrice: 655_000_000_000n });
+    await signAndSend(built('contest', [contestTx()]), { account: signer, rpc: atTwice, nowS: () => NOW });
+    expect(atTwice.raws).toHaveLength(1);
+    const cheap = fakeRpc({ gasPrice: 654_999_999_999n });
+    const e = await signAndSend(built('fileClaim', [contestTx(), contestTx()]), { account: signer, rpc: cheap, nowS: () => NOW }).catch((x: unknown) => x);
+    expect(e).toMatchObject({ reason: 'gas_price' });
+    expect((e as Error).message).toContain('step 1 is priced at 1310000000000 a gas, over 2 times the 654999999999 the RPC asks now');
+    const unread = fakeRpc({ gasPrice: null });
+    expect(await signAndSend(built('contest', [contestTx()]), { account: signer, rpc: unread, nowS: () => NOW }).catch((x: unknown) => x)).toMatchObject({ reason: 'gas_price' });
+    expect(cheap.raws).toHaveLength(0);
+    expect(unread.raws).toHaveLength(0);
   });
 
   it('takes the estimate for a step built on a budget once the step before has mined, and stops above the budget', async () => {
@@ -383,10 +409,83 @@ describe('an action as a command runs it', () => {
     expect(parseTransaction(rpc.raws[1]!).gas).toBe(612000n);
   });
 
+  it('dry run: says which step the API could not simulate yet', async () => {
+    const approve = txOf('VaultToken', TOKEN, erc20Abi as Abi, 'approve', [VAULT, 1_000_000n]);
+    const file = txOf('RecourseClaims', CLAIMS, CLAIMS_ABI, 'contest', [CLAIM_ID], { gas: '800000', simulated: false });
+    const api = await standIn({ post: () => [200, built('contest', [approve, file], { simulated: false })] });
+    const approveCall: IntendedCall = { contract: 'VaultToken', to: TOKEN, abi: erc20Abi as Abi, functionName: 'approve', args: [VAULT, 1_000_000n] };
+    const p = capture();
+    const r = await runAction({ ...base, calls: () => [approveCall, contestCall], client: v1Client(api.url), send: false, print: p, rpc: async () => fakeRpc() });
+    expect(r.code, p.errors.join('\n')).toBe(0);
+    const last = p.lines.at(-1)!;
+    expect(last).toContain('the API simulated step 1; step 2 is on a fixed gas budget');
+    expect(last).not.toContain('simulated it against the latest block');
+  });
+
   it('prints a refusal raised before the action as it is', () => {
     const p = capture();
     expect(exitFor('file-claim', new Refused(['no_packed_record: the topic has no packed record']), p)).toBe(2);
     expect(p.errors).toEqual(['file-claim: no_packed_record: the topic has no packed record']);
     expect(exitFor('file-claim', new V1Failure(503, 'upstream_unavailable', 'Hedera did not answer.'), p)).toBe(1);
+  });
+});
+
+describe('filing after the API has read the records', () => {
+  const ORDER_ID = ('0x' + '1b'.repeat(32)) as Hex;
+  const KEYS = ['asked', 'shown', 'approval', 'ordered', 'packed', 'arrived'];
+  const SEQ: RecordRefs['seq'] = [11n, 12n, 13n, 14n, 15n, 16n];
+  const recordsAnswer = (seq: readonly number[]): [number, unknown] => [200, { order: { orderId: ORDER_ID, claimId: null, records: seq.map((s, kind) => ({ kind, key: KEYS[kind], seq: s })) }, meta: {} }];
+  const noSleep = { intervalMs: 1, sleep: async () => {} };
+
+  it('reads the records until the API holds every one the refs name', async () => {
+    const api = await standIn({ get: (_p, n) => (n === 1 ? [503, { error: { code: 'upstream_unavailable', message: 'Rebuilding.' } }] : recordsAnswer(n === 2 ? [11, 12, 13, 14, 15, 0] : [11, 12, 13, 14, 15, 16])) });
+    const p = capture();
+    expect(await recordsIndexed(v1Client(api.url), { orderId: ORDER_ID, platform: PLATFORM, shop: signer.address, seq: SEQ }, { ...noSleep, timeoutMs: 50, print: p })).toBe(true);
+    expect(api.gets).toEqual(Array(3).fill(`/v1/orders/${ORDER_ID}/records?platform=${PLATFORM}&shop=${signer.address}`));
+    expect(p.lines).toEqual(["the status API's index has not read arrived (seq 16) yet; waiting up to 0 s"]);
+  });
+
+  it('stops waiting on a refusal or when the time is up, and does not wait on a record the shop has not read', async () => {
+    const refused = await standIn({ get: () => [400, { error: { code: 'invalid_field', message: 'Bad orderId.' } }] });
+    expect(await recordsIndexed(v1Client(refused.url), { orderId: ORDER_ID, platform: PLATFORM, shop: signer.address, seq: SEQ }, { ...noSleep, timeoutMs: 50, print: capture() })).toBe(false);
+    expect(refused.gets).toHaveLength(1);
+    const behind = await standIn({ get: () => recordsAnswer([11, 12, 13, 14, 0, 0]) });
+    expect(await recordsIndexed(v1Client(behind.url), { orderId: ORDER_ID, platform: PLATFORM, shop: signer.address, seq: SEQ }, { ...noSleep, timeoutMs: 3, print: capture() })).toBe(false);
+    expect(behind.gets).toHaveLength(4);
+    // the API holding an arrived record the shop did not read is no lag to wait out: the build shows it
+    const ahead = await standIn({ get: () => recordsAnswer([11, 12, 13, 14, 15, 16]) });
+    expect(await recordsIndexed(v1Client(ahead.url), { orderId: ORDER_ID, platform: PLATFORM, shop: signer.address, seq: [11n, 12n, 13n, 14n, 15n, 0n] }, { ...noSleep, print: capture() })).toBe(true);
+  });
+
+  it('builds the fileClaim once, after the wait', async () => {
+    const input = {
+      orderId: ORDER_ID,
+      orderNonce: NONCE,
+      platform: PLATFORM,
+      refs: { topicNum: 11335218n, seq: SEQ, hashes: [H(1), H(2), H(3), H(4), H(5), H(6)] } as RecordRefs,
+      basketUsdc: 2_000_000n,
+      netLossUsdc: 2_000_000n,
+    };
+    const claimId = claimIdOf(296n, CLAIMS, ORDER_ID);
+    const file = txOf('RecourseClaims', CLAIMS, CLAIMS_ABI, 'fileClaim', [NONCE, PLATFORM, input.refs, input.basketUsdc, input.netLossUsdc]);
+    const order: string[] = [];
+    const api = await standIn({
+      get: (_p, n) => (order.push('get'), recordsAnswer(n < 3 ? [11, 12, 13, 14, 15, 0] : [11, 12, 13, 14, 15, 16])),
+      post: () => (order.push('post'), [200, built('fileClaim', [file], { claimId })]),
+    });
+    const h = {
+      deployment: { claims: CLAIMS, vault: VAULT, usdc: TOKEN, chainId: 296 },
+      account: signer,
+      client: v1Client(api.url),
+      params: { params: { claims: { courtFeeUsdc: '1000000' } } },
+      claimsAbi: CLAIMS_ABI,
+      vaultAbi: VAULT_ABI,
+      rpc: async () => fakeRpc(),
+    } as unknown as HederaSide;
+    const p = capture();
+    const r = await fileClaimRun(h, input, { send: false, journal: { append: () => undefined } as never, print: p, records: noSleep });
+    expect(r.code, p.errors.join('\n')).toBe(0);
+    expect(order).toEqual(['get', 'get', 'get', 'post']);
+    expect(api.posts).toHaveLength(1);
   });
 });

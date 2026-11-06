@@ -228,7 +228,8 @@ function txProblem(tx: BuiltTx, want: IntendedCall): string | null {
  * Every reason not to sign this answer; empty when it may be signed. It must be the action asked
  * for, built for the signer and the claim asked for, on the expected chain, every transaction going
  * to the intended contract with data that decodes to exactly the intended call, no value the preview
- * does not show as sent, and a deadline still ahead.
+ * does not show as sent, no fee above the preview's, and a deadline still ahead. The gas price is
+ * checked against the chain's own just before signing (signAndSend).
  */
 export function signingProblems(resp: BuiltAction, asked: Asked, nowS: number = Date.now() / 1000): string[] {
   const out: string[] = [];
@@ -257,6 +258,8 @@ export function signingProblems(resp: BuiltAction, asked: Asked, nowS: number = 
   const value = resp.transactions.reduce((s, t) => s + BigInt(t.value), 0n);
   const shown = resp.preview.amounts.filter((a) => a.movement === 'send').reduce((s, a) => s + BigInt(a.amount), 0n);
   if (value !== shown) out.push('the transactions send a value the preview does not show');
+  const fee = resp.transactions.reduce((s, t) => s + BigInt(t.gas) * BigInt(t.gasPrice), 0n);
+  if (fee > BigInt(resp.preview.fee.amount)) out.push(`their gas limits at their gas prices allow a fee of ${fee}, above the ${resp.preview.fee.amount} the preview shows`);
   if (resp.notAfter !== null && nowS > Number(resp.notAfter)) out.push(`the deadline for this call passed at ${isoOf(resp.notAfter)}`);
   return out;
 }
@@ -342,6 +345,8 @@ export function failureLines(e: V1Failure): string[] {
 /** The few RPC calls signing and sending need; `viemRpc` adapts a viem client. */
 export interface ChainRpc {
   chainId(): Promise<number>;
+  /** The gas price the node asks now (eth_gasPrice). */
+  gasPrice(): Promise<bigint>;
   /** The next nonce, counting pending transactions. */
   nonce(address: Address): Promise<number>;
   sendRaw(raw: Hex): Promise<void>;
@@ -351,6 +356,7 @@ export interface ChainRpc {
 export function viemRpc(client: PublicClient): ChainRpc {
   return {
     chainId: () => client.getChainId(),
+    gasPrice: () => client.getGasPrice(),
     nonce: (address) => client.getTransactionCount({ address, blockTag: 'pending' }),
     sendRaw: async (raw) => {
       await client.sendRawTransaction({ serializedTransaction: raw });
@@ -365,7 +371,7 @@ export function viemRpc(client: PublicClient): ChainRpc {
 /** A send that stopped: the steps before it stay sent, and `hashes` holds every hash signed so far. */
 export class SendStopped extends Error {
   constructor(
-    readonly reason: 'wrong_chain' | 'wrong_signer' | 'too_late' | 'stale' | 'fee_changed' | 'reverted' | 'send_failed',
+    readonly reason: 'wrong_chain' | 'wrong_signer' | 'too_late' | 'stale' | 'gas_price' | 'fee_changed' | 'reverted' | 'send_failed',
     message: string,
     readonly hashes: Hex[] = [],
   ) {
@@ -376,6 +382,13 @@ export class SendStopped extends Error {
 
 /** A preview older than this is built again before signing, as the web app does: fees, allowances and quotes move. */
 export const STALE_AFTER_S = 300;
+
+/**
+ * The most a built gas price may be over the price the sending RPC asks, as a multiple. No wallet
+ * stands between the preview and the signature here, so this is the check a wallet's own fee would
+ * be: an API answering a price in the wrong unit, or a stale spike, is not paid from the role's account.
+ */
+export const GAS_PRICE_SLACK = 2n;
 
 export interface SendOptions {
   account: LocalAccount;
@@ -394,9 +407,10 @@ export interface SendOptions {
 
 /**
  * Signs and sends every transaction exactly as built (target, data, value, gas limit, gas price,
- * chain), in order, waiting for each receipt before the next. A step built with a fixed gas budget
- * takes the API's estimate once the steps before it have mined, when that is at most the budget;
- * above it the preview's fee no longer holds and it stops (`fee_changed`).
+ * chain), in order, waiting for each receipt before the next, once the RPC is on the right chain
+ * and asks a gas price the built one is not far above (GAS_PRICE_SLACK). A step built with a fixed
+ * gas budget takes the API's estimate once the steps before it have mined, when that is at most the
+ * budget; above it the preview's fee no longer holds and it stops (`fee_changed`).
  */
 export async function signAndSend(resp: BuiltAction, o: SendOptions): Promise<Hex[]> {
   const nowS = o.nowS ?? (() => Date.now() / 1000);
@@ -406,6 +420,15 @@ export async function signAndSend(resp: BuiltAction, o: SendOptions): Promise<He
   if (served !== resp.chainId) throw new SendStopped('wrong_chain', `the RPC serves chain ${served}, the transactions are for chain ${resp.chainId}`);
   if (resp.notAfter !== null && nowS() > Number(resp.notAfter)) throw new SendStopped('too_late', `the deadline passed at ${isoOf(resp.notAfter)}`);
   if (nowS() - Number(resp.builtAt) > STALE_AFTER_S) throw new SendStopped('stale', 'the preview is more than five minutes old; build it again');
+  let asked: bigint;
+  try {
+    asked = await o.rpc.gasPrice();
+  } catch {
+    throw new SendStopped('gas_price', "the RPC's gas price cannot be read, so the API's cannot be checked; nothing signed");
+  }
+  resp.transactions.forEach((tx, i) => {
+    if (BigInt(tx.gasPrice) > asked * GAS_PRICE_SLACK) throw new SendStopped('gas_price', `step ${i + 1} is priced at ${tx.gasPrice} a gas, over ${GAS_PRICE_SLACK} times the ${asked} the RPC asks now; build it again`);
+  });
   for (let i = 0; i < resp.transactions.length; i++) {
     let tx = resp.transactions[i]!;
     if (resp.notAfter !== null && nowS() > Number(resp.notAfter)) throw new SendStopped('too_late', `the deadline passed at ${isoOf(resp.notAfter)}`, hashes);
