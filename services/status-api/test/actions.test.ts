@@ -428,8 +428,8 @@ describe('openCase, refile and relayRuling', () => {
     expectError('relayRuling', await r0.post('relayRuling', { from: SHOP, claimId: r0.b.claimId, payIn: 'card' }), 400, 'invalid_field');
   });
 
-  it('relayRuling builds no re-relay once the claim is settled or closed on Hedera, and nextAction never offers one', async () => {
-    for (const [status, statusName] of [[6, 'Settled'], [7, 'Closed']] as const) {
+  it('relayRuling builds no re-relay once the claim is settled, closed or expired on Hedera, and nextAction never offers one', async () => {
+    for (const [status, statusName] of [[6, 'Settled'], [7, 'Closed'], [8, 'Expired']] as const) {
       const r0 = await rig({ stage: 'settled', now: 1_700_010_000n });
       // The case on Arbitrum stays relayed, with the resend gap long past.
       r0.chain.state.kase = caseNow({ state: 5, attempts: 1, disputeIds: [901n, 0n], ruling: 1, sendCount: 1, lastSendAt: 1_700_000_000n });

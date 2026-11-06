@@ -2393,7 +2393,7 @@
         ],
         "operationId": "relayRuling",
         "summary": "Relay the ruling to Hedera",
-        "description": "Builds `RecourseCase.relayRuling(claimId)` on Arbitrum Sepolia; anyone may sign. The case must be Ruled or Relayed (`case_wrong_state`), the peer set (`bridge_unavailable`), fewer than maxSends sends (`max_sends_reached`) and the last send at least resendGap ago (`resend_too_soon`). With payIn native the value is exactly `quoteRelayNative(claimId)` (the contract forwards exactly the fee and returns no change); with payIn link the value is 0 and the contract's LINK pays (`contract_underfunded`). Preview amounts: ccipFee (send, the signer; or contract_pays in LINK).",
+        "description": "Builds `RecourseCase.relayRuling(claimId)` on Arbitrum Sepolia; anyone may sign. The case must be Ruled or Relayed (`case_wrong_state`), the claim on Hedera not Settled, Closed or Expired (`wrong_status`: the claims contract would ignore the ruling), the peer set (`bridge_unavailable`), fewer than maxSends sends (`max_sends_reached`) and the last send at least resendGap ago (`resend_too_soon`). With payIn native the value is exactly `quoteRelayNative(claimId)` (the contract forwards exactly the fee and returns no change); with payIn link the value is 0 and the contract's LINK pays (`contract_underfunded`). Preview amounts: ccipFee (send, the signer; or contract_pays in LINK).",
         "x-recourse-call": {
           "chain": "arbitrum",
           "contract": "RecourseCase",
