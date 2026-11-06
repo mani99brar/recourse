@@ -309,7 +309,6 @@ export function FilePage() {
           </dl>
           <p className="muted small">The court fee comes back to you if the claim closes uncontested, expires, or is not drawn.</p>
         </Card>
-        <RuleNote />
         {state.data && !state.data.claimId && (
           <div className="file-act">
             <FileClaimAction
@@ -322,6 +321,7 @@ export function FilePage() {
             />
           </div>
         )}
+        <RuleNote />
       </div>
     </div>
   );
