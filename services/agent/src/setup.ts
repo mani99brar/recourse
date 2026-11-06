@@ -2,7 +2,7 @@
 // shop's ERC-8004 registration, the records client, the payer and the journals.
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, getAddress, http, type Address } from 'viem';
 import { hederaTestnet } from 'viem/chains';
@@ -23,9 +23,23 @@ import { readLimits } from './limits.js';
 
 type Env = Record<string, string | undefined>;
 
-export const AGENT_STATE_DIR = fileURLToPath(new URL('../state/', import.meta.url));
-export const ORDERS_JOURNAL = join(AGENT_STATE_DIR, 'orders.jsonl');
-export const RECORDS_JOURNAL = join(AGENT_STATE_DIR, 'records.jsonl');
+/** The agent's state folder when AGENT_STATE_DIR is not set: `services/agent/state` in the checkout. */
+export const DEFAULT_AGENT_STATE_DIR = fileURLToPath(new URL('../state/', import.meta.url));
+
+/** The agent's journals (orders, records, pay-once): AGENT_STATE_DIR when set, else the default. */
+export function agentStateDir(env: Env = process.env): string {
+  return env.AGENT_STATE_DIR ? resolve(env.AGENT_STATE_DIR) : DEFAULT_AGENT_STATE_DIR;
+}
+
+/** The order journal every agent command and the approvals service use. */
+export function ordersJournalPath(env: Env = process.env): string {
+  return join(agentStateDir(env), 'orders.jsonl');
+}
+
+/** The agent's records journal. */
+export function recordsJournalPath(env: Env = process.env): string {
+  return join(agentStateDir(env), 'records.jsonl');
+}
 
 export function partiesOrNull(env: Env): Parties | null {
   return env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? readParties(env) : null;
@@ -84,10 +98,10 @@ export async function openAgent(env: Env, log: Logger, options: { shop?: ShopTar
   if (!parties) throw new Error('PARTIES_FILE is not set or missing; the agent needs the party map');
   const platform = partyByRole(parties, 'platform').evmAddress;
   const shop = options.shop ?? (await discoverShop(env, log));
-  const records = openRecordsClient({ role: 'agent', journalPath: RECORDS_JOURNAL, env, log });
+  const records = openRecordsClient({ role: 'agent', journalPath: recordsJournalPath(env), env, log });
   const payer = loadAgentPayer(env);
   if (payer.accountId !== records.payer) throw new Error('agent payer and records payer differ');
-  const journal = Journal.open<AgentRow>(ORDERS_JOURNAL);
+  const journal = Journal.open<AgentRow>(ordersJournalPath(env));
   const buyer = new Buyer({
     platform,
     shop,

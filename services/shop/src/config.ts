@@ -2,7 +2,7 @@
 // are passed on to the loaders by env var name.
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Address } from 'viem';
 import { addressBook, partyByRole, priceAssetOf, type PriceAsset } from '@recourse/shared';
 import { readParties } from '@recourse/shared/node';
@@ -25,6 +25,7 @@ export interface ShopConfig {
   facilitatorUrls: string[];
   priceAsset: PriceAsset;
   mirrorUrl: string;
+  /** The shop's journals: SHOP_STATE_DIR, else the default the caller gives. */
   stateDir: string;
   standingCheck: StandingCheck;
   /** Why the standing check is on or off: SHOP_STANDING_CHECK, or the default and its reason. */
@@ -49,13 +50,22 @@ export function loadShopConfig(env: Env = process.env, defaults: { stateDir: str
     facilitatorUrls: parseFacilitatorUrls(env.X402_FACILITATOR_URLS),
     priceAsset,
     mirrorUrl: env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl,
-    stateDir: defaults.stateDir,
+    stateDir: stateDirOf(env, defaults.stateDir),
     standingCheck,
     standingCheckSource,
     topicId: topicIdOrNull(env),
     displayName: displayNameOf('shop', env),
     shopAddress: env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? partyByRole(readParties(env), 'shop').evmAddress : null,
   };
+}
+
+/**
+ * Where the shop's journals live (payments, records, claims): SHOP_STATE_DIR when set, else
+ * `fallback`. The service, `pack`, `file-claim`, `reconcile` and the agent's `live-order` and
+ * `pay-once` all resolve it this way, so they read and write the same files.
+ */
+export function stateDirOf(env: Env, fallback: string): string {
+  return env.SHOP_STATE_DIR ? resolve(env.SHOP_STATE_DIR) : fallback;
 }
 
 /**

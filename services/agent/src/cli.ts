@@ -5,13 +5,13 @@ import { getAddress } from 'viem';
 import type { Attrs, Parties } from '@recourse/shared';
 import { loadSigner } from '@recourse/shared/node';
 import { withFileLock, type MirrorClient } from '@recourse/records';
-import { ORDERS_JOURNAL } from './setup.js';
+import { ordersJournalPath } from './setup.js';
 
 type Env = Record<string, string | undefined>;
 
 /** Holds the order journal's lock: one writing command at a time. The approvals service only reads. */
-export function withOrdersLock<T>(fn: () => Promise<T>): Promise<T> {
-  return withFileLock(`${ORDERS_JOURNAL}.lock`, fn);
+export function withOrdersLock<T>(fn: () => Promise<T>, env: Env = process.env): Promise<T> {
+  return withFileLock(`${ordersJournalPath(env)}.lock`, fn);
 }
 
 export const ATTR_OPTIONS = {

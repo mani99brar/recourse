@@ -9,7 +9,7 @@
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Journal, mirrorFromEnv } from '@recourse/records';
-import { DEFAULT_STATE_DIR } from '../src/boot.js';
+import { assertShopJournal, shopStateDir } from '../src/boot.js';
 import type { ShopJournalRow } from '../src/orders.js';
 import { checkSettlements } from '../src/reconcile.js';
 
@@ -21,7 +21,8 @@ async function main(): Promise<number> {
       state: { type: 'string' },
     },
   });
-  const stateDir = values.state ?? DEFAULT_STATE_DIR;
+  const stateDir = values.state ?? shopStateDir(process.env);
+  assertShopJournal(stateDir);
   const path = join(stateDir, 'journal.jsonl');
   // The running shop appends to this journal too: never cut its last line.
   const journal = Journal.open<ShopJournalRow>(path, { cutTornTail: false });

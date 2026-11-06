@@ -17,7 +17,8 @@
 //
 // `--local-shop` runs the shop in this process (its own journal) on the facilitator rung N of
 // X402_FACILITATOR_URLS; otherwise the agent finds the running shop through its ERC-8004
-// registration (or SHOP_BASE_URL) and the shop's journal is read from services/shop/state.
+// registration (or SHOP_BASE_URL) and the shop's journals are read from its state folder (SHOP_STATE_DIR,
+// else services/shop/state), the agent's from AGENT_STATE_DIR (else services/agent/state).
 
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -49,7 +50,7 @@ import type { ShopJournalRow } from '../../shop/src/orders.js';
 import { packOrder } from '../../shop/src/pack.js';
 import type { AgentRow } from '../src/buy.js';
 import { hashscanLink, loadBuyer, withOrdersLock } from '../src/cli.js';
-import { ORDERS_JOURNAL, openAgent, partiesOrNull } from '../src/setup.js';
+import { openAgent, ordersJournalPath, partiesOrNull } from '../src/setup.js';
 
 const STEPS = ['order', 'pack', 'report', 'claim'] as const;
 type Step = (typeof STEPS)[number];
@@ -78,12 +79,17 @@ async function main(): Promise<number> {
   if (!parties) throw new Error('PARTIES_FILE is not set or missing');
   const merchant = displayNameOf('shop', env);
   const shopParty = partyByRole(parties, 'shop');
-  const { DEFAULT_STATE_DIR, startShop } = await import('../../shop/src/boot.js');
+  const { assertShopJournal, shopStateDir, startShop } = await import('../../shop/src/boot.js');
+  const shopState = shopStateDir(env);
+  const ordersJournal = ordersJournalPath(env);
 
   let shop: RunningShop | null = null;
-  let shopJournalPath = join(DEFAULT_STATE_DIR, 'journal.jsonl');
+  let shopJournalPath = join(shopState, 'journal.jsonl');
+  // The running shop's journals: refuse a folder it has never written, so its claims and records
+  // journals are the ones this run reads.
+  if (!values['local-shop']) assertShopJournal(shopState);
   if (values['local-shop']) {
-    shopJournalPath = join(DEFAULT_STATE_DIR, 'live-order-journal.jsonl');
+    shopJournalPath = join(shopState, 'live-order-journal.jsonl');
     const rung = values.facilitator ? Number(values.facilitator) : 1;
     shop = await startShop({ env, port: 0, firstRung: rung, journalPath: shopJournalPath, log: createLogger('shop') });
     const state = shop.ladder.state();
@@ -98,9 +104,9 @@ async function main(): Promise<number> {
     // order's payment is signed the agent must also hold its price, in HBAR (and then no USDC) when
     // paying in HBAR. A rerun with --order prices the journaled basket, and once a payment is signed
     // its money may already have left, so only the fees are checked.
-    const orderRows = values.order ? readJournal<AgentRow>(ORDERS_JOURNAL).rows.filter((r) => 'orderId' in r && r.orderId === values.order) : [];
+    const orderRows = values.order ? readJournal<AgentRow>(ordersJournal).rows.filter((r) => 'orderId' in r && r.orderId === values.order) : [];
     const drafted = orderRows.find((r): r is Extract<AgentRow, { type: 'draft' }> => r.type === 'draft');
-    if (values.order && !drafted) throw new Error(`--order: no draft for ${values.order} in ${ORDERS_JOURNAL}`);
+    if (values.order && !drafted) throw new Error(`--order: no draft for ${values.order} in ${ordersJournal}`);
     const basket = drafted ? { sku: drafted.sku, quantity: drafted.quantity } : { sku: values.sku!, quantity: 1 };
     const item = itemBySku(basket.sku);
     if (!item) throw new Error(`--sku: no item ${basket.sku}`);
@@ -148,8 +154,8 @@ async function main(): Promise<number> {
       console.log('a check failed: --send would stop here');
     }
 
-    return await withFileLock(join(DEFAULT_STATE_DIR, 'claims.jsonl.lock'), () => withOrdersLock(async () => {
-      const claimsJournal = Journal.open<FilingJournalRow>(join(DEFAULT_STATE_DIR, 'claims.jsonl'));
+    return await withFileLock(join(shopState, 'claims.jsonl.lock'), () => withOrdersLock(async () => {
+      const claimsJournal = Journal.open<FilingJournalRow>(join(shopState, 'claims.jsonl'));
       const filer =
         deployment && clients
           ? new ClaimFiler({ clients, claims: deployment.claims, vault: deployment.vault, usdc: deployment.usdc, claimsAbi: loadAbi('RecourseClaims', env), vaultAbi: loadAbi('DepositVault', env), journal: claimsJournal, log })
@@ -200,8 +206,8 @@ async function main(): Promise<number> {
         // The shop appends to this journal too: never cut its last line.
         const shopJournal = Journal.open<ShopJournalRow>(shopJournalPath, { cutTornTail: false });
         try {
-          const packed = await withFileLock(join(DEFAULT_STATE_DIR, 'records.jsonl.lock'), async () => {
-            const records = openRecordsClient({ role: 'shop', journalPath: join(DEFAULT_STATE_DIR, 'records.jsonl'), env, log });
+          const packed = await withFileLock(join(shopState, 'records.jsonl.lock'), async () => {
+            const records = openRecordsClient({ role: 'shop', journalPath: join(shopState, 'records.jsonl'), env, log });
             try {
               return await packOrder({ records: records.client, journal: shopJournal, orderId: orderId!, merchant, log });
             } finally {
@@ -234,7 +240,7 @@ async function main(): Promise<number> {
         agent.close();
         claimsJournal.close();
       }
-    }));
+    }, env));
   } finally {
     await shop?.close();
   }

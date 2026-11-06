@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { loadKeyBytes, loadSigner, readParties } from '@recourse/shared/node';
 import { Journal, TopicReader, createLogger, hederaAccountOf, mirrorFromEnv, type Logger } from '@recourse/records';
 import { createShopApp, type ShopApp, type ShopJournalRow } from './app.js';
-import { loadShopConfig, type ShopConfig } from './config.js';
+import { loadShopConfig, stateDirOf, type ShopConfig } from './config.js';
 import { FacilitatorLadder, SELF_HOSTED, httpRung, type RungSpec } from './facilitators.js';
 import { NETWORK } from './payments.js';
 import { createSelfFacilitator } from './self-facilitator.js';
@@ -16,7 +16,25 @@ import { vaultStandingReader } from './standing.js';
 
 type Env = Record<string, string | undefined>;
 
+/** The shop's state folder when SHOP_STATE_DIR is not set: `services/shop/state` in the checkout. */
 export const DEFAULT_STATE_DIR = fileURLToPath(new URL('../state/', import.meta.url));
+
+/** The shop's state folder: SHOP_STATE_DIR, else DEFAULT_STATE_DIR. */
+export function shopStateDir(env: Env = process.env): string {
+  return stateDirOf(env, DEFAULT_STATE_DIR);
+}
+
+/**
+ * For the command-line scripts that work on the running shop's journals: the shop journal must
+ * already be in `dir` (the shop writes it at boot). A script run without SHOP_STATE_DIR after the
+ * journals moved then stops, instead of starting an empty claims or records journal in the old folder.
+ */
+export function assertShopJournal(dir: string): void {
+  const path = join(dir, 'journal.jsonl');
+  if (!existsSync(path)) {
+    throw new Error(`no shop journal at ${path}: set SHOP_STATE_DIR (or --state) to the running shop's state folder`);
+  }
+}
 
 export function ladderRungs(config: ShopConfig, env: Env): RungSpec[] {
   return config.facilitatorUrls.map((url, i) =>
@@ -52,6 +70,7 @@ export async function startShop(
   const log = options.log ?? createLogger('shop');
   const config = loadShopConfig(env, { stateDir: DEFAULT_STATE_DIR });
   if (options.port !== undefined) config.port = options.port;
+  log.info('shop_state', { stateDir: config.stateDir, source: env.SHOP_STATE_DIR ? 'SHOP_STATE_DIR' : 'default' });
   const journal = Journal.open<ShopJournalRow>(options.journalPath ?? join(config.stateDir, 'journal.jsonl'));
   let shop: ShopApp | undefined;
   const ladder = new FacilitatorLadder(ladderRungs(config, env), {

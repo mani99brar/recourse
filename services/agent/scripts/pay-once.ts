@@ -21,11 +21,11 @@
 // account, for at most the check price. The signed transaction id is journaled before sending.
 
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { HBAR_ASSET_ID, addressBook, priceAssetIdOf, priceAssetOf } from '@recourse/shared';
 import { Journal, MirrorClient, checkAccount, createLogger, describeCheck, hederaAccountOf, validStartSeconds } from '@recourse/records';
 import { loadAgentPayer, type AgentPayer } from '../src/hedera-signer.js';
+import { agentStateDir } from '../src/setup.js';
 import { PAYMENT_DEAD_AFTER_S, PaymentRefused, chooseRequirement, payExactly, probe402, termsOf } from '../src/x402-pay.js';
 
 const PING_PATH = '/x402/ping-order';
@@ -155,7 +155,7 @@ async function main(): Promise<number> {
     return 2;
   }
 
-  const journal = Journal.open<Row>(join(fileURLToPath(new URL('../state/', import.meta.url)), 'pay-once.jsonl'));
+  const journal = Journal.open<Row>(join(agentStateDir(env), 'pay-once.jsonl'));
   const ctx: Context = { payer, shopAccount, asset, maxAmount, mirror, journal, send };
   try {
     if (values['shop-url']) {
@@ -166,7 +166,7 @@ async function main(): Promise<number> {
       return send ? 1 : r.kind === 'refused' ? 2 : 0;
     }
 
-    const { startShop, DEFAULT_STATE_DIR } = await import('../../shop/src/boot.js');
+    const { startShop, shopStateDir } = await import('../../shop/src/boot.js');
     const { parseFacilitatorUrls } = await import('../../shop/src/facilitators.js');
     const urls = parseFacilitatorUrls(env.X402_FACILITATOR_URLS);
     const only = values.facilitator ? Number(values.facilitator) : null;
@@ -176,7 +176,7 @@ async function main(): Promise<number> {
       console.log(`\nrung ${rung}: ${urls[rung - 1]}`);
       let running;
       try {
-        running = await startShop({ env, port: 0, firstRung: rung, log: createLogger('shop'), journalPath: join(DEFAULT_STATE_DIR, 'pay-once-journal.jsonl') });
+        running = await startShop({ env, port: 0, firstRung: rung, log: createLogger('shop'), journalPath: join(shopStateDir(env), 'pay-once-journal.jsonl') });
       } catch (error) {
         console.log(`rung ${rung}: shop did not start (${error instanceof Error ? error.message : String(error)})`);
         continue;

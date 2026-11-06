@@ -15,7 +15,7 @@ import { erc20Abi, getAddress, parseUnits, type Hex, type LocalAccount } from 'v
 import { HEDERA_TESTNET_CHAIN_ID, claimIdOf, partyByRole } from '@recourse/shared';
 import { loadSigner, readParties } from '@recourse/shared/node';
 import { Journal, TopicReader, createLogger, fetchDocument, ipfsOptionsFromEnv, mirrorFromEnv, readJournal, recordsTopicId, withFileLock } from '@recourse/records';
-import { DEFAULT_STATE_DIR } from '../src/boot.js';
+import { assertShopJournal, shopStateDir } from '../src/boot.js';
 import { chainClients, loadAbi, readHederaDeployment } from '../src/chain.js';
 import { claimInputFor } from '../src/claim-input.js';
 import { ClaimFiler, type FilingJournalRow } from '../src/filing.js';
@@ -36,7 +36,8 @@ async function main(): Promise<number> {
   if (!values.order) throw new Error('--order is required');
   if (!!values.local !== !!values.rpc) throw new Error('--local and --rpc go together');
   const orderId = values.order as Hex;
-  const stateDir = values.state ?? DEFAULT_STATE_DIR;
+  const stateDir = values.state ?? shopStateDir(process.env);
+  assertShopJournal(stateDir);
   const env = { ...process.env, ...(values.local ? { HEDERA_LOCAL_FILE: values.local, HEDERA_RPC_URL_1: values.rpc } : {}) };
   const log = createLogger('shop');
 

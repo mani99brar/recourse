@@ -11,7 +11,7 @@ import { parseArgs } from 'node:util';
 import type { Hex } from 'viem';
 import type { Attrs } from '@recourse/shared';
 import { Journal, createLogger, displayNameOf, openRecordsClient, withFileLock } from '@recourse/records';
-import { DEFAULT_STATE_DIR } from '../src/boot.js';
+import { assertShopJournal, shopStateDir } from '../src/boot.js';
 import { itemBySku, offerAttrs } from '../src/catalog.js';
 import { OrderBook, type ShopJournalRow } from '../src/orders.js';
 import { chargedPrice, packOrder, packedDoc } from '../src/pack.js';
@@ -30,7 +30,8 @@ async function main(): Promise<number> {
   if (!values.order) throw new Error('--order is required');
   const orderId = values.order as Hex;
   const env = process.env;
-  const stateDir = (values.state as string | undefined) ?? DEFAULT_STATE_DIR;
+  const stateDir = (values.state as string | undefined) ?? shopStateDir(process.env);
+  assertShopJournal(stateDir);
   const merchant = displayNameOf('shop', env);
   const given: Attrs = {};
   for (const k of ATTRS) {
