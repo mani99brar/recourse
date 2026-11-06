@@ -44,15 +44,15 @@ function findingWords(c: CastClaim): string {
   return `${SIDE_WORDS[c.findingSide] ?? c.findingSide} at fault`;
 }
 
-/** "2 claims: 1 Closed, not contested, 1 Settled". */
+/** "2 (1 closed, not contested; 1 settled)". */
 function outcomeWords(claims: CastClaim[]): string {
   if (claims.length === 0) return 'none';
   const n = new Map<string, number>();
   for (const c of claims) {
-    const t = STATUS_WORDS[c.statusKey]?.title ?? c.statusKey;
+    const t = (STATUS_WORDS[c.statusKey]?.title ?? c.statusKey).toLowerCase();
     n.set(t, (n.get(t) ?? 0) + 1);
   }
-  return `${claims.length}: ${[...n].map(([t, k]) => `${k} ${t}`).join(', ')}`;
+  return `${claims.length} (${[...n].map(([t, k]) => `${k} ${t}`).join('; ')})`;
 }
 
 function uriWords(uri: string | null): string {
@@ -87,7 +87,7 @@ function Member({ m, token }: { m: CastMember; token: VaultToken | undefined }) 
           {m.agentURI?.startsWith('https://') ? <ExtLink href={m.agentURI}>{uriWords(m.agentURI)}</ExtLink> : uriWords(m.agentURI)}
           {type && <span className="mono"> {type.kind}</span>}
         </Row>
-        <Row label="Orders on the records topic">{m.orders}</Row>
+        <Row label="Orders recorded">{m.orders}</Row>
         <Row label="Claims">{outcomeWords(m.claims)}</Row>
       </dl>
       {m.claims.length > 0 && (

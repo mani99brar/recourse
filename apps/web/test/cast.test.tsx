@@ -71,7 +71,7 @@ describe('the cast page', () => {
     expect(html).toContain(`href="${registry.explorer}"`);
     expect(html).toContain('>149<');
     // claims with their outcomes
-    expect(html).toContain('2: 1 Closed, not contested, 1 Settled');
+    expect(html).toContain('2 (1 closed, not contested; 1 settled)');
     expect(html).toContain('the agent company at fault');
     expect(html).toContain('paid 12.50 mUSDC (testnet mock)');
     expect(html).toContain('pre-check: no finding');
