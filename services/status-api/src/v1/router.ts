@@ -6,7 +6,7 @@
 
 import { readFileSync } from 'node:fs';
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
-import { STATUS_KEYS, type OrderParties } from '@recourse/shared';
+import { ClaimStatus, STATUS_KEYS, type OrderParties } from '@recourse/shared';
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
 import { ChainRevert, ChainUnavailable, type ActionReads } from '../chain.js';
 import { safeError } from '../http.js';
@@ -43,7 +43,16 @@ export interface V1Options {
   chain: ActionReads | null;
   /** Milliseconds, for the rate limiter (tests move it). */
   nowMs?: () => number;
+  /** How long a claim read waits on a shop's vault credit (tests shorten it); CREDIT_WAIT_MS when absent. */
+  creditWaitMs?: number;
 }
+
+/**
+ * How long a claim read waits on the credit of a shop that may withdraw, counted from when the
+ * answer needs it: a cold read is eight eth_calls on the Hedera relay and can take tens of seconds,
+ * past the web server's 15-second upstream timeout.
+ */
+const CREDIT_WAIT_MS = 3_000;
 
 /** A token bucket per client; buckets idle long enough to refill are dropped, and the map is capped. */
 export class Buckets {
@@ -112,21 +121,45 @@ export function nextActionOf(row: { nextCall: string | null; nextActor: string; 
   return { action: row.nextCall, actor: row.nextActor, path: `/v1/actions/${row.nextCall}`, deadline: row.deadline };
 }
 
-/** Each row with its next action; the credit of an account that may withdraw is read once per request. */
-async function withNextActions<T extends NextRow>(svc: StatusService, rows: T[]): Promise<(T & { nextAction: ReturnType<typeof nextActionOf> })[]> {
-  const credits = new Map<Address, Promise<bigint | null>>();
-  const creditOf = (a: Address) => {
-    let p = credits.get(a);
+interface CreditReads {
+  /** Starts the read of `a`'s credit, once a request. */
+  start(a: Address): void;
+  /** The credit when the read answers within `waitMs` from now, else the last one read for `a` (null before any). */
+  of(a: Address): Promise<bigint | null>;
+}
+
+function creditReads(svc: StatusService, waitMs: number): CreditReads {
+  const reads = new Map<Address, Promise<bigint | null>>();
+  const read = (a: Address) => {
+    let p = reads.get(a);
     if (!p) {
-      p = svc.partyBlock(a).then((b) => b.credit, () => null);
-      credits.set(a, p);
+      p = svc.readCredit(a);
+      reads.set(a, p);
     }
     return p;
   };
+  return {
+    start: (a) => void read(a),
+    async of(a) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), waitMs);
+      });
+      try {
+        return (await Promise.race([read(a), late])) ?? svc.knownCredit(a);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+/** Each row with its next action; the credit of an account that may withdraw is read once per request, waited on for a bounded time. */
+async function withNextActions<T extends NextRow>(rows: T[], credits: CreditReads): Promise<(T & { nextAction: ReturnType<typeof nextActionOf> })[]> {
   return Promise.all(
     rows.map(async (row) => {
       const signer = row.nextCall === 'withdrawCredit' ? (row.nextActor === 'platform' ? row.platform : row.shop) : null;
-      return { ...row, nextAction: nextActionOf(row, signer ? await creditOf(signer) : undefined) };
+      return { ...row, nextAction: nextActionOf(row, signer ? await credits.of(signer) : undefined) };
     }),
   );
 }
@@ -135,6 +168,7 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
   const r = express.Router();
   const cfg = svc.d.cfg;
   const buckets = new Buckets(cfg.actionsPerMin, cfg.actionBurst, opts.nowMs);
+  const creditWaitMs = opts.creditWaitMs ?? CREDIT_WAIT_MS;
   let building = 0;
 
   const meta = async () => ({
@@ -180,7 +214,7 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
         const out = await svc.claimsResponse(addr, status);
         const p = out as { rows: NextRow[]; standing?: unknown; groups?: unknown };
         res.json({
-          claims: await withNextActions(svc, p.rows),
+          claims: await withNextActions(p.rows, creditReads(svc, creditWaitMs)),
           party: addr === undefined ? null : { standing: p.standing, groups: p.groups },
           meta: await meta(),
         });
@@ -193,8 +227,13 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
     .get(
       read('claim', async (req) => {
         const id = claimIdParam(req.params.claimId, 'claimId');
+        // A settled or closed claim's next step is the shop's withdrawal: its credit is read alongside
+        // the detail, which reads the chain too, rather than after it.
+        const credits = creditReads(svc, creditWaitMs);
+        const folded = foldClaim(svc.d.store.eventsOf(id));
+        if (folded && (folded.status === ClaimStatus.Settled || folded.status === ClaimStatus.Closed)) credits.start(folded.shop);
         try {
-          return (await withNextActions(svc, [await svc.claimDetail(id)]))[0];
+          return (await withNextActions([await svc.claimDetail(id)], credits))[0];
         } catch (e) {
           if (e instanceof ApiError && e.code === 'unknown') throw notFound('claim', id);
           throw e;

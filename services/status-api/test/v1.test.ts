@@ -18,7 +18,7 @@ import type { Reader } from '../src/live.js';
 const closers: (() => void)[] = [];
 afterEach(() => closers.splice(0).forEach((c) => c()));
 
-async function boot(opts: { stages?: Stage[]; rebuilding?: boolean; reader?: Reader; cfg?: Partial<Config>; chain?: ActionReads | null; nowMs?: () => number } = {}) {
+async function boot(opts: { stages?: Stage[]; rebuilding?: boolean; reader?: Reader; cfg?: Partial<Config>; chain?: ActionReads | null; nowMs?: () => number; creditWaitMs?: number } = {}) {
   const sim = new Sim();
   const built: Built[] = (opts.stages ?? ['finding_made', 'contested', 'settled']).map((s, i) => buildClaim(sim, s, i + 1));
   const store = new Store();
@@ -27,7 +27,11 @@ async function boot(opts: { stages?: Stage[]; rebuilding?: boolean; reader?: Rea
   const now = built.reduce((m, b) => (b.now > m ? b.now : m), 0n);
   for (const s of ['hedera', 'arbitrum', 'hcs'] as const) store.status[s].indexedThrough = Number(now);
   const h = harness({ store, now: Number(now), reader: opts.reader ?? fakeReader(), deployments: { arbitrumChainId: 421_614 }, ...(opts.cfg ? { cfg: opts.cfg } : {}) });
-  const app = createApp(h.svc, { chain: opts.chain === undefined ? fakeChain({ now }) : opts.chain, ...(opts.nowMs ? { nowMs: opts.nowMs } : {}) });
+  const app = createApp(h.svc, {
+    chain: opts.chain === undefined ? fakeChain({ now }) : opts.chain,
+    ...(opts.nowMs ? { nowMs: opts.nowMs } : {}),
+    ...(opts.creditWaitMs !== undefined ? { creditWaitMs: opts.creditWaitMs } : {}),
+  });
   const url = await new Promise<string>((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
       closers.push(() => server.close());
@@ -132,6 +136,31 @@ describe('/v1 reads', () => {
     expect(party.body.party).toHaveProperty('standing');
     expect(party.body.party).toHaveProperty('groups');
     expect((await get('/v1/claims')).body.party).toBeNull();
+  });
+
+  it('waits a bounded time on a slow credit read, then answers with the last credit read', async () => {
+    const party0 = { deposit: 100_000_000n, required: 10_000_000n, credit: 2_500_000n, topUpDeadline: 0n, inGoodStanding: true, openClaims: 0n, exitRequestedAt: 0n, shopEscrow: 0n };
+    let delayMs = 400;
+    let reads = 0;
+    const reader = fakeReader({ party: () => (reads++, new Promise<typeof party0>((resolve) => setTimeout(() => resolve({ ...party0 }), delayMs))) });
+    const { built, get } = await boot({ reader, creditWaitMs: 50 });
+    const settledId = built[2]!.claimId;
+    // nothing read yet and the relay slower than the wait: no withdrawCredit, and no answer held up for the read
+    let t = Date.now();
+    expect((await get(`/v1/claims/${settledId}`)).body.claim.nextAction).toBeNull();
+    expect((await get('/v1/claims')).body.claims.find((c: any) => c.claimId === settledId).nextAction).toBeNull();
+    expect(Date.now() - t).toBeLessThan(delayMs);
+    // the slow read lands in the background and is kept: a later slow read answers with it
+    await new Promise((r) => setTimeout(r, delayMs + 50));
+    t = Date.now();
+    expect((await get(`/v1/claims/${settledId}`)).body.claim.nextAction).toMatchObject({ action: 'withdrawCredit' });
+    expect((await get('/v1/claims')).body.claims.find((c: any) => c.claimId === settledId).nextAction).toMatchObject({ action: 'withdrawCredit' });
+    expect(Date.now() - t).toBeLessThan(delayMs);
+    // a quick read is taken as it is: the credit gone to zero hides it again
+    delayMs = 0;
+    party0.credit = 0n;
+    expect((await get(`/v1/claims/${settledId}`)).body.claim.nextAction).toBeNull();
+    expect(reads).toBeGreaterThanOrEqual(5);
   });
 
   it('has no next action for calls it does not build', () => {

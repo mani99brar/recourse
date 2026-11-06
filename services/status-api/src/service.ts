@@ -96,6 +96,8 @@ export interface RecordInfo {
 export class StatusService {
   private params$: TtlCache<LiveParamBundle>;
   private partyViews: TtlCache<PartyViews>;
+  /** The last vault credit each party view read, by address: only known parties and the parties of indexed claims are read. */
+  private credits = new Map<Address, bigint>();
   private facts$: TtlCache<Awaited<ReturnType<Reader['facts']>>>;
   private ext = new TtlCache<unknown>(10_000);
   private lastGood: LiveParamBundle | null = null;
@@ -635,10 +637,26 @@ export class StatusService {
     const r = this.d.reader;
     if (!r) return null;
     try {
-      return await this.partyViews.get(address, () => r.party(address));
+      const v = await this.partyViews.get(address, () => r.party(address));
+      this.credits.set(address, v.credit);
+      return v;
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The vault credit of an account a claim names, for the claim's next action: a live read (null
+   * when it fails) that never rejects. Each answer is kept, also one that lands after its caller
+   * stopped waiting, so a slow relay still leaves a value for the next read (`knownCredit`).
+   */
+  readCredit(address: Address): Promise<bigint | null> {
+    return this.views(address).then((v) => (v ? v.credit : null));
+  }
+
+  /** The last vault credit read for `address`, null before any. */
+  knownCredit(address: Address): bigint | null {
+    return this.credits.get(address) ?? null;
   }
 
   async partyBlock(address: Address) {

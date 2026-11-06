@@ -44,7 +44,9 @@ own `servers` entry.
 
 Each claim carries `statusKey`, `nextActor`, `nextCall`, `deadline` and `nextAction: { action, actor, path, deadline }`:
 the action under `/v1/actions` that builds the next call, or null when nothing is due or the call is not one of them
-(and for `withdrawCredit`, when the account that would sign it has no credit left in the vault).
+(and for `withdrawCredit`, when the account that would sign it has no credit left in the vault). That credit is read
+live and waited on for at most 3 s. When the read is slower, the last credit read for the account is used, and before
+any has been read nextAction is null; so a slow Hedera relay never holds a claim read past the web server's 15-second timeout.
 
 ## Actions
 
