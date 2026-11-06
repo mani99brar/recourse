@@ -180,6 +180,11 @@ export class FakeChains implements Chains {
   intentStatus(): OpenIntentStatus[] {
     return this.intentStatusV;
   }
+  /** Open intent records a compaction must keep (the fake signs nothing; tests put records here). */
+  intentRecords: JournalRecord[] = [];
+  openIntentRecords(): JournalRecord[] {
+    return this.intentRecords;
+  }
 
   async send(call: KeeperCall): Promise<CallResult> {
     this.calls.push(call);

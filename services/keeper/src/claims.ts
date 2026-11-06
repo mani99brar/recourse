@@ -217,10 +217,25 @@ export function applyEvent(book: Map<string, KeeperClaim>, e: ChainEvent, ctx: A
   return undefined;
 }
 
-/** Event as stored in the journal: viem values made JSON-safe. */
+/** Events each contract emits that change a claim (they name it in `claimId`). */
+const CLAIM_EVENTS: Record<string, ReadonlySet<string>> = {
+  claims: new Set(['ClaimFiled', 'PreCheckRecorded', 'Contested', 'ClosedUncontested', 'SentToCourt', 'RulingReceived', 'RulingIgnored', 'Settled', 'ClaimExpired']),
+  case: new Set(['ClaimReceived', 'ClaimStale', 'CaseOpened', 'RefileNeeded', 'RulingFinal', 'RulingRelayed']),
+};
+
+/** Claim-less events the machine reacts to (see Keeper.handleGlobalEvents); every other one is dropped. */
+export const GLOBAL_EVENTS: ReadonlySet<string> = new Set(['case:ClaimRejected', 'claims:BridgeModeSet', 'kit:Contribution', 'kit:ChoiceFunded']);
+
+/** Event as stored in the journal: viem values made JSON-safe. Evidence text is not kept: the keeper journals its own once. */
 export function eventToRecord(e: ChainEvent): JournalRecord {
   const args: { [k: string]: JsonValue } = {};
-  for (const [k, v] of Object.entries(e.args)) args[k] = jsonSafe(v) as JsonValue;
+  for (const [k, v] of Object.entries(e.args)) {
+    if (e.name === 'Evidence' && k === '_evidence') {
+      args._evidenceLength = typeof v === 'string' ? v.length : 0;
+      continue;
+    }
+    args[k] = jsonSafe(v) as JsonValue;
+  }
   return { t: 'event', key: eventKey(e), chain: e.chain, source: e.source, name: e.name, tx: e.tx, logIndex: e.logIndex, time: e.time, position: e.position, args };
 }
 
@@ -248,10 +263,22 @@ export function recordToEvent(r: JournalRecord): ChainEvent {
   };
 }
 
+/** How long the book remembers an event key after ingesting it (sources re-read a short overlap). */
+export const SEEN_KEEP_MS = 24 * 3600_000;
+/** ...and the most recent keys it always keeps, however old. */
+export const SEEN_KEEP_LAST = 5000;
+
+/** A terminal claim still needs its payload while its case may need markStale (Expired, case not settled). */
+function needsPayload(c: KeeperClaim): boolean {
+  if (!isTerminal(c)) return true;
+  return c.terminal === 'Expired' && c.staleAt === undefined && !c.done.includes('case-settled');
+}
+
 /** All claims plus the indexes the machine needs, kept in step with the journal. */
 export class ClaimBook {
   readonly claims = new Map<string, KeeperClaim>();
-  readonly seen = new Set<string>();
+  /** Event key -> unix ms it was ingested (journal `at` on replay). */
+  readonly seen = new Map<string, number>();
   /** Bridge-wide notes the machine reacts to (ClaimRejected, contributions, mode changes). */
   readonly globalEvents: ChainEvent[] = [];
 
@@ -289,12 +316,40 @@ export class ClaimBook {
     return out;
   }
 
-  /** Journals and applies a new event. Returns false for an event already seen. */
+  /**
+   * True for an event the machine uses: one that changes a claim we know (a Kleros event only for
+   * our disputes, Evidence only from our own key), or a bridge-wide one it reacts to. Decided
+   * before anything is journaled, without changing the book.
+   */
+  relevant(e: ChainEvent): boolean {
+    const a = e.args;
+    const events = CLAIM_EVENTS[e.source];
+    if (events !== undefined) {
+      if (events.has(e.name)) return claimIdOfEvent(e) !== undefined;
+      return GLOBAL_EVENTS.has(`${e.source}:${e.name}`);
+    }
+    if (e.source === 'core' && e.name === 'Draw') return this.claimOfDispute(String(a._disputeID)) !== undefined;
+    if (e.source === 'evidence' && e.name === 'Evidence') {
+      return this.claimOfExternalId(String(a._externalDisputeID)) !== undefined && String(a._party).toLowerCase() === this.ctx.opsArb.toLowerCase();
+    }
+    if (e.source === 'kit' && GLOBAL_EVENTS.has(`kit:${e.name}`)) return this.claimOfDispute(String(a._coreDisputeID)) !== undefined;
+    return false;
+  }
+
+  /**
+   * Journals and applies a new event. Returns false for an event already seen. An event the
+   * machine does not use is only remembered as seen: never journaled, never kept, so anyone's
+   * Evidence posts or unrelated contract events cannot grow the journal or the heap.
+   */
   ingest(e: ChainEvent): { fresh: boolean; claimId?: Hex } {
     const key = eventKey(e);
     if (this.seen.has(key)) return { fresh: false };
+    if (!this.relevant(e)) {
+      this.seen.set(key, Date.now());
+      return { fresh: false };
+    }
     this.journal?.append(eventToRecord(e));
-    this.seen.add(key);
+    this.seen.set(key, Date.now());
     const claimId = applyEvent(this.claims, e, this.applyCtx());
     if (claimId === undefined) this.globalEvents.push(e);
     return { fresh: true, claimId };
@@ -322,19 +377,68 @@ export class ClaimBook {
 
   /** Rebuilds from replayed records. Terminal claims come back as they were and are never re-checked. */
   load(records: readonly JournalRecord[]): void {
-    for (const r of records) {
-      if (r.t === 'event') {
-        const e = recordToEvent(r);
-        const key = String(r.key);
-        if (this.seen.has(key)) continue;
-        this.seen.add(key);
-        if (applyEvent(this.claims, e, this.applyCtx()) === undefined) this.globalEvents.push(e);
-      } else if (r.t === 'state' && typeof r.claimId === 'string' && r.claim) {
-        this.claims.set(r.claimId, r.claim as unknown as KeeperClaim);
-      } else if (r.t === 'evidence' && typeof r.claimId === 'string' && typeof r.text === 'string') {
-        this.texts.set(`${r.claimId}:${String(r.attempt)}`, r.text);
+    for (const r of records) this.loadRecord(r);
+  }
+
+  /** One replayed record, in journal order. */
+  loadRecord(r: JournalRecord): void {
+    const at = typeof r.at === 'number' ? r.at : 0;
+    if (r.t === 'event') {
+      const key = String(r.key);
+      if (this.seen.has(key)) return;
+      this.seen.set(key, at);
+      const e = recordToEvent(r);
+      // Only the bridge-wide kinds the machine reacts to are kept; replayed ones count as handled.
+      if (applyEvent(this.claims, e, this.applyCtx()) === undefined && GLOBAL_EVENTS.has(`${e.source}:${e.name}`)) this.globalEvents.push(e);
+    } else if (r.t === 'state' && typeof r.claimId === 'string' && r.claim) {
+      this.claims.set(r.claimId, r.claim as unknown as KeeperClaim);
+    } else if (r.t === 'evidence' && typeof r.claimId === 'string' && typeof r.text === 'string') {
+      this.texts.set(`${r.claimId}:${String(r.attempt)}`, r.text);
+    } else if (r.t === 'seen' && Array.isArray(r.entries)) {
+      for (const x of r.entries) {
+        if (Array.isArray(x) && typeof x[0] === 'string' && typeof x[1] === 'number' && !this.seen.has(x[0])) this.seen.set(x[0], x[1]);
       }
     }
+  }
+
+  /** Forgets bridge-wide events the machine has handled (the first `n`). */
+  dropHandledGlobal(n: number): void {
+    this.globalEvents.splice(0, Math.min(n, this.globalEvents.length));
+  }
+
+  /**
+   * Shrinks the book to what the machine still needs and returns it as journal records: one
+   * snapshot per claim (a terminal claim whose case needs nothing more loses its payload bytes),
+   * the evidence texts of open claims, and the event keys ingested in the last day or among the
+   * last few thousand, so a source's re-read overlap is still recognised after a restart.
+   */
+  compact(nowMs: number): JournalRecord[] {
+    const out: JournalRecord[] = [];
+    for (const c of this.claims.values()) {
+      if (c.received && !needsPayload(c) && c.received.payload !== '0x') c.received = { ...c.received, payload: '0x' };
+      out.push({ t: 'state', claimId: c.claimId, phase: phaseOf(c), claim: JSON.parse(JSON.stringify(c)) as JsonValue });
+    }
+    for (const [key, text] of [...this.texts]) {
+      const sep = key.lastIndexOf(':');
+      const claimId = key.slice(0, sep);
+      const attempt = key.slice(sep + 1);
+      const c = this.claims.get(claimId);
+      const sha = c?.evidence?.[attempt]?.sha256;
+      if (c === undefined || isTerminal(c) || sha === undefined) {
+        this.texts.delete(key);
+        continue;
+      }
+      out.push({ t: 'evidence', claimId, attempt: Number(attempt), sha256: sha, text });
+    }
+    const keys = [...this.seen];
+    const recentFrom = Math.max(0, keys.length - SEEN_KEEP_LAST);
+    const kept: [string, number][] = [];
+    keys.forEach(([k, at], i) => {
+      if (i >= recentFrom || nowMs - at < SEEN_KEEP_MS) kept.push([k, at]);
+      else this.seen.delete(k);
+    });
+    for (let i = 0; i < kept.length; i += 2000) out.push({ t: 'seen', entries: kept.slice(i, i + 2000) });
+    return out;
   }
 
   /** Terminal claims first, then open ones (the order the machine resumes them in). */

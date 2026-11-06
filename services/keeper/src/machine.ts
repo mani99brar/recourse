@@ -23,8 +23,7 @@ import type { Alert, AlertKind, Alerter } from './alerts.js';
 import { ClaimBook, currentAttempt, isTerminal, milestoneOf, phaseOf } from './claims.js';
 import { controlWindows, emptyControl, expiryForced, operatorHolds, readControl, releasedSince, type Control } from './control.js';
 import type { EvidencePort } from './evidence.js';
-import type { Journal } from './journal.js';
-import { replayJournal } from './journal.js';
+import { JOURNAL_FILE, streamJournal, type Journal, type JournalRecord } from './journal.js';
 import { DEFAULT_TIMING, rowOf, type Row, type Timing } from './table.js';
 import type {
   BridgeMsg,
@@ -68,7 +67,11 @@ export interface KeeperOptions {
   links?: Partial<Links>;
   /** The vault's token, from the Hedera deployment record: alerts name vault amounts in it. */
   vaultToken: VaultToken;
+  /** Compact the journal once it reaches this many bytes (default 8 MiB). */
+  compactAtBytes?: number;
 }
+
+export const DEFAULT_COMPACT_AT_BYTES = 8 * 1024 * 1024;
 
 export interface Links {
   ccipMessage: (messageId: Hex) => string;
@@ -126,17 +129,48 @@ export class Keeper {
     this.o.log?.(line);
   }
 
-  /** Loads the journal: terminal claims first, then open claims from their last state. */
+  /**
+   * Loads the journal in one streamed pass: claims from their events and last snapshots, the
+   * alert clock and outbox, and the intents that have no result yet (the senders settle those
+   * before anything new is sent). Only open intents are held while reading, never every record.
+   */
   start(): void {
-    const replay = replayJournal(this.o.stateDir);
+    const intents = new Map<string, JournalRecord>();
+    const replay = streamJournal(this.o.stateDir, JOURNAL_FILE, (r) => {
+      if (r.t === 'intent') intents.set(String(r.id), r);
+      else if (r.t === 'result') intents.delete(String(r.id));
+      this.book.loadRecord(r);
+      this.o.alerter.loadRecord(r);
+    });
     if (replay.badLines.length > 0) {
       this.o.alerter.raise({ kind: 'journal_error', hint: `journal lines ${replay.badLines.join(', ')} do not parse; run keeper-ctl rebuild` });
     }
-    // Senders first: an intent signed before a crash is settled before anything new is sent.
-    this.o.chains.load(replay.records);
-    this.book.load(replay.records);
-    this.o.alerter.load(replay.records);
+    this.o.chains.load([...intents.values()]);
     this.handledGlobal = this.book.globalEvents.length;
+  }
+
+  /**
+   * Rewrites the journal as the state it describes (see ClaimBook.compact): claim snapshots,
+   * evidence of open claims, recent event keys, open intents verbatim, the alert clock and the
+   * unsent alerts. Atomic (Journal.rewrite); a no-op when the journal or the chain port cannot do
+   * it safely. Returns true when it rewrote.
+   */
+  compact(): boolean {
+    const j = this.o.journal;
+    const intents = this.o.chains.openIntentRecords?.();
+    if (j.rewrite === undefined || intents === undefined) return false;
+    const before = j.size?.() ?? 0;
+    this.book.dropHandledGlobal(this.handledGlobal);
+    this.handledGlobal = 0;
+    const records: JournalRecord[] = [
+      { t: 'compacted', fromBytes: before },
+      ...this.book.compact(Date.now()),
+      ...intents,
+      ...this.o.alerter.compact(),
+    ];
+    j.rewrite(records);
+    this.log(`journal compacted: ${before} bytes -> ${j.size?.() ?? '?'} bytes, ${records.length} records`);
+    return true;
   }
 
   // ------------------------------------------------------------------ tick
@@ -161,8 +195,8 @@ export class Keeper {
       for (const s of settled ?? []) this.settled(s, now);
       this.stuckIntents();
     });
-    await this.guard('hedera events', () => this.ingestHedera());
-    await this.guard('arbitrum events', () => this.ingestArbitrum());
+    const hederaOk = await this.guard('hedera events', () => this.ingestHedera());
+    const arbitrumOk = await this.guard('arbitrum events', () => this.ingestArbitrum());
     await this.guard('bridge-wide events', () => this.handleGlobalEvents(now));
     if (now - this.lastLevelsAt >= this.timing.levelsEveryS) {
       await this.guard('funding levels', () => this.checkLevels());
@@ -182,15 +216,30 @@ export class Keeper {
     for (const c of this.book.claims.values()) counts[phaseOf(c)] = (counts[phaseOf(c)] ?? 0) + 1;
     this.health.claimsByPhase = counts;
     await this.o.alerter.flush();
+    // Only after both sources committed: every event ingested so far sits behind a saved cursor.
+    if (hederaOk && arbitrumOk) this.maybeCompact();
   }
 
-  private async guard(what: string, fn: () => Promise<unknown>): Promise<void> {
+  private maybeCompact(): void {
+    const size = this.o.journal.size?.();
+    if (size === undefined || size < (this.o.compactAtBytes ?? DEFAULT_COMPACT_AT_BYTES)) return;
+    try {
+      this.compact();
+    } catch (err) {
+      this.health.lastError = `journal compaction: ${msg(err)}`;
+      this.alert({ kind: 'journal_error', hint: `journal compaction failed (${msg(err)}); the old journal is untouched and still in use` });
+    }
+  }
+
+  private async guard(what: string, fn: () => Promise<unknown>): Promise<boolean> {
     try {
       await fn();
+      return true;
     } catch (err) {
       this.health.lastError = `${what}: ${msg(err)}`;
       this.log(`${what}: ${msg(err)}`);
       this.alert({ kind: 'rpc_down', hint: `${what} failed: ${msg(err)}` });
+      return false;
     }
   }
 

@@ -100,8 +100,18 @@ function dedupeKey(kind: string, claimId: string | undefined, subject?: string):
   return `${claimId ?? (subject ? `@${subject}` : '-')}|${kind}`;
 }
 
+/** Unsent alerts kept at most; past this the oldest unsent one is dropped (it stays in the log). */
+export const OUTBOX_MAX = 500;
+
+interface Clock {
+  kind: AlertKind;
+  claimId?: Hex;
+  subject?: string;
+  at: number;
+}
+
 export class Alerter {
-  private readonly last = new Map<string, number>();
+  private readonly last = new Map<string, Clock>();
   private readonly outbox = new Map<string, AlertRecord>();
   private counter = 0;
 
@@ -111,30 +121,61 @@ export class Alerter {
     return (this.o.now ?? Date.now)();
   }
 
+  private tick(kind: AlertKind, claimId: Hex | undefined, subject: string | undefined, at: number): void {
+    const key = dedupeKey(kind, claimId, subject);
+    const prev = this.last.get(key);
+    if (prev !== undefined && prev.at >= at) return;
+    this.last.set(key, { kind, ...(claimId ? { claimId } : {}), ...(subject ? { subject } : {}), at });
+  }
+
+  private queue(rec: AlertRecord): void {
+    this.outbox.set(rec.id, rec);
+    while (this.outbox.size > OUTBOX_MAX) {
+      const oldest = this.outbox.keys().next().value as string;
+      this.outbox.delete(oldest);
+    }
+  }
+
   /** Rebuilds the dedupe clock and the unsent outbox from a replayed journal. */
   load(records: readonly JournalRecord[]): void {
-    const sent = new Set<string>();
-    for (const r of records) if (r.t === 'alertSent') sent.add(String(r.id));
-    for (const r of records) {
-      if (r.t !== 'alert') continue;
+    for (const r of records) this.loadRecord(r);
+  }
+
+  /** One replayed record, in journal order (an alertSent always follows its alert). */
+  loadRecord(r: JournalRecord): void {
+    if (r.t === 'alert') {
       const a = r as AlertRecord;
-      this.last.set(dedupeKey(a.kind, a.claimId, a.subject), a.raisedAt);
-      if (!sent.has(a.id)) this.outbox.set(a.id, a);
+      this.tick(a.kind, a.claimId, a.subject, a.raisedAt);
+      this.queue(a);
+    } else if (r.t === 'alertSent') {
+      this.outbox.delete(String(r.id));
+    } else if (r.t === 'alertClock' && typeof r.kind === 'string' && typeof r.raisedAt === 'number') {
+      this.tick(r.kind as AlertKind, typeof r.claimId === 'string' ? (r.claimId as Hex) : undefined, typeof r.subject === 'string' ? r.subject : undefined, r.raisedAt);
     }
+  }
+
+  /** The alerter's state as journal records: one clock per (claim or subject, kind), then the unsent alerts. */
+  compact(): JournalRecord[] {
+    const out: JournalRecord[] = [];
+    for (const c of this.last.values()) {
+      out.push({ t: 'alertClock', kind: c.kind, raisedAt: c.at, ...(c.claimId ? { claimId: c.claimId } : {}), ...(c.subject ? { subject: c.subject } : {}) });
+    }
+    for (const rec of this.outbox.values()) out.push(rec);
+    return out;
   }
 
   /** Last time this (claim, kind) was raised, in unix ms. */
   lastRaised(kind: AlertKind, claimId?: Hex): number | undefined {
-    return this.last.get(dedupeKey(kind, claimId));
+    return this.last.get(dedupeKey(kind, claimId))?.at;
   }
 
   /** The most recent alert raised for a claim, sent or not. */
   latestFor(claimId: Hex): { kind: AlertKind; raisedAt: number } | undefined {
-    const prefix = `${claimId.toLowerCase()}|`;
+    const id = claimId.toLowerCase();
     let best: { kind: AlertKind; raisedAt: number } | undefined;
-    for (const [key, at] of this.last) {
-      if (!key.startsWith(prefix)) continue;
-      if (best === undefined || at > best.raisedAt) best = { kind: key.slice(prefix.length) as AlertKind, raisedAt: at };
+    for (const c of this.last.values()) {
+      if (c.claimId?.toLowerCase() !== id) continue;
+      if (best === undefined || c.at > best.raisedAt) best = { kind: c.kind, raisedAt: c.at };
     }
     return best;
   }
@@ -143,7 +184,7 @@ export class Alerter {
   raise(alert: Alert): boolean {
     const now = this.now();
     const key = dedupeKey(alert.kind, alert.claimId, alert.subject);
-    const prev = this.last.get(key);
+    const prev = this.last.get(key)?.at;
     if (prev !== undefined && now - prev < (this.o.dedupeMs ?? 30 * 60_000)) return false;
     this.counter += 1;
     const rec: AlertRecord = {
@@ -154,8 +195,8 @@ export class Alerter {
       ...alert,
     };
     this.o.append(rec);
-    this.last.set(key, now);
-    this.outbox.set(rec.id, rec);
+    this.tick(alert.kind, alert.claimId, alert.subject, now);
+    this.queue(rec);
     this.o.log?.(`alert ${alert.kind}${alert.claimId ? ` ${alert.claimId}` : ''}${alert.hint ? `: ${alert.hint}` : ''}`);
     return true;
   }

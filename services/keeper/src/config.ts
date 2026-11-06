@@ -20,6 +20,8 @@ export interface KeeperConfig {
   arbRpcUrl: string;
   deploymentsDir: string;
   courtUrlTemplate: string;
+  /** Compact the journal once it reaches this many bytes. */
+  compactAtBytes: number;
 }
 
 type Env = Record<string, string | undefined>;
@@ -29,6 +31,15 @@ function whole(name: string, text: string, min: number, max: number): number {
   const n = Number(text);
   if (n < min || n > max) throw new Error(`${name} must be between ${min} and ${max}`);
   return n;
+}
+
+/**
+ * A keeper-only knob read straight from the environment: the shared env list (readEnv) covers
+ * the names every service shares, these belong to the keeper alone.
+ */
+function local(env: Env, name: string, fallback: string): string {
+  const v = env[name];
+  return v === undefined || v === '' ? fallback : v;
 }
 
 export function loadKeeperConfig(env: Env = process.env): KeeperConfig {
@@ -79,5 +90,6 @@ export function loadKeeperConfig(env: Env = process.env): KeeperConfig {
     arbRpcUrl: e.ARB_RPC_URL,
     deploymentsDir: e.DEPLOYMENTS_DIR,
     courtUrlTemplate: e.COURT_URL_TEMPLATE,
+    compactAtBytes: whole('KEEPER_COMPACT_MB', local(env, 'KEEPER_COMPACT_MB', '8'), 1, 64) * 1024 * 1024,
   };
 }

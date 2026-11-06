@@ -1013,7 +1013,7 @@ describe('restart', () => {
     // Down for 20 minutes: the contest window of claim 3 passes meanwhile.
     fake.t += 1200;
     const r2 = rig({ fake, dir: r1.dir });
-    expect(fake.loaded?.length).toBeGreaterThan(0);
+    expect(fake.loaded).toEqual([]); // the senders get only intents with no result, and there are none
     expect(phase(r2, done)).toBe('Settled');
     expect(phase(r2, live)).toBe('Watching');
     expect(r2.k.book.evidenceText(live, 1)).toBeDefined();

@@ -213,6 +213,7 @@ async function main(): Promise<void> {
     log,
     links: { courtCase: courtLink },
     vaultToken: hed.token,
+    compactAtBytes: cfg.compactAtBytes,
   });
   keeper.start();
 

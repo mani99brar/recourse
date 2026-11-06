@@ -98,8 +98,8 @@ export type CallResult =
 /** Everything the machine needs from the two chains. */
 export interface Chains {
   /**
-   * Restores sender state (open intents and their results) from the replayed journal. Called once
-   * at start, before any read or send.
+   * Restores sender state from the replayed journal: the keeper hands over the intents that have
+   * no result yet (results already applied). Called once at start, before any read or send.
    */
   load(records: readonly JournalRecord[]): void;
   /** Contract address of the Arbitrum case contract and the Arbitrum chain id (for external ids). */
@@ -156,6 +156,11 @@ export interface Chains {
   hasOpen(chain: Chain, fn: string, claimId: Hex): boolean;
   /** Open intents with their age and broadcast trouble; absent where nothing is signed. */
   intentStatus?(): OpenIntentStatus[];
+  /**
+   * The open intent records of both senders, exactly as journaled, for a compacted journal.
+   * Without it the keeper never compacts (it would lose transactions in flight).
+   */
+  openIntentRecords?(): JournalRecord[];
 }
 
 /** A call that was left open and has now been settled. */

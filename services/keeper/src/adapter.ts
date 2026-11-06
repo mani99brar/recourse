@@ -117,7 +117,8 @@ export class LiveChains implements Chains {
         const externals = [...filter.externalIds()];
         const q: LogQuery[] = [
           { source: 'core', address: a.klerosCore, abi: klerosCoreAbi as Abi, eventName: 'Draw', args: { _disputeID: disputes } },
-          { source: 'evidence', address: a.evidenceModule, abi: evidenceModuleAbi as Abi, eventName: 'Evidence', args: { _externalDisputeID: externals } },
+          // Anyone may post evidence to our disputes; only our own key's posts are read at all.
+          { source: 'evidence', address: a.evidenceModule, abi: evidenceModuleAbi as Abi, eventName: 'Evidence', args: { _externalDisputeID: externals, _party: a.sender.address } },
         ];
         if (a.disputeKit) {
           for (const eventName of ['Contribution', 'ChoiceFunded']) {
@@ -352,6 +353,10 @@ export class LiveChains implements Chains {
 
   intentStatus(): OpenIntentStatus[] {
     return [...this.o.hedera.sender.intentStatus(), ...this.o.arbitrum.sender.intentStatus()];
+  }
+
+  openIntentRecords(): JournalRecord[] {
+    return [...this.o.hedera.sender.openIntents(), ...this.o.arbitrum.sender.openIntents()];
   }
 }
 
