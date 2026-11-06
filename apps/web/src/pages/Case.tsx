@@ -158,6 +158,9 @@ function PartyLink({ address, name, role }: { address: string; name: string | nu
 export function CaseView({ d, error = null }: { d: CaseDetail; error?: ApiFailure | null }) {
   const word = STATUS_WORDS[d.statusKey];
   const windowOpen = d.statusKey === 'finding_made' || d.statusKey === 'no_finding';
+  // A closed claim's next step is the shop's withdrawal, which the claim alone cannot tell is done: read the credit.
+  const shopParty = usePoll<{ credit: string | null }>(d.nextCall === 'withdrawCredit' ? READS.party(d.shop) : null);
+  const noCredit = d.nextCall === 'withdrawCredit' && shopParty.data?.credit === '0';
   const tone = ['settled', 'closed_uncontested', 'closed_undrawn'].includes(d.statusKey) ? 'ok' : ['stuck', 'expired', 'unresolved'].includes(d.statusKey) ? 'bad' : 'wait';
   return (
     <div className="case-page">
@@ -179,7 +182,11 @@ export function CaseView({ d, error = null }: { d: CaseDetail; error?: ApiFailur
           <PartyLink address={d.platform} name={d.platformName} role="the agent company" />
         </p>
         <p className="lead">{statusPlain(d.statusKey, d.nextCall, d.court.state)}</p>
-        {d.nextCall && (
+        {noCredit ? (
+          <p className="next">
+            <strong>Next:</strong> nothing. The shop holds no credit to withdraw.
+          </p>
+        ) : d.nextCall && (
           <p className="next">
             <strong>Next:</strong> {ACTOR_WORDS[d.nextActor]} can {CALL_WORDS[d.nextCall]}.
             {(d.nextCall === 'contest' || anyoneAction(d.nextCall)) && ' It can be done below with a browser wallet; nothing is sent until you confirm.'}
