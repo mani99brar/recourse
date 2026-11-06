@@ -158,3 +158,50 @@ describe('the live-read cache is bounded', () => {
     expect(await c.get('bad', async () => 2)).toBe(2);
   });
 });
+
+describe('the court case read and its events', () => {
+  function atCourt() {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'at_court', 1);
+    return { sim, b };
+  }
+
+  it('the case events win over an older case read, and the Kleros reads still show', async () => {
+    const { sim, b } = atCourt();
+    sim.tick(900);
+    sim.arb('RulingFinal', { claimId: b.claimId, disputeId: 901n, ruling: 1, attempts: 1 });
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, b.live!); // read while the case was still opened
+    const h = harness({ store, now: Number(sim.t) + 10 });
+    const d = await h.svc.claimDetail(b.claimId);
+    expect(d.court.state).toBe('ruled');
+    expect(d.court.disputeIds[0]).toBe(901n);
+    expect(d.court.currentRuling).toBe(1n);
+  });
+
+  it('a later attempt in the events wins over a read of the first attempt being refiled', async () => {
+    const { sim, b } = atCourt();
+    sim.tick(600);
+    sim.arb('RefileNeeded', { claimId: b.claimId });
+    sim.tick(60);
+    sim.arb('CaseOpened', { claimId: b.claimId, disputeId: 951n, attempt: 2 });
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, state: 3 } });
+    const h = harness({ store, now: Number(sim.t) + 10 });
+    const d = await h.svc.claimDetail(b.claimId);
+    expect(d.court.state).toBe('opened');
+    expect(d.court.attempts).toBe(2);
+    expect(d.court.disputeIds).toEqual([901n, 951n]);
+  });
+
+  it('a case read further along than the events still wins', async () => {
+    const { sim, b } = atCourt();
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, state: 4, ruling: 2, ruledAt: sim.t } });
+    const h = harness({ store, now: Number(sim.t) + 10 });
+    expect((await h.svc.claimDetail(b.claimId)).court.state).toBe('ruled');
+  });
+});
