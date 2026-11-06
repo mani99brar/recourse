@@ -304,7 +304,8 @@ export interface KeeperClaim {
   /**
    * Set while the vault refuses this claim's close or settle with EarlierClaimOpen: the earlier open
    * claim against the same platform it waits on, since when, and the latest time anyone can end that
-   * claim (its own timeout after its pre-check, or after filing), once read.
+   * claim by its status, once read: its timeout after filing (Filed) or after the pre-check
+   * (Contested, AtCourt), the end of its contest window (PreChecked), or its ruling (Ruled).
    */
   payoutWait?: { earlier: Hex; since: number; endsBy?: number };
   /** Set while openCase (attempt 1) or refile (attempt 2) waits on a short fee pool or a full case cap. */
