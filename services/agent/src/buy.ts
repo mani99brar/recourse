@@ -89,6 +89,8 @@ export type AgentRow =
   | (At & { type: 'pay_dead'; txId: string; reason: string })
   /** `offer` is what the shop's paid reply stated, kept as evidence; the ordered record never uses it. */
   | (At & { type: 'paid'; txId: string; source: 'settlement' | 'shop' | 'mirror'; offer: Omit<Attrs, 'price'> | null })
+  /** A paid reply whose payment the mirror node did not show yet: its offer goes on the paid row, also after a rerun. */
+  | (At & { type: 'pay_replied'; txId: string; offer: Omit<Attrs, 'price'> | null })
   /** The shop's paid reply named an offer other than the one shown and approved. */
   | (At & { type: 'offer_mismatch'; txId: string; keys: string[]; shown: Omit<Attrs, 'price'>; replied: Omit<Attrs, 'price'> })
   /** A payment the shop reported that could not be taken as this order's; the order ends here. */
@@ -744,9 +746,12 @@ export class Buyer {
       this.write({ type: 'abandoned', at: iso(), orderId, reason: m.reason });
       return { state: 'stopped' as const, outcome: { state: 'abandoned' as const, orderId, reason: m.reason } };
     };
-    // The offer a paid reply stated, kept for the paid row while the mirror node catches up.
-    let replied: { txId: string; offer: Omit<Attrs, 'price'> | null } | null = null;
-    const offerFor = (txId: string) => (replied?.txId === txId ? replied.offer : null);
+    // The offer a paid reply stated for this payment, journaled while the mirror node caught up.
+    const offerFor = (txId: string) => {
+      const key = paymentKey(txId, false);
+      const kept = this.rowsOf(orderId).filter((r): r is Extract<AgentRow, { type: 'pay_replied' }> => r.type === 'pay_replied' && paymentKey(r.txId, false) === key);
+      return kept.at(-1)?.offer ?? null;
+    };
 
     for (let round = 0; ; round++) {
       // Settle every signed payment of this order that is still open before signing another.
@@ -768,7 +773,7 @@ export class Buyer {
       const known = await this.shopOrder(orderId);
       if (known) {
         const c = await this.confirmPayment(orderId, probed, known.txId, known.status);
-        if (c.state === 'paid') return markPaid(known.txId, 'shop', null);
+        if (c.state === 'paid') return markPaid(known.txId, 'shop', offerFor(known.txId));
         if (c.state === 'mismatch') return stop(known.txId, 'shop', c);
         await this.sleep(this.deps.pollMs ?? 5000);
         continue;
@@ -811,7 +816,7 @@ export class Buyer {
             const c = await this.confirmPayment(orderId, probed, txId);
             if (c.state === 'paid') return markPaid(txId, 'settlement', reply.offer ?? null);
             if (c.state === 'mismatch') return stop(txId, 'settlement', c);
-            replied = { txId, offer: reply.offer ?? null };
+            this.write({ type: 'pay_replied', at: iso(), orderId, txId, offer: reply.offer ?? null });
           }
           // Not on the mirror node yet, or a 200 with no transaction id: the next rounds settle it
           // through the signed payment.
@@ -822,7 +827,7 @@ export class Buyer {
           const txId = reply.order?.payment?.txId;
           if (reply.error === 'order_exists' && txId) {
             const c = await this.confirmPayment(orderId, probed, txId, reply.order?.status);
-            if (c.state === 'paid') return markPaid(txId, 'shop', null);
+            if (c.state === 'paid') return markPaid(txId, 'shop', offerFor(txId));
             if (c.state === 'mismatch') return stop(txId, 'shop', c);
           }
           await this.sleep(this.deps.pollMs ?? 5000);

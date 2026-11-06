@@ -359,6 +359,29 @@ describe('the shop reply after payment', () => {
     expect(w.fake.settled).toHaveLength(1);
   });
 
+  test('a reply offer that differs, kept while the mirror node caught up, still stops the rerun after a crash', async () => {
+    w = await world();
+    w.fake.bareIds = true;
+    const { buyer } = w.open({ fetchImpl: rewriteReplyOffer('size', 'XL') });
+    const mirror = (buyer as unknown as { deps: { mirror: { transaction: (id: string) => Promise<unknown> } } }).deps.mirror;
+    mirror.transaction = async () => {
+      throw new Error('mirror: 502 for /transactions');
+    };
+    // The process dies at its first wait for the mirror node, after the paid reply.
+    (buyer as unknown as { sleep: () => Promise<void> }).sleep = async () => {
+      throw new Error('crashed');
+    };
+    const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
+    await expect(buyer.run(orderId)).rejects.toThrow('crashed');
+    expect(rowsOf(w, orderId).find((r) => r.type === 'pay_replied')).toMatchObject({ offer: { size: 'XL' } });
+    // The mirror node is back; a fresh process on the same journal takes the payment and the reply's offer.
+    w.fake.settled[0]!.landed = true;
+    expect(await w.open().buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'offer_mismatch' });
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    expect(rowsOf(w, orderId).find((r) => r.type === 'paid')).toMatchObject({ source: 'shop', offer: { size: 'XL' } });
+    expect(w.fake.settled).toHaveLength(1);
+  });
+
   test('a paid reply naming a payment the agent never signed stops the order', async () => {
     w = await world();
     const fetchImpl: typeof fetch = async (input, init) => {
