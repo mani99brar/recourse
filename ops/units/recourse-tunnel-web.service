@@ -1,0 +1,21 @@
+# Recourse public tunnel for the web app (and its /api forward to the status API).
+# A Cloudflare quick tunnel: no account, a random https://<words>.trycloudflare.com name that changes
+# whenever this unit restarts. `ctl.sh urls` prints the current name.
+# Written to ~/.config/systemd/user by ops/units/install.sh.
+[Unit]
+Description=Recourse tunnel: public HTTPS for the web app on 127.0.0.1:8788
+After=recourse-web.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=GOMEMLIMIT=64MiB
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:8789 --url http://127.0.0.1:8788
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=96M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

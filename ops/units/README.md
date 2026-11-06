@@ -11,8 +11,10 @@ systemd user units for the Recourse services on this host. Nothing here is insta
 | `recourse-docket` | `services/docket` | 8707 | `GET /health` | 128M |
 | `recourse-intake` | `services/intake` | 8716 | `GET /health` | 96M |
 | `recourse-web` | `ops/units/web-server.mjs` | 8788 | `GET /health` | 48M |
+| `recourse-tunnel-web` | `cloudflared` quick tunnel to 8788 | 8789 (metrics) | `GET /ready` | 96M |
+| `recourse-tunnel-shop` | `cloudflared` quick tunnel to 8720 | 8721 (metrics) | `GET /ready` | 96M |
 
-The limits add up to 880M; the host has about 1.2 GB free and no swap, so start only what a step needs and watch `ctl.sh status`. The keeper is the last unit to stop and the first to start. Every service binds loopback except `intake` and `docket`, which listen on all interfaces because their code names no host; keep their ports closed at the firewall.
+The limits add up to 880M without the tunnels; the host has about 1.2 GB free and no swap, so start only what a step needs and watch `ctl.sh status`. The keeper is the last unit to stop and the first to start. Every service binds loopback except `intake` and `docket`, which listen on all interfaces because their code names no host; keep their ports closed at the firewall.
 
 How a unit runs:
 
@@ -56,6 +58,16 @@ journalctl --user --disk-usage
 ```
 
 Enable at login (optional, after the first clean start): `systemctl --user enable recourse-keeper` and so on.
+
+## Public tunnels
+
+The web app (with its `/api` forward) and the shop are reached from outside through two Cloudflare quick tunnels. A quick tunnel needs no account: `cloudflared` (in `~/.local/bin`) asks the Cloudflare edge for a random `https://<words>.trycloudflare.com` name, which lasts as long as the process. A restart gives a new name, so after one:
+
+1. `bash ops/units/ctl.sh urls` to read the new names;
+2. set `SHOP_PUBLIC_URL` to the shop tunnel's name in `~/.config/recourse/recourse.env`, then restart `shop`. The web name needs no setting: the web app calls its own `/api`;
+3. refresh the agent registrations with `pnpm --filter @recourse/agent h0-setup --update-uris` (dry run), then add `--broadcast`.
+
+Only the web server and the shop are tunnelled. The keeper, precheck, intake and docket stay local. A stable name needs a named tunnel on a Cloudflare account, which this host does not have.
 
 ## Updating
 

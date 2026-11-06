@@ -1,0 +1,21 @@
+# Recourse public tunnel for the shop's x402 endpoints.
+# A Cloudflare quick tunnel: no account, a random https://<words>.trycloudflare.com name that changes
+# whenever this unit restarts. `ctl.sh urls` prints the current name.
+# Written to ~/.config/systemd/user by ops/units/install.sh.
+[Unit]
+Description=Recourse tunnel: public HTTPS for the shop on 127.0.0.1:8720
+After=recourse-shop.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=GOMEMLIMIT=64MiB
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:8721 --url http://127.0.0.1:8720
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=96M
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
