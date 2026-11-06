@@ -737,13 +737,17 @@ export class StatusService {
     // routes are public, and each new address would otherwise cost eight eth_calls on the Hedera
     // relay the keeper also uses. Any other address gets the standing fields as null (not read).
     const [lp, v] = await Promise.all([this.liveParams(), known || claims.length > 0 ? this.views(address) : null]);
+    // The vault holds each court fee under the claim's shop: its own figure when read, else the fees
+    // the index shows held for claims where this address is the shop (never a platform's shops' fees).
     let escrowOpen = 0n;
     let openClaims = 0;
     for (const c of claims) {
       if (!isTerminal(c.status)) openClaims++;
+      if (c.shop !== address) continue;
       const m = this.moneyFor(c, lp);
       if (m.escrow.fate === 'held') escrowOpen += m.escrow.amount;
     }
+    if (v) escrowOpen = v.shopEscrow;
     return {
       address,
       role: known?.role ?? 'unknown',

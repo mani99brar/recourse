@@ -3468,7 +3468,7 @@
           "amount",
           "fate"
         ],
-        "description": "The court fee escrowed from the shop at filing, in vault-token base units."
+        "description": "The court fee escrowed from the shop at filing, in vault-token base units, as the vault's FeeEscrowed event gave it: 0 with fate none until that event is indexed."
       },
       "NextAction": {
         "type": [
@@ -4447,7 +4447,12 @@
             ]
           },
           "escrowOpen": {
-            "$ref": "#/components/schemas/Uint"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uint"
+              }
+            ],
+            "description": "Court fees the vault holds in escrow with this address as the shop: the vault's shopEscrowOf when read, else the sum over its indexed claims that still hold their fee. A platform's own figure never includes its shops' fees."
           },
           "openClaims": {
             "type": "integer"

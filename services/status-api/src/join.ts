@@ -355,7 +355,9 @@ export function moneyOf(c: FoldedClaim, p: MoneyParams, now: bigint): Money {
   const credited = c.applied ? c.applied.paid + c.applied.refund : null;
   let notCovered: bigint | null = null;
   if (c.applied) notCovered = c.shortfall ?? 0n;
-  return { owed, paid, credited, notCovered, escrow: { amount: fee, fate: escrowFate(c, fee) }, row, projected };
+  // The fee the vault took (FeeEscrowed): with none indexed, nothing is shown as held. The
+  // projection above still uses the current court fee then.
+  return { owed, paid, credited, notCovered, escrow: { amount: c.fee ?? 0n, fate: escrowFate(c, fee) }, row, projected };
 }
 
 function escrowFate(c: FoldedClaim, fee: bigint): EscrowFate {

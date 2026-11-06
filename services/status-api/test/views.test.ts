@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/store.js';
-import { Sim } from './helpers/encode.js';
+import { Sim, encodeLog } from './helpers/encode.js';
 import { FEE, PLATFORM, SHOP, SHOP2, buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
 import { harness } from './helpers/service.js';
 import { TtlCache } from '../src/live.js';
@@ -23,12 +23,15 @@ function multi() {
 describe('escrow has one source', () => {
   it('the party figure equals the sum over its open claims, and rows equal the detail', async () => {
     const { store, a, c, sim } = multi();
-    const h = harness({ store, now: Number(sim.t) + 1 });
+    // No vault read: the figure comes from the index.
+    const h = harness({ store, now: Number(sim.t) + 1, reader: null });
     const rows = await h.svc.claimRows();
     const held = rows.filter((r) => r.shop === SHOP && r.escrow.fate === 'held');
     const party = await h.svc.party(SHOP);
     expect(party.escrowOpen).toBe(held.reduce((n, r) => n + r.escrow.amount, 0n));
     expect(party.escrowOpen).toBe(FEE); // only claim a still holds its fee for SHOP
+    // The platform's page does not count its shops' court fees as its own.
+    expect((await h.svc.party(PLATFORM)).escrowOpen).toBe(0n);
     for (const x of [a, c]) {
       const row = rows.find((r) => r.claimId === x.claimId)!;
       const d = await h.svc.claimDetail(x.claimId);
@@ -38,6 +41,28 @@ describe('escrow has one source', () => {
     // Settled and closed claims show where the fee went.
     expect(rows.find((r) => r.statusKey === 'closed_uncontested')!.escrow.fate).toBe('refunded');
     expect(rows.find((r) => r.statusKey === 'settled')!.escrow.fate).toBe('kept_by_pool');
+  });
+
+  it('takes the vault figure when the vault was read, and shows no escrow for a fee it has not indexed', async () => {
+    const { store, sim } = multi();
+    const reader = fakeReader({
+      async party(a) {
+        return { deposit: 100_000_000n, required: 10_000_000n, credit: 0n, topUpDeadline: 0n, inGoodStanding: true, openClaims: 1n, exitRequestedAt: 0n, shopEscrow: a === SHOP ? 3n * FEE : 0n };
+      },
+    });
+    const h = harness({ store, now: Number(sim.t) + 1, reader });
+    expect((await h.svc.party(SHOP)).escrowOpen).toBe(3n * FEE);
+    expect((await h.svc.party(PLATFORM)).escrowOpen).toBe(0n);
+
+    // A claim whose FeeEscrowed is not indexed holds nothing, whatever the court fee is now.
+    const bare = new Sim();
+    const b = buildClaim(bare, 'finding_made', 9);
+    const feeTopic = encodeLog('vault', 'FeeEscrowed', { claimId: b.claimId, shop: SHOP, amount: FEE }).topics[0];
+    bare.logs = bare.logs.filter((l) => l.raw.topics[0] !== feeTopic);
+    const s = new Store();
+    ingest(s, bare);
+    const row = (await harness({ store: s, now: Number(bare.t) + 1 }).svc.claimRows()).find((r) => r.claimId === b.claimId)!;
+    expect(row.escrow).toEqual({ amount: 0n, fate: 'none' });
   });
 });
 

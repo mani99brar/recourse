@@ -44,7 +44,7 @@ own `servers` entry.
 | `GET /v1/params` | `params`: addresses, live parameters, vault token, records topic, `actions` this server builds |
 | `GET /v1/claims?party=&status=` | `claims[]`; with `party`, also `party: { standing, groups }` |
 | `GET /v1/claims/{claimId}` | `claim`: the summary fields plus records, pre-check, contest, court, bridge, money, docket, events |
-| `GET /v1/parties/{address}` | `party`: deposit, required, standing, credit, open claims |
+| `GET /v1/parties/{address}` | `party`: deposit, required, standing, credit, open claims, and `escrowOpen` (court fees held with this address as the shop: the vault's figure when read, else the indexed claims') |
 | `GET /v1/orders/{orderId}/records?platform=&shop=` | `order: { orderId, claimId, records[6] }` |
 | `GET /v1/search?q=` | `search: { q, hits[] }` |
 | `GET /v1/cast` | `cast: { registry, members[] }`: every shop and agent company with an ERC-8004 agent id (below) |
