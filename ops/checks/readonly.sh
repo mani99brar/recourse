@@ -50,14 +50,17 @@ BUDGET_MS=5000
 now(){ date -u +%H:%M:%S; }
 ms(){ echo $(( $(date +%s%N) / 1000000 )); }
 host(){ local u=${1#*://}; u=${u%%[/?#]*}; echo "${u##*@}"; }
-# Every row goes out with each URL in it cut to its host, so the error text of a failed call (cast quotes the
-# endpoint it could not reach) never prints a key from the user info, path or query.
+# Each URL is cut to its host, so the error text of a failed call (cast quotes the endpoint it could not reach)
+# never prints a key from the user info, path or query. Every answer is read through cap, which does this before
+# it cuts the answer to length: a cut that falls inside a URL would leave the front of a long password with no
+# '@' after it to find. row does it once more for whatever else a row carries.
 nourl(){ sed -E -e 's,(://)[^/?#@[:space:]]*@,\1,g' -e 's,(://[^/?#[:space:]]+)[/?#][^[:space:]]*,\1/<path>,g'; }
+cap(){ nourl | head -c "$1"; }
 row(){ printf '| %s | %s | %s | %s | %s |\n' "$1" "$2" "$3" "$4" "$(now)" | nourl; }
 cl(){ tr '\n' ' ' | sed 's/|/\\|/g; s/  */ /g' | cut -c1-${1:-160}; }
 
 # cc <label-for-errors> cast-call-args...  -> stdout value (first line) ; rc 0/1
-cc(){ timeout 25 cast call "$@" 2>&1 | head -c "${CC_MAX:-600}"; }
+cc(){ timeout 25 cast call "$@" 2>&1 | cap "${CC_MAX:-600}"; }
 is_num(){ [[ ${1:-} =~ ^[0-9]+$ ]]; }
 
 echo "| Check | What was read | Value | Result | Time UTC |"
@@ -66,20 +69,20 @@ echo "|---|---|---|---|---|"
 # ---------- Hedera JSON-RPC ----------
 for pair in "RPC-H1:$H1" "RPC-H2:$H2"; do
   id=${pair%%:*}; u=${pair#*:}; h=$(host "$u")
-  t0=$(ms); cid=$(timeout 20 cast chain-id --rpc-url "$u" 2>&1 | head -c 120); t1=$(ms)
+  t0=$(ms); cid=$(timeout 20 cast chain-id --rpc-url "$u" 2>&1 | cap 120); t1=$(ms)
   if [[ $cid == 296 ]]; then row "$id" "Hedera JSON-RPC $h: chain id" "296 in $((t1-t0)) ms" PASS
   else row "$id" "Hedera JSON-RPC $h: chain id" "$(echo "$cid" | cl 100)" FAIL; continue; fi
-  gp=$(timeout 20 cast gas-price --rpc-url "$u" 2>&1 | head -c 80)
+  gp=$(timeout 20 cast gas-price --rpc-url "$u" 2>&1 | cap 80)
   if is_num "$gp"; then row "$id" "$h: gas price (weibar per gas)" "$gp" PASS; else row "$id" "$h: gas price" "$(echo "$gp" | cl 100)" "FAIL (rate limited or refused)"; fi
-  bn=$(timeout 20 cast bn --rpc-url "$u" 2>&1 | head -c 40)
+  bn=$(timeout 20 cast bn --rpc-url "$u" 2>&1 | cap 40)
   if is_num "$bn"; then
-    lg=$(timeout 25 cast logs --from-block $((bn-2000)) --to-block "$bn" --address $H_LINK --rpc-url "$u" 2>&1 | head -c 300)
+    lg=$(timeout 25 cast logs --from-block $((bn-2000)) --to-block "$bn" --address $H_LINK --rpc-url "$u" 2>&1 | cap 300)
     if [[ $lg == Error* ]]; then row "$id" "$h: eth_getLogs 2,000 blocks on LINK" "$(echo "$lg" | cl 110)" FAIL
     else row "$id" "$h: eth_getLogs 2,000 blocks on LINK" "answered, $(printf '%s' "$lg" | grep -c 'address:') log(s) in range" PASS; fi
     r=$(cc $H_LINK "symbol()(string)" --rpc-url "$u")
     row "$id" "$h: eth_call at latest (LINK symbol)" "$(echo "$r" | cl 80)" "$([[ $r == '"LINK"' ]] && echo PASS || echo FAIL)"
   else row "$id" "$h: eth_blockNumber" "$(echo "$bn" | cl 100)" FAIL; fi
-  resp=$(curl -s -m 15 -X POST -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x1234"]}' "$u" | head -c 400)
+  resp=$(curl -s -m 15 -X POST -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x1234"]}' "$u" | cap 400)
   if echo "$resp" | jq -e '.error.message' >/dev/null 2>&1; then
     row "$id" "$h: eth_sendRawTransaction with a malformed tx" "JSON-RPC error, code $(echo "$resp" | jq -r '.error.code')" PASS
   else row "$id" "$h: eth_sendRawTransaction with a malformed tx" "$(echo "$resp" | cl 100)" "FAIL (no JSON-RPC error)"; fi
@@ -98,7 +101,7 @@ if [[ -n $T ]]; then
   row MIRROR-3 "mirror: topic messages page (topic $T, sequencenumber=gte:1)" "fields: $mf" "$ok"
 else row MIRROR-3 "mirror: topic messages page" "no topic found to read" "NOT READ"; fi
 if [[ $VAULT_USDC_MODE == mock ]]; then
-  c=$(timeout 20 cast code "$VAULT_USDC" --rpc-url "$H1" 2>&1 | head -c 200000)
+  c=$(timeout 20 cast code "$VAULT_USDC" --rpc-url "$H1" 2>&1 | cap 200000)
   if [[ $c == 0x?* ]]; then v="$(( (${#c} - 2) / 2 )) bytes of code"; ok=PASS; else v=$(echo "${c:-no answer}" | cl 100); ok=FAIL; fi
   row USDC-1 "vault token: $VAULT_USDC_LABEL at $VAULT_USDC (from the deployment record; no HTS token, no mirror row)" "$v" "$ok"
   r=$(cc "$VAULT_USDC" "symbol()(string)" --rpc-url "$H1"); d=$(cc "$VAULT_USDC" "decimals()(uint8)" --rpc-url "$H1")
@@ -124,11 +127,11 @@ else row HEDERA-STATUS "status.hedera.com" "unreachable" "NOT READ"; fi
 probe_arb(){ # url
   local u=$1 h id fin lat t0 t1 lg r
   h=$(host "$u"); id="RPC-A:$h"
-  t0=$(ms); fin=$(timeout 20 cast block finalized -f number --rpc-url "$u" 2>&1 | head -c 100); t1=$(ms)
-  lat=$(timeout 20 cast bn --rpc-url "$u" 2>&1 | head -c 100)
+  t0=$(ms); fin=$(timeout 20 cast block finalized -f number --rpc-url "$u" 2>&1 | cap 100); t1=$(ms)
+  lat=$(timeout 20 cast bn --rpc-url "$u" 2>&1 | cap 100)
   if ! is_num "$fin" || ! is_num "$lat"; then row "$id" "$h: finalized and latest block" "$(echo "$fin / $lat" | cl 110)" FAIL; return; fi
   row "$id" "$h: block finalized vs latest" "finalized $fin, latest $lat, lag $((lat-fin)) blocks, $((t1-t0)) ms" "$([[ $((t1-t0)) -lt $BUDGET_MS ]] && echo PASS || echo 'WORRY (slow)')"
-  t0=$(ms); lg=$(timeout 25 cast logs --from-block $((lat-2000)) --to-block "$lat" --address $KC --rpc-url "$u" 2>&1 | head -c 300); t1=$(ms)
+  t0=$(ms); lg=$(timeout 25 cast logs --from-block $((lat-2000)) --to-block "$lat" --address $KC --rpc-url "$u" 2>&1 | cap 300); t1=$(ms)
   if [[ $lg == Error* ]]; then row "$id" "$h: eth_getLogs 2,000 blocks on KlerosCore" "$(echo "$lg" | cl 110)" FAIL
   else row "$id" "$h: eth_getLogs 2,000 blocks on KlerosCore" "answered in $((t1-t0)) ms, $(printf '%s' "$lg" | grep -c 'address:') log(s)" PASS; fi
   t0=$(ms); r=$(cc $KC "paused()(bool)" --block "$fin" --rpc-url "$u"); t1=$(ms)
@@ -142,9 +145,9 @@ for u in $A_EXTRA; do probe_arb "$u"; done
 # ---------- Ethereum Sepolia ----------
 probe_sep(){
   local u=$1 h fin lat lg r; h=$(host "$u")
-  fin=$(timeout 20 cast block finalized -f number --rpc-url "$u" 2>&1 | head -c 100); lat=$(timeout 20 cast bn --rpc-url "$u" 2>&1 | head -c 100)
+  fin=$(timeout 20 cast block finalized -f number --rpc-url "$u" 2>&1 | cap 100); lat=$(timeout 20 cast bn --rpc-url "$u" 2>&1 | cap 100)
   if ! is_num "$fin" || ! is_num "$lat"; then row "RPC-S:$h" "$h: finalized/latest" "$(echo "$fin / $lat" | cl 100)" FAIL; return; fi
-  lg=$(timeout 25 cast logs --from-block $((lat-2000)) --to-block "$lat" --address 0x779877A7B0D9E8603169DdbD7836e478b4624789 --rpc-url "$u" 2>&1 | head -c 200)
+  lg=$(timeout 25 cast logs --from-block $((lat-2000)) --to-block "$lat" --address 0x779877A7B0D9E8603169DdbD7836e478b4624789 --rpc-url "$u" 2>&1 | cap 200)
   r=$(cc 0x779877A7B0D9E8603169DdbD7836e478b4624789 "symbol()(string)" --block "$fin" --rpc-url "$u")
   row "RPC-S:$h" "$h: chain tip, getLogs 2,000 blocks (LINK), eth_call at finalized" "finalized $fin, lag $((lat-fin)); logs: $([[ $lg == Error* ]] && echo error || echo ok); call: $(echo "$r" | cl 40)" "$([[ $lg != Error* && $r == '"LINK"' ]] && echo PASS || echo FAIL)"
 }
@@ -200,17 +203,17 @@ set -- $r
 row KLEROS "court 8 courts(8): parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump" "${1:-?}, ${2:-?}, ${3:-?}, ${4:-?}, ${5:-?}, ${6:-?}" "$([[ ${1:-} == 7 && ${2:-} == true && ${3:-} == 11000000000000000000000 && ${5:-} == 270000000000000 ]] && echo 'PASS (parent 7, hidden votes, minStake 11,000 PNK, fee/juror 0.00027 ETH)' || echo 'FAIL (differs from expected)')"
 for pair in "KlerosCore:$KC:0x02F607722749CECd32db07AA0b0755281FE9D13c" "DisputeTemplateRegistry:$DTR:0xf97791DA66e0A8Ff8Ee4908872CfCAcc641829Ec" "EvidenceModule:$EVM:0xC4e64e6E949936a18269937FC1e18cb11E3db14D" "DisputeKitClassic:$DK:0xA122856B3B4C5fBcA129088af3CEb204509805f0"; do
   IFS=: read -r n a exp <<<"$pair"
-  v=$(timeout 25 cast storage "$a" $IMPL_SLOT --rpc-url "$A1" 2>&1 | head -c 100)
+  v=$(timeout 25 cast storage "$a" $IMPL_SLOT --rpc-url "$A1" 2>&1 | cap 100)
   if [[ $v =~ ^0x[0-9a-fA-F]{64}$ ]]; then v=0x${v: -40}; else v=$(echo "$v" | cl 100); fi
   row KLEROS-IMPL "$n $a: EIP-1967 implementation slot" "$v" "$([[ ${v,,} == "${exp,,}" ]] && echo 'PASS (matches expected)' || echo 'FAIL (implementation changed)')"
 done
-r=$(cc 0xed31bEE8b1F7cE89E93033C0d3B2ccF4cEb27652 "arbitrator()(address)" --rpc-url "$A1" 2>&1 | head -c 100)
+r=$(cc 0xed31bEE8b1F7cE89E93033C0d3B2ccF4cEb27652 "arbitrator()(address)" --rpc-url "$A1" 2>&1 | cap 100)
 c=$(timeout 25 cast code 0xed31bEE8b1F7cE89E93033C0d3B2ccF4cEb27652 --rpc-url "$A1" 2>&1 | wc -c)
 row KLEROS "DisputeResolver 0xed31...7652 (test cases): code length" "$c hex chars; arbitrator() = $(echo "$r" | cl 60)" "$([[ $c -gt 10 ]] && echo 'PASS (contract)' || echo FAIL)"
 for pair in "PNK:$PNK" "PNKFaucet:$PNKF"; do n=${pair%%:*}; a=${pair#*:}; c=$(timeout 25 cast code $a --rpc-url "$A1" 2>&1 | wc -c); row KLEROS "$n $a code present" "$c hex chars" "$([[ $c -gt 10 ]] && echo PASS || echo FAIL)"; done
 fb=$(cc $PNK "balanceOf(address)(uint256)" $PNKF --rpc-url "$A1" | awk '{print $1}'); am=$(cc $PNKF "amount()(uint256)" --rpc-url "$A1" | awk '{print $1}')
 row PNK-FAUCET "PNKFaucet PNK balance and amount per claim (read only; no claim made)" "faucet holds $fb wei PNK, pays $am wei per claim" "$([[ $am == 10000000000000000000000 ]] && echo 'PASS (10,000 PNK per claim)' || echo 'WORRY (amount differs)')"
-j=$(timeout 20 cast call $KC "currentRuling(uint256)(uint256,bool,bool)" 1 --rpc-url "$A1" 2>&1 | tr '\n' ' ' | head -c 100)
+j=$(timeout 20 cast call $KC "currentRuling(uint256)(uint256,bool,bool)" 1 --rpc-url "$A1" 2>&1 | cap 100 | tr '\n' ' ')
 row KLEROS "currentRuling(1) on KlerosCore (decoded read)" "$j" "$([[ $j != Error* ]] && echo PASS || echo FAIL)"
 
 jb=$(cc 0xbAA5068F0bD1417046250A3eDe2B1F27e31383BD "getJurorBalance(address,uint96)(uint256,uint256,uint256,uint256)" 0x245314a76fc9b8e48fea7abb3b9b07e34e13d8c6 8 --rpc-url "$A1" | awk '{print $1}' | tr '\n' ' ')
@@ -227,8 +230,8 @@ done
 if [[ -r $ADDRS ]]; then
   while read -r role addr; do
     [[ -z ${addr:-} ]] && continue
-    hb=$(timeout 20 cast balance "$addr" --rpc-url "$H1" 2>&1 | head -c 60)
-    ab=$(timeout 20 cast balance "$addr" --rpc-url "$A1" 2>&1 | head -c 60)
+    hb=$(timeout 20 cast balance "$addr" --rpc-url "$H1" 2>&1 | cap 60)
+    ab=$(timeout 20 cast balance "$addr" --rpc-url "$A1" 2>&1 | cap 60)
     code=$(curl -s -m 15 -o /tmp/.mirror_acct.$$ -w '%{http_code}' "$MIRROR/api/v1/accounts/$addr")
     if [[ $code == 200 ]]; then mi="account $(jq -r '.account' /tmp/.mirror_acct.$$), key type $(jq -r '.key._type // "none"' /tmp/.mirror_acct.$$)"; else mi="mirror $code (no account yet)"; fi
     rm -f /tmp/.mirror_acct.$$
