@@ -490,7 +490,12 @@ async function main(): Promise<number> {
         const serialized = await w.signTransaction(request as Parameters<typeof w.signTransaction>[0]);
         hash = viem.keccak256(serialized);
         journal.add(i.key, 'register_sent', { txHash: hash, nonce: request.nonce });
-        await w.sendRawTransaction({ serializedTransaction: serialized });
+        const relayHash = await w.sendRawTransaction({ serializedTransaction: serialized });
+        // The relay's own hash for the tx is journaled too if it differs, so a rerun reads either.
+        if (relayHash.toLowerCase() !== hash.toLowerCase()) {
+          journal.add(i.key, 'register_sent', { txHash: relayHash, nonce: request.nonce, from: 'relay' });
+          hash = relayHash;
+        }
         const receipt = await pc.waitForTransactionReceipt({ hash, timeout: 120_000 });
         if (receipt.status !== 'success') throw new Error(`register reverted, tx ${hash}`);
         const agentId = registeredId(receipt);
