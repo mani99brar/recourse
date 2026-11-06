@@ -280,9 +280,19 @@ describe('at court', () => {
     );
   });
 
-  it('a stale case points to expireClaim; so does any stuck claim past the timeout', () => {
+  it('a stale case is stuck with nothing to send until the timeout, then points to expireClaim; so does any stuck claim', () => {
     const stale = kase({ state: CaseState.Stale });
-    expect(deriveStatus(atCourt, stale, [msg({})], LOCKED, T0 + 900n)).toMatchObject({ statusKey: 'stuck', nextCall: 'expireClaim' });
+    const waitForExpiry = { statusKey: 'stuck', nextActor: 'none', nextCall: null, deadline: expiry };
+    expect(deriveStatus(atCourt, stale, [msg({})], LOCKED, T0 + 900n)).toEqual(waitForExpiry);
+    expect(deriveStatus(atCourt, stale, [msg({})], LOCKED, expiry)).toEqual(waitForExpiry);
+    expect(canExpireClaim(atCourt, LOCKED.claimTimeout, expiry)).toBe(false);
+    expect(deriveStatus(atCourt, stale, [msg({})], LOCKED, expiry + 1n)).toEqual({ ...waitForExpiry, nextActor: 'anyone', nextCall: 'expireClaim' });
+    // A case past its open deadline cannot move either: the same wait.
+    const received = kase({ state: CaseState.Received });
+    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, received.receivedAt + LOCKED.caseDeadline)).toEqual(waitForExpiry);
+    // A return message that failed is still run by hand first.
+    const failedBack = [msg({}), msg({ direction: 'toHedera', executionState: ExecutionState.Failure })];
+    expect(deriveStatus(atCourt, stale, failedBack, LOCKED, T0 + 900n).nextCall).toBe('manualExecute');
     const failed = [msg({ executionState: ExecutionState.Failure })];
     expect(deriveStatus(atCourt, null, failed, LOCKED, expiry).nextCall).toBe('manualExecute');
     expect(deriveStatus(atCourt, null, failed, LOCKED, expiry + 1n).nextCall).toBe('expireClaim');
@@ -317,15 +327,18 @@ describe('at court', () => {
       deadline: openBy,
     });
     expect(deriveStatus(atCourt, received, [msg({})], LOCKED, openBy - 1n)).toMatchObject({ statusKey: 'at_court', nextCall: 'openCase' });
+    // From openBy it can only go Stale; expireClaim waits for Hedera's timeout, which is later.
+    expect(openBy).toBeLessThan(expiry);
     expect(deriveStatus(atCourt, received, [msg({})], LOCKED, openBy)).toEqual({
       statusKey: 'stuck',
-      nextActor: 'anyone',
-      nextCall: 'expireClaim',
+      nextActor: 'none',
+      nextCall: null,
       deadline: expiry,
     });
+    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, expiry + 1n)).toMatchObject({ statusKey: 'stuck', nextActor: 'anyone', nextCall: 'expireClaim' });
     // A case that arrives after openBy can only go Stale.
     const late = kase({ state: CaseState.Received, receivedAt: openBy + 60n, expiresAt: arbExpires });
-    expect(deriveStatus(atCourt, late, [msg({})], LOCKED, openBy + 61n)).toMatchObject({ statusKey: 'stuck', nextCall: 'expireClaim' });
+    expect(deriveStatus(atCourt, late, [msg({})], LOCKED, openBy + 61n)).toMatchObject({ statusKey: 'stuck', nextCall: null, deadline: expiry });
     const noExpiry = { ...received, expiresAt: 0n };
     expect(deriveStatus(atCourt, noExpiry, [msg({})], LOCKED, received.receivedAt)).toMatchObject({
       nextCall: 'openCase',

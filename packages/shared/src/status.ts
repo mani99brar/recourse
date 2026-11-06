@@ -244,8 +244,11 @@ export function deriveStatus(
     }
     if (back || out || dead || expired) {
       let call: NextCall;
-      if (expired || dead) call = 'expireClaim';
+      if (expired) call = 'expireClaim';
       else if (back) call = back === 'failed' ? 'manualExecute' : 'relayRuling';
+      // A case that can no longer move: only expiry ends the claim, and Hedera takes expireClaim only
+      // after the timeout, so there is nothing to send until then.
+      else if (dead) return view('stuck', 'none', null, expiry);
       else call = out === 'failed' ? 'manualExecute' : 'resend';
       return view('stuck', 'anyone', call, expiry);
     }
