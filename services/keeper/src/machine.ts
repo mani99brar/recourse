@@ -151,6 +151,8 @@ export class Keeper {
   private control: Control = emptyControl();
   /** One court round in seconds, once read. */
   private courtRound?: number;
+  /** Journal bytes right after this process last compacted it. */
+  private compactedBytes?: number;
   private windows: SendPauseWindow[] = [];
   private claimsParams?: ClaimsParams;
   private caseParams?: CaseParams;
@@ -219,7 +221,8 @@ export class Keeper {
       ...this.o.alerter.compact(),
     ];
     j.rewrite(records);
-    this.log(`journal compacted: ${before} bytes -> ${j.size?.() ?? '?'} bytes, ${records.length} records`);
+    this.compactedBytes = j.size?.();
+    this.log(`journal compacted: ${before} bytes -> ${this.compactedBytes ?? '?'} bytes, ${records.length} records`);
     return true;
   }
 
@@ -315,9 +318,14 @@ export class Keeper {
     };
   }
 
+  /**
+   * Compacts once the journal reaches the limit, or twice what the last compaction left when that
+   * is more: a state that alone fills the limit is rewritten as it doubles, not on every tick.
+   */
   private maybeCompact(): void {
     const size = this.o.journal.size?.();
-    if (size === undefined || size < (this.o.compactAtBytes ?? DEFAULT_COMPACT_AT_BYTES)) return;
+    const at = Math.max(this.o.compactAtBytes ?? DEFAULT_COMPACT_AT_BYTES, 2 * (this.compactedBytes ?? 0));
+    if (size === undefined || size < at) return;
     try {
       this.compact();
     } catch (err) {

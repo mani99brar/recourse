@@ -202,6 +202,26 @@ describe('journal compaction', () => {
     expect(existsSync(join(r2.dir, `${JOURNAL_FILE}.prev`))).toBe(true);
   });
 
+  it('when the compacted journal alone fills the limit, compacts again only once it has doubled', async () => {
+    const fake = new FakeChains();
+    const lines: string[] = [];
+    const limit = 1500;
+    const r = rig(fake, undefined, { compactAtBytes: limit, log: (l) => lines.push(l) });
+    const compactions = () => lines.filter((l) => l.startsWith('journal compacted')).length;
+    const size = () => statSync(join(r.dir, JOURNAL_FILE)).size;
+    await toWatching(fake, r.k, 1);
+    const first = compactions();
+    expect(first).toBeGreaterThan(0);
+    const left = Number(/-> (\d+) bytes/.exec(lines.filter((l) => l.startsWith('journal compacted')).at(-1)!)![1]);
+    expect(left).toBeGreaterThan(limit); // the state alone is over the limit
+    await run(fake, r.k, 150, 15); // ten quiet ticks
+    expect(size()).toBeLessThan(2 * left);
+    expect(compactions()).toBe(first);
+    await toWatching(fake, r.k, 2); // a second claim doubles it
+    expect(compactions()).toBeGreaterThan(first);
+    expect(size()).toBeLessThan(2 * Number(/-> (\d+) bytes/.exec(lines.filter((l) => l.startsWith('journal compacted')).at(-1)!)![1]));
+  });
+
   it('never compacts when the chain port cannot hand over its open intents', async () => {
     const fake = new FakeChains();
     const noIntents = Object.assign(fake, { openIntentRecords: undefined });
