@@ -72,6 +72,8 @@ export class FakeChains implements Chains {
   caseLink = 10n ** 19n;
   /** Balances levels() reports (caseLink above wins for the case contract). */
   levelsV: Levels = { opsHederaWeibar: 10n ** 20n, opsArbWei: 10n ** 18n, claimsLink: 10n ** 19n, caseLink: 10n ** 19n, claimsFeeToken: zeroAddress, claimsNativeWeibar: 10n ** 20n };
+  /** One court round in seconds (courtRoundS); undefined makes the read fail. */
+  courtRoundV: number | undefined = 8100;
   /** quoteSend: in weibar when the claims contract pays in HBAR, LINK wei otherwise. */
   sendQuote = 22n * 10n ** 17n;
   linkShort = false;
@@ -168,6 +170,10 @@ export class FakeChains implements Chains {
   }
   async levels(): Promise<Levels> {
     return { ...this.levelsV, caseLink: this.caseLink };
+  }
+  async courtRoundS(): Promise<number> {
+    if (this.courtRoundV === undefined) throw new Error('court periods unreadable');
+    return this.courtRoundV;
   }
   async quoteSend(): Promise<{ native: boolean; amount: bigint }> {
     return { native: BigInt(this.levelsV.claimsFeeToken ?? zeroAddress) === 0n, amount: this.sendQuote };

@@ -128,3 +128,41 @@ describe('Kleros log filters', () => {
     journal.close();
   });
 });
+
+describe('court round', () => {
+  function chainsReading(extraData: Hex, times: Record<string, readonly bigint[]>) {
+    const asked: bigint[] = [];
+    const at = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as Address;
+    const client = {
+      async readContract(q: { functionName: string; args?: readonly unknown[] }) {
+        if (q.functionName === 'EXTRA_DATA') return extraData;
+        if (q.functionName === 'getTimesPerPeriod') {
+          const id = q.args![0] as bigint;
+          asked.push(id);
+          return times[id.toString()]!;
+        }
+        throw new Error(`unexpected ${q.functionName}`);
+      },
+    };
+    const chains = new LiveChains({
+      hedera: { client: {} as never, claims: at(1), vault: at(2), offRamp: at(3), events: {} as never, sender: {} as never },
+      arbitrum: { client: client as never, chainId: 421614, case: at(4), klerosCore: at(5), evidenceModule: at(6), offRamp: at(8), reader: {} as never, sender: { address: at(9) } as never },
+    });
+    return { chains, asked };
+  }
+
+  it("sums the four periods of the court named in the case contract's EXTRA_DATA, read once", async () => {
+    // The live extraData: court 8, then the number of jurors.
+    const extra = `0x${(8).toString(16).padStart(64, '0')}${(3).toString(16).padStart(64, '0')}` as Hex;
+    const { chains, asked } = chainsReading(extra, { '8': [900n, 2700n, 1800n, 2700n] });
+    expect(await chains.courtRoundS()).toBe(8100);
+    expect(await chains.courtRoundS()).toBe(8100);
+    expect(asked).toEqual([8n]);
+  });
+
+  it('takes the general court when EXTRA_DATA is shorter than one word', async () => {
+    const { chains, asked } = chainsReading('0x', { '1': [60n, 60n, 60n, 60n] });
+    expect(await chains.courtRoundS()).toBe(240);
+    expect(asked).toEqual([1n]);
+  });
+});

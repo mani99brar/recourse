@@ -142,6 +142,8 @@ export interface Chains {
   quoteRelay(claimId: Hex): Promise<{ link: bigint; native: bigint }>;
   /** Balances for the funding alerts. */
   levels(): Promise<Levels>;
+  /** Seconds one round of the court our cases go to takes: the sum of its four periods. */
+  courtRoundS?(): Promise<number>;
   /**
    * What sending this claim to court would cost now, in what the claims contract pays CCIP fees
    * with: weibar when it pays in HBAR (`native`), LINK wei otherwise. 0 for an unknown claim.

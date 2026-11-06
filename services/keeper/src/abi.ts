@@ -174,6 +174,7 @@ export const caseAbi = parseAbi([
   'function quoteRelayNative(bytes32 claimId) view returns (uint256)',
   'function link() view returns (address)',
   'function arbitrator() view returns (address)',
+  'function EXTRA_DATA() view returns (bytes)',
 ]);
 
 // Kleros and CCIP OffRamp fragments come from the shared package, checked there against the pinned

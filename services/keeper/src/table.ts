@@ -207,6 +207,13 @@ export interface Timing {
   openWithoutEvidenceS: number;
   /** Alert on a transaction of ours still open after this long (it blocks its key). */
   intentStuckS: number;
+  /**
+   * openCase and refile need one court round (the court's four periods) plus this much more
+   * before the case expires: juror drawing, the executeRuling nudge and the 15-25 min relay.
+   */
+  courtSlackS: number;
+  /** One court round when the court's periods cannot be read (court 8 on Arbitrum Sepolia: 900 + 2700 + 1800 + 2700). */
+  courtRoundFallbackS: number;
 }
 
 export const DEFAULT_TIMING: Timing = {
@@ -220,4 +227,6 @@ export const DEFAULT_TIMING: Timing = {
   levelsEveryS: 600,
   openWithoutEvidenceS: 900,
   intentStuckS: 300,
+  courtSlackS: 3600,
+  courtRoundFallbackS: 8100,
 };

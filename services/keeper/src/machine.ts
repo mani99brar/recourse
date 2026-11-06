@@ -142,6 +142,8 @@ export class Keeper {
   private readonly timing: Timing;
   private readonly links: Links;
   private control: Control = emptyControl();
+  /** One court round in seconds, once read. */
+  private courtRound?: number;
   private windows: SendPauseWindow[] = [];
   private claimsParams?: ClaimsParams;
   private caseParams?: CaseParams;
@@ -614,6 +616,39 @@ export class Keeper {
     return filedAt === undefined ? undefined : filedAt + this.caseParams.claimTimeout;
   }
 
+  /** Seconds one court round takes: read from the court once, or the fallback while it cannot be read. */
+  private async courtRoundS(): Promise<number> {
+    if (this.courtRound !== undefined) return this.courtRound;
+    const read = this.o.chains.courtRoundS ? await this.o.chains.courtRoundS().catch(() => undefined) : undefined;
+    if (read !== undefined && Number.isFinite(read) && read > 0) {
+      this.courtRound = read;
+      return read;
+    }
+    return this.timing.courtRoundFallbackS;
+  }
+
+  /**
+   * True when a dispute opened now could not reach a ruling before the case expires: the round
+   * would be killed by markStale at expiresAt and the arbitration fee spent for nothing. The case
+   * is left to go stale at expiresAt, and the claim expires on Hedera with the fee refunded.
+   */
+  private async tooLateForRound(c: KeeperClaim, attempt: 1 | 2, fn: 'openCase' | 'refile', now: number): Promise<boolean> {
+    const exp = this.caseExpiresAt(c);
+    if (exp === undefined) return false;
+    const round = await this.courtRoundS();
+    const need = round + this.timing.courtSlackS;
+    if (exp - now >= need) return false;
+    if (this.once(c, `too-late-${attempt}`)) {
+      this.alertClaim(
+        c,
+        'claim_stale',
+        `${fn} skipped: the case expires in ${exp - now} s and one court round needs ${round} s plus ${this.timing.courtSlackS} s; it goes stale at expiresAt and the claim expires with its fee refunded`,
+        { detail: { expiresAt: String(exp), roundS: String(round), slackS: String(this.timing.courtSlackS) } },
+      );
+    }
+    return true;
+  }
+
   /** Earlier of a case deadline (exclusive) and the case's expiresAt (also exclusive). */
   private openBy(c: KeeperClaim, deadline: number): number {
     const exp = this.caseExpiresAt(c);
@@ -821,6 +856,7 @@ export class Keeper {
     if (cv.state !== CaseState.Received) return;
     const deadline = this.openBy(c, Number(cv.receivedAt) + this.caseParams.caseDeadline);
     if (now >= deadline) return; // opening now would only mark it stale
+    if (await this.tooLateForRound(c, 1, 'openCase', now)) return;
     const ev = await this.ensureEvidence(c, 1, now);
     if (ev === 'retry' && now < deadline - this.timing.openWithoutEvidenceS) return;
     const [pool, cost, open] = [await this.o.chains.feePool(), await this.o.chains.costNow(), await this.o.chains.openCases()];
@@ -936,6 +972,7 @@ export class Keeper {
     if (cv.state !== CaseState.RefilePending) return;
     const deadline = this.openBy(c, Number(cv.ruledAt) + this.caseParams.caseDeadline);
     if (now >= deadline) return; // refiling now would only mark it stale
+    if (await this.tooLateForRound(c, 2, 'refile', now)) return;
     const ev = await this.ensureEvidence(c, 2, now);
     if (ev === 'retry' && now < deadline - this.timing.openWithoutEvidenceS) return;
     const r = await this.tryCall(c, row, { chain: 'arbitrum', contract: 'case', fn: 'refile', args: [c.received.payload] }, now);

@@ -246,13 +246,32 @@ export class LiveChains implements Chains {
   async dispute(disputeId: bigint): Promise<DisputeInfo> {
     const a = this.o.arbitrum;
     const [courtId, , period, ruled, lastPeriodChange] = await a.client.readContract({ address: a.klerosCore, abi: klerosCoreAbi, functionName: 'disputes', args: [disputeId] });
+    const times = await this.timesPerPeriod(courtId);
+    return { courtId, period, ruled, lastPeriodChange: Number(lastPeriodChange), timesPerPeriod: times };
+  }
+
+  /** A court's four period lengths, read once. */
+  private async timesPerPeriod(courtId: bigint): Promise<readonly [number, number, number, number]> {
     let times = this.timesByCourt.get(courtId.toString());
     if (times === undefined) {
+      const a = this.o.arbitrum;
       const t = await a.client.readContract({ address: a.klerosCore, abi: klerosCoreAbi, functionName: 'getTimesPerPeriod', args: [courtId] });
       times = [Number(t[0]), Number(t[1]), Number(t[2]), Number(t[3])] as const;
       this.timesByCourt.set(courtId.toString(), times);
     }
-    return { courtId, period, ruled, lastPeriodChange: Number(lastPeriodChange), timesPerPeriod: times };
+    return times;
+  }
+
+  /**
+   * One round of our court: the case contract's EXTRA_DATA names the court in its first word
+   * (KlerosCore takes the general court, 1, when it is shorter), and its four periods add up.
+   */
+  async courtRoundS(): Promise<number> {
+    const a = this.o.arbitrum;
+    const extra = await a.client.readContract({ address: a.case, abi: caseAbi, functionName: 'EXTRA_DATA' });
+    const courtId = extra.length >= 66 ? BigInt(`0x${extra.slice(2, 66)}`) : 1n;
+    const t = await this.timesPerPeriod(courtId);
+    return t[0] + t[1] + t[2] + t[3];
   }
 
   async currentRuling(disputeId: bigint): Promise<RulingRead> {
