@@ -82,6 +82,12 @@ export interface RecordInfo {
   /** The HCS hash equals the claim's recorded reference for this kind. */
   refsMatch: boolean;
   doc: unknown | null;
+  /**
+   * No message was found because the topic has not been read far enough yet (the referenced
+   * sequence number is past the indexer's cursor, or the topic source never caught up or is
+   * failing); `held` is then null, not false.
+   */
+  unread: boolean;
 }
 
 export class StatusService {
@@ -175,6 +181,7 @@ export class StatusService {
         lastError: st.lastError,
         lastErrorAt: st.lastErrorAt,
         decodeFailures: st.decodeFailures,
+        ...(name === 'hcs' ? { foreignDropped: st.foreignDropped } : {}),
       };
     };
     return {
@@ -329,18 +336,29 @@ export class StatusService {
   async recordInfo(orderId: Hex, kind: number, ref?: { topicNum: bigint; seq: bigint; hash: Hex }): Promise<RecordInfo> {
     const key = RECORD_KEYS[kind] ?? 'unknown';
     const parties = this.d.parties();
+    const store = this.d.store;
     let msg: HcsRecord | undefined;
+    // True when the topic has not been read far enough to say whether the message exists.
+    let unread = false;
     if (ref && ref.seq > 0n) {
-      msg = this.d.store.hcs.get(`${this.topicId(ref.topicNum)}:${ref.seq}`);
+      const topic = this.topicId(ref.topicNum);
+      msg = store.hcs.get(`${topic}:${ref.seq}`);
       if (msg && (msg.kind !== kind || msg.orderId !== orderId)) msg = undefined;
+      if (!msg && topic === this.d.cfg.recordsTopic && ref.seq > BigInt(store.cursors.hcs.seq)) unread = true;
     }
     if (!msg && !(ref && ref.seq > 0n)) {
-      const cand = (this.ordersIndex().get(orderId) ?? []).filter((r) => r.kind === kind);
-      msg = cand.sort((a, b) => a.seq - b.seq)[0];
+      // The topic has no submit key: anyone can post a well-formed record for any order. The
+      // earliest message from a configured writer of this kind counts; a stranger's is shown only
+      // when no writer's exists.
+      const cand = (this.ordersIndex().get(orderId) ?? []).filter((r) => r.kind === kind).sort((a, b) => a.seq - b.seq);
+      const writers = parties ? hcsWritersFor(parties, kind) : null;
+      msg = (writers ? cand.find((r) => writers.has(r.payer)) : undefined) ?? cand[0];
+      const st = store.status.hcs;
+      if (!msg && this.d.cfg.recordsTopic !== '' && (st.indexedThrough === null || st.failing)) unread = true;
     }
     const refHash = ref?.hash ?? (ZERO32 as Hex);
     if (!msg) {
-      return { kind, key, seq: Number(ref?.seq ?? 0n), payer: null, payerOk: false, hash: refHash === ZERO32 ? null : refHash, cid: null, held: false, hashOk: null, refsMatch: false, doc: null };
+      return { kind, key, seq: Number(ref?.seq ?? 0n), payer: null, payerOk: false, hash: refHash === ZERO32 ? null : refHash, cid: null, held: unread ? null : false, hashOk: null, refsMatch: false, doc: null, unread };
     }
     const payerOk = parties !== null && hcsWritersFor(parties, kind).has(msg.payer);
     let hashOk: boolean | null = null;
@@ -366,6 +384,7 @@ export class StatusService {
       hashOk,
       refsMatch: refHash !== ZERO32 && msg.hash === refHash,
       doc,
+      unread: false,
     };
   }
 

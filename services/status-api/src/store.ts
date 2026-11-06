@@ -73,6 +73,7 @@ function emptyStatus(): SourceStatus {
     lastOkAt: null,
     failing: false,
     decodeFailures: 0,
+    foreignDropped: 0,
   };
 }
 

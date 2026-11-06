@@ -62,7 +62,11 @@ export class Indexer {
       this.settle('hedera');
     }
     if (cfg.recordsTopic !== '' && this.due('hcs')) {
-      await pollHcs(store, mirror, cfg.recordsTopic);
+      const isWriter = (kind: number, payer: string) => {
+        const ps = this.d.parties();
+        return ps ? hcsWritersFor(ps, kind).has(payer) : null;
+      };
+      await pollHcs(store, mirror, cfg.recordsTopic, { isWriter });
       this.settle('hcs');
     }
     if (dep.caseAddress && this.d.arbRpc && this.due('arbitrum')) {

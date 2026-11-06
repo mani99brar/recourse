@@ -66,6 +66,8 @@ export interface SourceStatus {
   /** True when the latest poll failed. */
   failing: boolean;
   decodeFailures: number;
+  /** HCS only: messages from payers that are not writers, dropped past the cap. */
+  foreignDropped: number;
 }
 
 export type SourceName = 'hedera' | 'arbitrum' | 'hcs';

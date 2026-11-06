@@ -59,6 +59,14 @@ describe('pages render', () => {
     expect(inFlight).toContain('on its way back to Hedera');
     expect(inFlight).not.toContain('end the claim');
   });
+  it('a referenced record the topic has not been read to yet is unchecked, not "not on the topic"', () => {
+    const base = detail('at_court');
+    const records = base.records.map((r) => (r.kind === 5 ? { ...r, cid: null, seq: 6, held: null, hashOk: null, payerOk: false, refsMatch: false, unread: true } : r));
+    const html = renderToString(<CaseView d={{ ...base, records }} />);
+    expect(html).toContain('listed (#6), not read from the topic yet');
+    expect(html).not.toContain('not on the topic');
+    expect(html).toContain('unchecked');
+  });
   it('shows an unpaid shortfall apart from paid', () => {
     const html = renderToString(<CaseView d={detail('settled', { money: { owed: '68000000', paid: '20000000', credited: '20000000', notCovered: '48000000', escrow: { amount: '3000000', fate: 'kept_by_pool' }, projected: false } })} />);
     expect(html).toContain('48.00 USDC');

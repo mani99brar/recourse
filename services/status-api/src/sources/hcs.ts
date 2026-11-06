@@ -14,9 +14,30 @@ interface TopicMessage {
 }
 
 const MAX_PAGES_PER_POLL = 40;
+/** Messages kept from payers that are not configured writers of their kind (the topic is open). */
+export const MAX_FOREIGN_RECORDS = 2000;
 
-export async function pollHcs(store: Store, d: MirrorDeps, topic: string): Promise<void> {
+export interface HcsOptions {
+  /**
+   * Whether a payer is a configured writer of a kind: true, false, or null when the parties are
+   * not known (then the message is kept). Leave out to keep every message.
+   */
+  isWriter?: (kind: number, payer: string) => boolean | null;
+  maxForeign?: number;
+}
+
+/** Messages in the store from known non-writers, counted once per store and then kept up to date. */
+const foreignKept = new WeakMap<Store, number>();
+
+export async function pollHcs(store: Store, d: MirrorDeps, topic: string, opts: HcsOptions = {}): Promise<void> {
   const st = store.status.hcs;
+  const isWriter = opts.isWriter;
+  const maxForeign = opts.maxForeign ?? MAX_FOREIGN_RECORDS;
+  if (isWriter && !foreignKept.has(store)) {
+    let n = 0;
+    for (const r of store.hcs.values()) if (isWriter(r.kind, r.payer) === false) n++;
+    foreignKept.set(store, n);
+  }
   const head = await mirrorHeadSeconds(d);
   try {
     // gte:<seq+1>, not gt:<seq>: the mirror refuses a sequencenumber filter of 0 with a 400
@@ -33,7 +54,13 @@ export async function pollHcs(store: Store, d: MirrorDeps, topic: string): Promi
         if (m.sequence_number <= store.cursors.hcs.seq) continue;
         const bytes = Uint8Array.from(Buffer.from(m.message, 'base64'));
         const r = decodeRecordMsg(bytes);
-        if (r.ok) {
+        // Anyone can post to the topic: messages from payers that are not writers of their kind
+        // are only ever shown as "wrong payer", so past a cap they are counted and dropped.
+        const foreign = r.ok && isWriter !== undefined && isWriter(r.value.kind, m.payer_account_id) === false;
+        if (foreign && (foreignKept.get(store) ?? 0) >= maxForeign) {
+          st.foreignDropped++;
+        } else if (r.ok) {
+          if (foreign) foreignKept.set(store, (foreignKept.get(store) ?? 0) + 1);
           records.push({
             topic,
             seq: m.sequence_number,

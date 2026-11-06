@@ -33,6 +33,8 @@ export interface CaseDetail extends Fresh {
     held: boolean | null;
     hashOk: boolean | null;
     refsMatch: boolean;
+    /** The topic has not been read far enough to say whether the message exists. */
+    unread?: boolean;
   }[];
   precheck: { gap: number; answer: number; side: string; packHash: string; packHashOk: boolean | null } | null;
   contest: { by: string | null; at: string | null; windowEndsAt: string | null };
@@ -212,7 +214,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
               {d.records.map((r) => (
                 <tr key={r.kind}>
                   <td>{KIND_WORDS[r.kind]}</td>
-                  <td>{r.cid ? (r.seq > 0 ? `#${r.seq}` : 'found by order') : r.seq > 0 ? `listed (#${r.seq}), not on the topic` : 'missing'}</td>
+                  <td>{r.cid ? (r.seq > 0 ? `#${r.seq}` : 'found by order') : r.unread ? (r.seq > 0 ? `listed (#${r.seq}), not read from the topic yet` : 'not read from the topic yet') : r.seq > 0 ? `listed (#${r.seq}), not on the topic` : 'missing'}</td>
                   <td>
                     {r.held === true ? <Pill tone="ok">verified</Pill> : r.held === null ? <Pill tone="wait">unchecked</Pill> : <Pill tone="bad">not held</Pill>}{' '}
                     <span className="muted small">{r.hashOk === false ? 'content differs from its hash; ' : ''}{!r.payerOk && r.cid ? 'wrong payer; ' : ''}{r.cid && !r.refsMatch ? 'not the one the shop referenced' : ''}</span>

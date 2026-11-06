@@ -114,6 +114,69 @@ describe('record checks', () => {
     expect(d.records[5]).toMatchObject({ held: false, cid: null });
   });
 
+  it('a referenced record past the topic cursor is unknown (not read yet), and absent once read past', async () => {
+    const s = await setup({ skipKind: 5 });
+    expect(s.store.cursors.hcs.seq).toBe(5); // the Arrived record (#6) has not been read yet
+    let d = await s.h.svc.claimDetail(s.b.claimId);
+    expect(d.records[5]).toMatchObject({ seq: 6, cid: null, held: null, unread: true });
+    expect(d.records[0]).toMatchObject({ held: true, unread: false });
+    // The topic is read past #6 and it is not there: now it is definitely not held.
+    s.m.topics.get(TOPIC)!.push({ seq: 7, ts: '1700000001.000000000', payer: AGENT_ACCOUNT, body: new TextEncoder().encode('{"not":"a record"}') });
+    await pollHcs(s.store, { fetch: s.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 }, TOPIC);
+    d = await s.h.svc.claimDetail(s.b.claimId);
+    expect(d.records[5]).toMatchObject({ held: false, unread: false });
+  });
+
+  it('an order lookup with the topic never read through reports unknown, not missing', async () => {
+    const s = await setup({ skipKind: 5 }, { refs: false });
+    s.store.status.hcs.indexedThrough = null;
+    s.store.status.hcs.failing = true;
+    const r = await s.h.svc.recordsOfOrder(s.b.orderId);
+    expect(r.records[5]).toMatchObject({ held: null, unread: true });
+  });
+
+  it("a stranger's earlier message for the order does not displace the writer's record", async () => {
+    const s = await setup({ skipKind: 4 }, { refs: false });
+    // Someone who is not the shop posts a well-formed Packed record for this order first.
+    const forged = canonicalBytes({ v: '1', kind: 'packed', orderId: s.b.orderId, attrs: { brand: 'Other', price: '1.00' } } as never);
+    const fh = recordHash(forged);
+    const fcid = cidOfHash(fh).toString();
+    s.gateway.set(fcid, forged);
+    s.m.topics.get(TOPIC)!.push({ seq: 7, ts: '1700000001.000000000', payer: '0.0.9999', body: encodeRecordMsg({ cid: fcid, hash: fh, kind: 4, orderId: s.b.orderId }) });
+    s.m.topics.get(TOPIC)!.push({ seq: 8, ts: '1700000002.000000000', payer: SHOP_ACCOUNT, body: encodeRecordMsg({ cid: s.cids[4]!, hash: s.hashes[4]!, kind: 4, orderId: s.b.orderId }) });
+    await pollHcs(s.store, { fetch: s.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 }, TOPIC);
+    const r = await s.h.svc.recordsOfOrder(s.b.orderId);
+    expect(r.records[4]).toMatchObject({ seq: 8, payer: SHOP_ACCOUNT, payerOk: true, held: true });
+    // With only the stranger's message on the topic, that one is shown, as not held.
+    const only = await setup({ skipKind: 4 }, { refs: false });
+    only.m.topics.get(TOPIC)!.push({ seq: 7, ts: '1700000001.000000000', payer: '0.0.9999', body: encodeRecordMsg({ cid: fcid, hash: fh, kind: 4, orderId: only.b.orderId }) });
+    await pollHcs(only.store, { fetch: only.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 }, TOPIC);
+    expect((await only.h.svc.recordsOfOrder(only.b.orderId)).records[4]).toMatchObject({ seq: 7, payerOk: false, held: false });
+  });
+
+  it('keeps messages from non-writers only up to a cap, counting the rest; writers are always kept', async () => {
+    const m = new FakeMirror();
+    const orderId = ('0x' + '5a'.repeat(32)) as `0x${string}`;
+    const msgs = [];
+    for (let i = 1; i <= 6; i++) {
+      const bytes = docFor(0, orderId);
+      const hash = recordHash(bytes);
+      msgs.push({ seq: i, ts: `1700000000.00000000${i}`, payer: i === 6 ? AGENT_ACCOUNT : '0.0.9999', body: encodeRecordMsg({ cid: cidOfHash(hash).toString(), hash, kind: 0, orderId }) });
+    }
+    m.topics.set(TOPIC, msgs);
+    const deps = { fetch: m.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 };
+    const store = new Store();
+    await pollHcs(store, deps, TOPIC, { isWriter: (_k, payer) => payer === AGENT_ACCOUNT, maxForeign: 2 });
+    expect(store.hcs.size).toBe(3);
+    expect(store.status.hcs.foreignDropped).toBe(3);
+    expect([...store.hcs.values()].some((r) => r.payer === AGENT_ACCOUNT)).toBe(true);
+    expect(store.cursors.hcs.seq).toBe(6);
+    // Parties not known: nothing is dropped.
+    const open = new Store();
+    await pollHcs(open, deps, TOPIC, { isWriter: () => null, maxForeign: 2 });
+    expect(open.hcs.size).toBe(6);
+  });
+
   it('reports unknown (null), never false, when the gateway cannot be reached', async () => {
     const s = await setup();
     s.h.svc.d.docs['opts'].fetch = async () => {
