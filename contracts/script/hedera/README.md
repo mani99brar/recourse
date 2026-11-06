@@ -140,25 +140,43 @@ pre-check signer, the bridge mode with the relayer, and the send extra args.
 
 ### 3. `hedera.sh associate --broadcast`
 
-Circle mode: calls `associateUsdc(false)` (the HTS system contract). If that fails it calls
-`associateUsdc(true)` (the token's own `associate()`). It then polls the mirror for up to
-2 minutes for the vault's USDC row.
+Circle mode: calls `associateUsdc(false)` (the HTS system contract) and, if that does not succeed,
+`associateUsdc(true)` (the token's own `associate()`), with a 1,000,000 gas limit
+(`HEDERA_ASSOC_GAS`). If both paths fail it stops; do not move USDC. After a successful call it
+polls the mirror for up to 2 minutes for the vault's USDC row and prints `USDC steps may proceed`
+once the row is there.
 
 Mock mode: calls `associateUsdc(true)` only, with a 150,000 gas limit. The HTS path cannot
-associate a token that is not an HTS token, so it is not tried. The read-back is the vault's
-`usdcAssociated()`; no mirror row exists for the mock. If the vault already reads associated and
-the kept association tx is a successful call to this vault, it sends nothing. If the vault reads
-associated but no such tx is kept, it sends one, so that `record` has this vault's tx.
+associate a token that is not an HTS token, so it is not tried. No mirror row exists for the mock;
+the read-back is the vault's `usdcAssociated()`, which must read true before it prints `USDC steps
+may proceed`.
 
-**Do not move USDC until it prints `USDC steps may proceed`.** If both paths fail, stop.
+- If the vault already reads associated and the kept association tx
+  (`~/.local/state/recourse/hedera-296/association.tx`) is a successful call to this vault, it sends
+  nothing, with or without `--broadcast`, and reads back.
+- Otherwise `--broadcast` sends one, also when the vault already reads associated, so that `record`
+  has this vault's tx. If it fails, stop.
 
-Read back:
+Without `--broadcast` it only simulates the first path (circle `associateUsdc(false)`, mock
+`associateUsdc(true)`) and prints `dry run ok`. It reads nothing back and does not print `USDC
+steps may proceed`, apart from the mock case above where nothing needs sending.
 
-```
-curl -s "$HEDERA_MIRROR_URL/api/v1/accounts/<vault>/tokens?token.id=0.0.429274"
-```
+**Do not move USDC until it prints `USDC steps may proceed`.**
 
-This must return one row.
+Read back by hand:
+
+- Circle mode: this must return one row.
+
+  ```
+  curl -s "$HEDERA_MIRROR_URL/api/v1/accounts/<vault>/tokens?token.id=0.0.429274"
+  ```
+
+- Mock mode: this must print `true`. The mirror has no row for the mock, so the curl above returns
+  none.
+
+  ```
+  cast call <vault> 'usdcAssociated()(bool)' --rpc-url "$HEDERA_RPC_URL_1"
+  ```
 
 ### 4. `hedera.sh record`
 

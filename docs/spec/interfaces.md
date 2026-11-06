@@ -108,7 +108,7 @@ carry more):
 | `kind` | all | the record key, e.g. `"asked"` |
 | `orderId` | all | `hex32` |
 | `attrs` | all but approval | object; keys from the six attributes (others ignored), string values; may be absent (= empty) |
-| `changes` | shown | array of attribute keys; `[]` when the screen showed no change. The rule reads only empty or non-empty |
+| `changes` | shown | array of attribute keys; `[]` when the screen showed no change. The rule (version 2) clears only the attributes it names; version 1 read it as empty or non-empty |
 | `approval` | approval | `"approved"` or `"not_approved"` |
 | `approvalBasis` | approval | `"buyer"` (a human approved) or `"mandate"` (below the spend limit; the agent's mandate counts as approved). Ignored by the rule |
 | `x402TxId` | ordered | non-empty string |
@@ -199,7 +199,7 @@ on a leg is the one with the highest `sendNo` in that direction.
 the contract values live (they change when config is locked).
 
 **`PrecheckResult`** (TS) — `{gap, answer, side, reasonKey, step, flaggedCells: {record,
-attribute}[], notCompared: Attribute[], unreadPrice: record key[]}`. `RULE_VERSION` = `"1"`.
+attribute}[], notCompared: Attribute[], unreadPrice: record key[]}`. `RULE_VERSION` = `"2"`.
 
 **Parties.** `deployments/parties.json` (path in `PARTIES_FILE`, absolute) is a JSON array, one
 object per party:
@@ -466,7 +466,7 @@ USDC.
 | `minDeposit` | 5,000,000 | same | µUSDC |
 | `topUpWindow` / `exitDelay` | 604,800 / 600 | 604,800 / 10,368,000 | s |
 | `resendGap` / `maxSends` | 1,800 / 5 | same | s / count |
-| `caseDeadline` / `maxOpenCases` | 7,200 / 10 | same | s / count |
+| `caseDeadline` (one court 8 round, 8,100 s, plus room for the draw) / `maxOpenCases` | 10,800 / 10 | same | s / count |
 | `claimTimeout` (Filed from `filedAt`; Contested, AtCourt from `preCheckedAt`) | 64,800 | 64,800 | s |
 | `stuckAfter` | 3,600 | same | s |
 | `publishThreshold` | 20 | same | ruled cases |
@@ -544,7 +544,7 @@ by the core owner.
 | Parties, deployments, tooling | `HEDERA_ACCOUNT_IDS`, `DEPLOYMENTS_DIR` (absolute), `PARTIES_FILE` (absolute), `SUITE_LOCK_FILE` |
 | Contract deploy inputs | `RULING_RELAYER_ADDRESS`, `PRECHECK_SIGNER_ADDRESS`, `POOL_ADDRESS`, `ANVIL_PORT_HEDERA` |
 | Agent and shop | `AGENT_SPEND_LIMIT_USDC` (µUSDC), `AGENT_MAX_ORDER_USDC`, `AGENT_DAILY_CAP_USDC`, `AGENT_APPROVAL_TTL_SEC`, `PRICE_ASSET`, `SHOP_PUBLIC_URL`, `SHOP_BASE_URL`, `SHOP_PORT`, `AGENT_PORT`, `SHOP_STANDING_CHECK` |
-| Precheck and keeper | `PRECHECK_STATE_DIR`, `PRECHECK_PORT`, `KEEPER_STATE_DIR`, `KEEPER_PORT`, `KEEPER_REFILE_HOLD_MIN`, `KEEPER_ARB_CONFIRMATIONS`, `KEEPER_POLL_MS`, `KEEPER_AUTO_MANUAL_EXEC`, `PRECHECK_QUIET_S`, `SEND_PAUSE_WINDOWS` |
+| Precheck and keeper | `PRECHECK_STATE_DIR`, `PRECHECK_PORT`, `KEEPER_STATE_DIR`, `KEEPER_PORT`, `KEEPER_REFILE_HOLD_MIN`, `KEEPER_ARB_CONFIRMATIONS`, `KEEPER_POLL_MS`, `PRECHECK_QUIET_S`, `SEND_PAUSE_WINDOWS` |
 | Docket and intake | `DOCKET_PORT`, `DOCKET_STATE_DIR`, `DOCKET_STORE`, `DOCKET_PUBLISH_THRESHOLD`, `DOCKET_SAMPLE_MODE`, `DOCKET_Z`, `DOCKET_POLL_SECONDS`, `DOCKET_RETRY_SECONDS`, `DOCKET_RETRY_MAX`, `ARKIV_LIFETIME_DAYS`, `ARKIV_PAGE_SIZE`, `ARKIV_MIN_TGLM`, `SCHEME_MIN_HBAR`, `REVIEWS_ENABLED`, `REVIEW_VALUE_FAULT`, `REVIEW_VALUE_CLEAR`, `REVIEW_TAG1`, `INTAKE_PORT`, `INTAKE_CORS_ORIGIN`, `INTAKE_MAX_BYTES`, `INTAKE_RATE_PER_MIN`, `INTAKE_LLM_TIMEOUT_MS`, `INTAKE_LLM_PAUSE_MIN` |
 | Status API | `STATUS_API_PORT`, `STATUS_API_STATE_DIR`, `POLL_MS`, `ARB_CONFIRMATIONS`, `ARB_LOG_CHUNK`, `SOURCE_TIMEOUT_MS`, `VIEW_CACHE_MS`, `LAG_WARN_S_HEDERA`, `LAG_WARN_S_ARB`, `LAG_WARN_S_HCS`, `IPFS_RATE_PER_MIN`, `DOCKET_URL`, `INTAKE_URL`, `AGENT_URL`, `PRECHECK_URL`, `WEB_ORIGIN`, `COURT_URL_TEMPLATE` |
 | Web (public, build time) | `VITE_STATUS_API_URL`, `VITE_ARKIV_PUBLIC_RPC_URL`, `VITE_POLL_MS` |
@@ -586,7 +586,7 @@ case 8560-8569, agent and shop 8570-8579, precheck and keeper 8580-8589, docket 
 | Consumer | Hedera (`RecourseClaims`, `DepositVault`) | Arbitrum and other reads |
 |---|---|---|
 | precheck | `ClaimFiled` | HCS records topic, IPFS documents |
-| keeper | `ClaimFiled`, `PreCheckRecorded`, `Contested`, `ClosedUncontested`, `SentToCourt`, `RulingReceived`, `RulingIgnored`, `Settled`, `BatchOpened`, `BatchDrawn`, `ClosedUndrawn`, `ClaimExpired`, `BridgeModeSet`; vault `creditOf` | `ClaimReceived`, `ClaimDuplicate`, `ClaimRejected`, `ClaimStale`, `CaseOpened`, `DisputeRequest`, `Ruling`, `RefileNeeded`, `RulingFinal`, `RulingRelayed`, `FeePoolFunded`; `currentRuling`; KlerosCore `Draw`, the EvidenceModule evidence event for our external ids, appeal contributions (alert only); both OffRamps `getExecutionState` |
+| keeper | `ClaimFiled`, `PreCheckRecorded`, `Contested`, `ClosedUncontested`, `SentToCourt`, `RulingReceived`, `RulingIgnored`, `Settled`, `BatchOpened`, `BatchDrawn`, `ClosedUndrawn`, `ClaimExpired`, `BridgeModeSet`; `params()`, `claimTermsOf` (falls back to `params()` where it reverts); vault `creditOf`, `oldestOpenClaimOf` | `ClaimReceived`, `ClaimDuplicate`, `ClaimRejected`, `ClaimStale`, `CaseOpened`, `DisputeRequest`, `Ruling`, `RefileNeeded`, `RulingFinal`, `RulingRelayed`, `FeePoolFunded`; `currentRuling`; KlerosCore `Draw`, the EvidenceModule evidence event for our external ids, appeal contributions (alert only); both OffRamps `getExecutionState` |
 | docket | `ClaimFiled`, `PreCheckRecorded`, `ClosedUncontested`, `RulingReceived`, `Settled`, `BatchOpened`, `BatchDrawn`, `ClosedUndrawn`, `ClaimExpired`, `OutcomeApplied`, `Shortfall` | `CaseOpened` (dispute ids) |
 | shop | `ClaimFiled` and `PreCheckRecorded` for its claims; vault `inGoodStanding` before checkout | none |
 | status-api | every event of both contracts | every `RecourseCase` event, OffRamp state, KlerosCore period, Arkiv, docket write status |
@@ -639,8 +639,11 @@ list.
 - `recordRuling(claimId, disputeId, ruling, attempts)`: `rulingRelayer` only, in modes OutOnly and
   None.
 - Views: `getClaim`, `params()` → `{contestWindow, claimTimeout, courtFeeUsdc, handlingBase,
-  handlingBps, handlingCap, resendGap, maxSends}`, `previewSettle(claimId) → (toShop, refund,
-  toPool)`, `handlingOf(basket)`, `quoteSend(claimId)` (fee in the current fee token's units),
+  handlingBps, handlingCap, resendGap, maxSends}`, `claimTermsOf(claimId) → {contestWindow,
+  claimTimeout, handling}` (fixed when the claim was filed: its window, close and expiry use these,
+  never a later `params()`; zeros for an unknown claim; the claims contract deployed before it has
+  no such view and checks every claim against the live `params()`), `previewSettle(claimId) →
+  (toShop, refund, toPool)`, `handlingOf(basket)`, `quoteSend(claimId)` (fee in the current fee token's units),
   `batchOf`, `getBatch`, `peer`, `preCheckSigner`, `configLocked`, `extraArgs`, `bridgeMode`,
   `rulingRelayer`, `feeToken()`. Unknown ids return zeros.
 - CCIP fees in LINK or native HBAR: `feeToken()` (LINK by default; `address(0)` = native),
@@ -660,6 +663,23 @@ list.
   clear), `openClaimsOf(platform)`, `exitRequestedAt`, `usdcAssociated`, `inGoodStanding`. The
   top-up clock starts only when a payout takes the deposit from at least `required` to below it.
   The vault is non-payable. Credits leave only through `withdrawCredit` to `msg.sender`.
+- Vault filing order: a platform's open claims are paid in the order they were filed. Each claim
+  reserves at filing the most it may be owed (`maxPayoutOf(claimId)`) out of what no open claim
+  may still be owed (`depositOf - exposureOf(platform)`). `applyOutcome` (so `closeUncontested` and
+  `settle`) reverts `EarlierClaimOpen(bytes32 oldestOpen)` when the payout is more than the claim
+  may draw now (`availableTo(claimId)`) and the claim is not the platform's oldest open one
+  (`oldestOpenClaimOf(platform)`, 0 when none); nothing changes and the claim waits. The oldest is
+  never refused; only it closes short, and then only because the deposit ran out. `expireClaim`
+  pays nothing and is never refused this way. Anyone can end each earlier claim by its own
+  timeout at the latest, so the wait is bounded. The vault deployed before this has none of these
+  views and never reverts `EarlierClaimOpen`.
+- Keeper on a refused payout: `EarlierClaimOpen` on `closeUncontested` or `settle` is a wait, not
+  a failure. It is not counted against the row's tries, never holds the claim, and raises no
+  `close_late`, `settle_late` or `settle_failed`. The keeper reads `oldestOpenClaimOf(platform)`
+  every 2 minutes and sends again on the tick that sees the named claim end (or, without the view,
+  at the row's retry interval). If the wait outlasts the earlier claim's own timeout (its
+  `claimTimeout` after its pre-check, or after filing) by 15 minutes, it raises `payout_waiting`
+  once, with the earlier claim id (`detail.earlierClaimId`), `endsBy` and `waitingSince`.
 - `deployments/hedera.json` top-level keys: `contracts {claims, vault}` (each `{address, id}`),
   `deployOrder`, `startTimestamp`, `associationTx`, `mode`, `params {preLock, locked}`,
   `extraArgs`, `sizes`, `gas`, `dpTx`, `sourcify`. ABIs in `deployments/abi/RecourseClaims.json`
@@ -670,23 +690,39 @@ list.
 `IRecourseCase.sol` in `contracts/src/arbitrum/` (as of `87f6c83`) is the code form of this list.
 
 - `CaseState` and `CaseView` as in sections 3 and 4; `caseOf(bytes32 claimId) returns (CaseView)`.
+- `openBy` = `expiresAt` − `caseDeadline`, the last moment a whole court round still fits.
 - Transitions: None → Received (`_ccipReceive` or `relayClaim`, valid); Received → Opened
-  (`openCase` before `receivedAt` + `caseDeadline` and before `expiresAt`, attempt 1) or Stale
-  (`openCase` at or after either, or `markStale`); Opened → RefilePending (`rule`, attempt 1,
-  ruling 0) or Ruled (`rule`, attempt 1 ruling 1-3 or attempt 2 ruling 0-3) or Stale (`markStale`);
-  RefilePending → Opened (`refile` before `ruledAt` + `caseDeadline` and before `expiresAt`,
-  attempt 2) or Stale (`refile` at or after either, or `markStale`); Ruled → Relayed (first
-  `relayRuling`). A Stale `openCase` or `refile` spends nothing and returns 0.
+  (`openCase` before `openBy` with a free slot and a funded pool, attempt 1) or Stale (`openCase`
+  at or after `openBy`, or `markStale`); Opened → RefilePending (`rule` before `expiresAt`,
+  attempt 1, ruling 0) or Ruled (`rule` before `expiresAt`, attempt 1 ruling 1-3 or attempt 2
+  ruling 0-3) or Stale (`rule` at or after `expiresAt`, the ruling ignored, or `markStale`);
+  RefilePending → Opened (`refile` before `openBy` with a funded pool, attempt 2) or Stale
+  (`refile` at or after `openBy`, or `markStale`); Ruled → Relayed (first `relayRuling`). A Stale
+  `openCase` or `refile` spends nothing and returns 0. Before `openBy` a full cap reverts
+  `CapReached` (`openCase`) and a short pool `FeePoolLow` (both); the case stays as it was and can
+  open once they clear. `setParams` requires `caseDeadline` < `claimTimeout`.
+- The case contract deployed before `openBy` went Stale at `receivedAt` (or `ruledAt`) +
+  `caseDeadline` as well as at `expiresAt`; its ABI is the same. The keeper applies `openBy` to
+  both: a call the old contract takes after its own deadline only marks the case Stale and spends
+  nothing, and the keeper never opens a round with less than one court round plus an hour left
+  before `expiresAt` on either.
+- Keeper on opening: it sends `openCase` or `refile` only before `openBy`. It waits for the
+  evidence until `openBy` − 15 min or 6,300 s after `receivedAt` (or `ruledAt`), whichever is
+  first, then opens without it. A short fee pool or a full cap (read before the call, or as
+  `FeePoolLow` / `CapReached` from it) is a wait: not counted, no hold, one `fee_pool_low` or
+  `open_cases_near_cap` per attempt, and the call goes again every 2 minutes until `openBy`.
 - Expiry: `expiresAt = filedAt + claimTimeout`, set when the claim is received. `claimTimeout` is
-  Hedera's locked value, fixed at deploy (constructor's 9th argument `claimTimeout_`, non-zero).
-  `markStale(bytes32 claimId)` is permissionless once `block.timestamp ≥ expiresAt(claimId)`. It
-  moves Received, Opened or RefilePending to Stale, frees the open-case slot (Opened,
-  RefilePending), spends nothing and emits `ClaimStale`. It reverts `NotExpired(uint64 expiresAt)`
-  before then and `WrongState` from any other state. A ruling for a Stale case is ignored.
-- Known gap: Arbitrum's expiry counts from `filedAt`, while Hedera's court-stage expiry counts from
-  `preCheckedAt`, which is later by the pre-check's delay (minutes). A ruling that arrives in that
-  gap, about 18 h after filing, is ignored on Arbitrum once the case is Stale. The claim then
-  expires on Hedera and the fee is refunded.
+  Hedera's locked value less a relay budget (`CaseTimeouts.RELAY_BUDGET`, 7,200 s): 64,800 −
+  7,200 = 57,600 s, fixed at deploy (constructor's 9th argument `claimTimeout_`, non-zero; the
+  deploy's `CASE_RELAY_BUDGET` overrides the budget). `markStale(bytes32 claimId)` is
+  permissionless once `block.timestamp ≥ expiresAt(claimId)`. It moves Received, Opened or
+  RefilePending to Stale, frees the open-case slot (Opened, RefilePending), spends nothing and
+  emits `ClaimStale`. It reverts `NotExpired(uint64 expiresAt)` before then and `WrongState` from
+  any other state. A ruling for a Stale case is ignored.
+- Relay budget: the case takes no ruling from `filedAt` + its `claimTimeout` on, and anyone may
+  expire the claim on Hedera only after `preCheckedAt` (or `filedAt`) + Hedera's `claimTimeout`,
+  so a ruling the case accepts has at least the 7,200 s budget to land on Hedera (a first send and
+  four resends 30 minutes apart). `DeployLocal` gives the local case the same budgeted value.
 - Views: `expiresAt(bytes32 claimId) returns (uint64)` (0 when unknown), `claimTimeout() returns
   (uint64)`, `claimOfDispute(uint256 disputeId) returns (bytes32 claimId, uint8 attempt)`,
   `openCases()`, `feePool()`, `costNow()`, `EXTRA_DATA`, `NUMBER_OF_CHOICES`, `trustedRelay()`,
@@ -731,7 +767,7 @@ list.
   the pre-check finding, one section per record kind in order (a held record shows its SHA-256,
   HCS sequence and CID, then the document byte for byte in a fenced block; an absent or rejected
   one is a line), and the `precheck-result` document byte for byte with its SHA-256.
-- Cap: 16 KB = 16,384 UTF-8 bytes (`EVIDENCE_MAX_BYTES`); larger throws `EvidenceTooLarge`.
+- Cap: 48 KiB = 49,152 UTF-8 bytes (`EVIDENCE_MAX_BYTES`); larger throws `EvidenceTooLarge`.
 - Checks, in order: SHA-256 of the `precheck-result` document equals the payload `packHash`; each
   held document's SHA-256 equals that slot's `hcsHash` in the pre-check document. A mismatch, or a
   held slot with no document, throws `EvidenceHashMismatch(kind)`. A held slot whose
@@ -764,7 +800,7 @@ list.
   - `hederaSelector`;
   - `params {caseDeadline, maxOpenCases, resendGap, maxSends}`;
   - `relayGasLimit`;
-  - `claimTimeout` (Hedera's locked value, from `params.json` `locked.claimTimeout`).
+  - `claimTimeout` (Hedera's locked value, from `params.json` `locked.claimTimeout`, less the relay budget `CASE_RELAY_BUDGET`, default 7,200 s: 57,600).
 - `config`: `templateTag`, `templateVariant`, `templateTextHash`, `policyURI`, `extraArgs`, `extraData`, `numberOfChoices`.
 - `abi`.
 - `gas.<op> {used, limit}`.
