@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { PrivateKey } from '@hiero-ledger/sdk';
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { FacilitatorTimeoutError } from '@x402/core/server';
-import { SettleError, type PaymentPayload, type PaymentRequirements } from '@x402/core/types';
+import { SettleError, VerifyError, type PaymentPayload, type PaymentRequirements } from '@x402/core/types';
 import { createClientHederaSigner } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/client';
 import { memoryLogger } from '@recourse/records';
@@ -54,6 +54,8 @@ describe('failure classes', () => {
     expect(isFacilitatorSideFailure(new SettleError(503, { success: false, transaction: '', network: 'hedera:testnet' }))).toBe(true);
     expect(isFacilitatorSideFailure(new SettleError(400, { success: false, transaction: '', network: 'hedera:testnet' }))).toBe(false);
     expect(isFacilitatorSideFailure(new Error('Facilitator settle failed (400): bad request'))).toBe(false);
+    expect(isFacilitatorSideFailure(new VerifyError(500, { isValid: false, invalidReason: 'unexpected_verify_error' }))).toBe(true);
+    expect(isFacilitatorSideFailure(new VerifyError(400, { isValid: false, invalidReason: 'invalid_exact_hedera_payload_signature_invalid' }))).toBe(false);
   });
 
   test('a failed submit is the facilitator whatever the status; a payment refusal is not', () => {
@@ -163,6 +165,26 @@ describe('ladder', () => {
     for (let i = 0; i < 3; i++) await expect(verify()).rejects.toThrow();
     expect(ladder.state().rung).toBe(2);
     expect(switched).toBe(1);
+  });
+
+  test('a verify that answers 500 with a verify reply three times moves to the next rung', async () => {
+    const first = fakeFacilitator('0.0.990011');
+    const second = fakeFacilitator('0.0.990012');
+    first.verify = async () => {
+      throw new VerifyError(500, { isValid: false, invalidReason: 'unexpected_verify_error' });
+    };
+    const log = memoryLogger();
+    const ladder = new FacilitatorLadder(
+      [
+        { index: 1, url: 'fake://1', create: () => first },
+        { index: 2, url: 'fake://2', create: () => second },
+      ],
+      { network: NETWORK, log },
+    );
+    await ladder.select();
+    for (let i = 0; i < 3; i++) await expect(ladder.verify({} as PaymentPayload, {} as PaymentRequirements)).rejects.toThrow('unexpected_verify_error');
+    expect(ladder.state().rung).toBe(2);
+    expect(log.lines.filter((l) => l.event === 'facilitator_verify_failed')).toHaveLength(3);
   });
 
   test('payment-side refusals do not count toward failover', async () => {

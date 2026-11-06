@@ -12,7 +12,7 @@ import {
   HTTPFacilitatorClient,
   type FacilitatorClient,
 } from '@x402/core/server';
-import { SettleError, type PaymentPayload, type PaymentRequirements, type SettleResponse, type SupportedResponse, type VerifyResponse } from '@x402/core/types';
+import { SettleError, VerifyError, type PaymentPayload, type PaymentRequirements, type SettleResponse, type SupportedResponse, type VerifyResponse } from '@x402/core/types';
 import type { Logger } from '@recourse/records';
 
 export const SELF_HOSTED = 'self';
@@ -92,6 +92,8 @@ export function isRefusedBeforeSubmit(reason: string | undefined): boolean {
 export function isFacilitatorSideFailure(error: unknown): boolean {
   if (error instanceof FacilitatorTimeoutError || error instanceof FacilitatorResponseError) return true;
   if (error instanceof SettleError) return error.statusCode >= 500 || isFacilitatorSideReason(error.errorReason);
+  // A 5xx whose body is a verify reply (`isValid`) is still the facilitator failing.
+  if (error instanceof VerifyError) return error.statusCode >= 500;
   if (error instanceof TypeError) return true; // fetch could not reach the host
   if (error instanceof Error) {
     if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
@@ -182,7 +184,7 @@ export class FacilitatorLadder implements FacilitatorClient {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.lastError = `rung ${rung.index}: verify: ${message}`;
-      if (isFacilitatorSideFailure(error)) await this.countFailure(rung, `verify: ${message}`);
+      if (isFacilitatorSideFailure(error)) await this.countFailure(rung, `verify: ${message}`, 'verify');
       throw error;
     }
   }
@@ -211,10 +213,10 @@ export class FacilitatorLadder implements FacilitatorClient {
     return result;
   }
 
-  private async countFailure(rung: RungSpec, message: string): Promise<void> {
+  private async countFailure(rung: RungSpec, message: string, op: 'verify' | 'settle' = 'settle'): Promise<void> {
     if (rung !== this.rungs[this.activeIndex]) return;
     this.consecutiveFailures += 1;
-    this.options.log.warn('facilitator_settle_failed', {
+    this.options.log.warn(`facilitator_${op}_failed`, {
       rung: rung.index,
       consecutive: this.consecutiveFailures,
       error: message.slice(0, 200),
