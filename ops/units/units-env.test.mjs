@@ -64,7 +64,7 @@ function parseUnit(name) {
 function passedOnPaper(unit, inherited) {
   const names = new Set(inherited);
   if (unit.envFiles.includes(SHARED)) for (const n of ENV_NAMES) names.add(n);
-  for (const e of unit.env) names.add(e.split('=')[0]);
+  for (const e of unit.env) names.add(e.replace(/^"/, '').split('=')[0]);
   for (const n of unit.unset) names.delete(n);
   return SENSITIVE.filter((n) => names.has(n)).sort();
 }
@@ -170,6 +170,27 @@ test('every long-running unit restarts on failure, has a memory cap and OOMScore
     total += sizeM(one('MemoryMax'));
   }
   assert.ok(total < 1536, `the MemoryMax caps add up to ${total}M`);
+});
+
+// Node's heap flags. The old space stays below the unit's MemoryMax, and the semi-spaces are capped at 4 MB:
+// V8's young generation otherwise grows to 128 MB on top of the old space whatever its size, and the pre-check's
+// largest topic-index replay peaked at 225 MB RSS under its 192M cap without the cap (129 MB with it). Two flags
+// in one Environment= value need quotes, or systemd splits them into two assignments and drops the second.
+const NODE_UNITS = ['keeper', 'precheck', 'shop', 'status-api', 'docket', 'intake', 'web'];
+test('every node unit caps its old space below MemoryMax and its semi-spaces at 4 MB', () => {
+  for (const name of NODE_UNITS) {
+    const text = readFileSync(join(unitsDir, `recourse-${name}.service`), 'utf8');
+    const lines = text.split('\n').map((l) => l.trim()).filter((l) => /^Environment="?NODE_OPTIONS=/.test(l));
+    assert.equal(lines.length, 1, `recourse-${name}: NODE_OPTIONS is set ${lines.length} times`);
+    const m = /^Environment="NODE_OPTIONS=([^"]*)"$/.exec(lines[0]);
+    assert.ok(m, `recourse-${name}: ${lines[0]} must be one quoted assignment`);
+    const flags = m[1].split(/\s+/);
+    const old = flags.map((f) => /^--max-old-space-size=(\d+)$/.exec(f)?.[1]).find(Boolean);
+    assert.ok(old, `recourse-${name}: no --max-old-space-size`);
+    const cap = sizeM(/^MemoryMax=(\S+)$/m.exec(text)[1]);
+    assert.ok(Number(old) < cap, `recourse-${name}: --max-old-space-size=${old} is not below MemoryMax=${cap}M`);
+    assert.ok(flags.includes('--max-semi-space-size=4'), `recourse-${name}: NODE_OPTIONS lacks --max-semi-space-size=4`);
+  }
 });
 
 // A user unit cannot go below its manager's oom_score_adj (100 here, from user@.service): a lower value is

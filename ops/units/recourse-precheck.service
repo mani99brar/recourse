@@ -11,7 +11,11 @@ EnvironmentFile=%h/.config/recourse/recourse.env
 EnvironmentFile=-%h/.config/recourse/precheck.env
 Environment=PRECHECK_PORT=8705
 Environment=PRECHECK_STATE_DIR=%h/.local/state/recourse/precheck
-Environment=NODE_OPTIONS=--max-old-space-size=144
+# By default V8's young generation can grow to 128 MB on top of the old space, whatever --max-old-space-size says
+# (a churn test at 32, 112 and 144 on 6 Nov); with --max-semi-space-size=4 it stayed under 12 MB. Replaying the
+# largest topic-index journal the caps allow peaked at 225 MB RSS with --max-old-space-size=144 alone, above
+# MemoryMax, and at 129 MB with both flags. Quoted, so systemd keeps both flags in the one value.
+Environment="NODE_OPTIONS=--max-old-space-size=144 --max-semi-space-size=4"
 # Key paths, secrets and keyed URLs this service never reads. UnsetEnvironment is applied after every
 # EnvironmentFile, so <service>.env cannot bring them back; edit this list if the code starts using one.
 UnsetEnvironment=KEYSTORE_DIR DEPLOYER_KEY_FILE OPS_HEDERA_KEY_FILE OPS_ARB_KEY_FILE PLATFORM_KEY_FILE AGENT_KEY_FILE SHOP_KEY_FILE SCHEME_KEY_FILE BUYER_KEY_FILE FACILITATOR_KEY_FILE

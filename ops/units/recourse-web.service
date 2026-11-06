@@ -13,7 +13,10 @@ EnvironmentFile=-%h/.config/recourse/web.env
 Environment=WEB_PORT=8788
 Environment=STATUS_API_PORT=8787
 Environment=WEB_DIST_DIR=@REPO@/apps/web/dist
-Environment=NODE_OPTIONS=--max-old-space-size=32
+# By default V8's young generation can grow to 128 MB on top of the old space, whatever --max-old-space-size says
+# (a churn test at 32, 112 and 144 on 6 Nov); with --max-semi-space-size=4 it stayed under 12 MB. Quoted, so
+# systemd keeps both flags in the one value.
+Environment="NODE_OPTIONS=--max-old-space-size=32 --max-semi-space-size=4"
 UnsetEnvironment=SSH_AUTH_SOCK
 ExecStart=@NODE@ web-server.mjs
 Restart=on-failure
