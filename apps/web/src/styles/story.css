@@ -486,9 +486,6 @@
   min-width: 0;
   background: var(--g);
 }
-.story-page .story-doors > li:nth-child(-n + 2) {
-  grid-column: span 3;
-}
 .story-page .story-door {
   display: flex;
   flex-direction: column;
@@ -625,8 +622,7 @@
   .story-page .story-doors {
     grid-template-columns: minmax(0, 1fr);
   }
-  .story-page .story-doors > li,
-  .story-page .story-doors > li:nth-child(-n + 2) {
+  .story-page .story-doors > li {
     grid-column: auto;
   }
 }

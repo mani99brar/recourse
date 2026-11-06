@@ -11,8 +11,12 @@ import '../styles/story.css';
 
 /** The claim the story follows: asked M, shown M, ordered L; nobody contested, so the deposit paid the shop. */
 export const PAYOUT_CLAIM = '0x8f78143ea47bd370edb87e91a720955110aa4978d79474a5d5fbbf0d1eec6f75';
-/** The claim a court decided: a size change approved under the buyer's mandate, ruled neither side at fault. */
-export const COURT_CLAIM = '0x392d6f13cdf5fe1ca93289d143e51b511f333de3d6d1769c72ddd0039c7f3c50';
+/** The claim a court decided against the agent company: the first claim's records, contested, Kleros dispute 213, ruling 1. */
+export const COURT_CLAIM = '0x00ad6c98af5cc7ae1e17dba7359c524ae8d6c37c32c1c01272830332e69efeae';
+/** The claim a court decided neither side at fault (Kleros dispute 212): a size change approved under the buyer's mandate. */
+export const MANDATE_CLAIM = '0x392d6f13cdf5fe1ca93289d143e51b511f333de3d6d1769c72ddd0039c7f3c50';
+/** Its dispute on Kleros; the story tells it from the record, not from a read. */
+export const MANDATE_DISPUTE_URL = 'https://v2-testnet.kleros.builders/#/cases/212/overview';
 /** The shop's withdrawal of its credit from the payout claim, on Hedera testnet; the claim read does not carry it. */
 export const WITHDRAW_TX = '0xb08f494f57e4e1abf85e7688e29a61e6812c0b7e58bf49d7d89e2fbd38b81539';
 
@@ -43,7 +47,7 @@ export interface StoryClaim extends Fresh {
 const SIZE_KINDS = [0, 1, 3, 4, 5] as const;
 /** The sizes as the story tells them, per claim; a record read from the claim replaces its letter with its own. */
 const TOLD_PAYOUT: Record<number, string> = { 0: 'M', 1: 'M', 3: 'L', 4: 'L', 5: 'L' };
-const TOLD_COURT: Record<number, string> = { 0: 'M', 1: 'L', 3: 'L', 4: 'L', 5: 'L' };
+const TOLD_COURT: Record<number, string> = TOLD_PAYOUT;
 
 /** Asked, shown, ordered, packed and arrived, each with its size and whether the claim read gave it. */
 export function sizesOf(d: StoryClaim | null, told: Record<number, string> = TOLD_PAYOUT): { kind: number; label: string; size: string; read: boolean }[] {
@@ -112,6 +116,19 @@ export function courtOutcome(d: StoryClaim | null): { ruled: string | null; appl
     applied: ruling === null ? null : (APPLIED[ruling] ?? null),
     fee: d ? (FEE_WENT[d.money.escrow.fate] ?? null) : null,
   };
+}
+
+/**
+ * What the deposit paid on a claim the court ruled against the agent company: the loss claimed, handling, and the shop's
+ * court fee repaid (owed less these is nothing). Null unless the ruling is 1 and the read gives the amounts.
+ */
+export function courtPaid(d: StoryClaim | null): { paid: bigint; basket: bigint; handling: bigint; fee: bigint } | null {
+  if (!d || d.court.ruling !== 1 || d.money.paid === null) return null;
+  const paid = BigInt(d.money.paid);
+  const basket = BigInt(d.netLossUsdc);
+  const fee = BigInt(d.money.escrow.amount);
+  const handling = paid - basket - fee;
+  return fee > 0n && handling >= 0n ? { paid, basket, handling, fee } : null;
 }
 
 /** Adds .reveal to the page once an observer can run, and .in to each beat as it scrolls into view. */
@@ -245,7 +262,9 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
   const company = payout?.platformName ?? null;
   const sizes = sizesOf(payout);
   const [asked, shown, ordered, packed, arrived] = sizes.map((s) => s.size) as [string, string, string, string, string];
-  const [courtAsked, courtShown] = sizesOf(court, TOLD_COURT).map((s) => s.size) as [string, string];
+  const [courtAsked, courtShown, courtOrdered] = sizesOf(court, TOLD_COURT).map((s) => s.size) as [string, string, string];
+  const sameRecords = courtAsked === asked && courtShown === shown && courtOrdered === ordered;
+  const paidByCourt = courtPaid(court);
   const money = payoutMoney(payout);
   const sum = (v: bigint | null) => amount(v, payout);
   const windowLen = windowWords(payout);
@@ -259,6 +278,15 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
   const sizesRead = sizes.every((s) => s.read);
   const toCourt = court?.messages.find((m) => m.direction === 'toArbitrum') ?? null;
   const back = court?.messages.find((m) => m.direction === 'toHedera') ?? null;
+  // what the jurors' ruling did, in the read's own words: the deposit paid the shop when they ruled against the agent company
+  const ruledWords = outcome.ruled ? `the jurors ruled that ${outcome.ruled}` : 'the jurors ruled on the records';
+  const deposit = `${court?.platformName ?? 'the agent company'}'s deposit`;
+  const feeWords = outcome.fee ? `, and the court fee, which the shop pays when it files a claim, ${outcome.fee}` : '';
+  const courtDid = paidByCourt
+    ? `${ruledWords}, and ${deposit} paid ${court?.shopName ?? 'the shop'} ${amount(paidByCourt.paid, court)}: the basket, ${amount(paidByCourt.basket, court)}, handling, ${amount(paidByCourt.handling, court)}, and the shop's ${amount(paidByCourt.fee, court)} court fee back.`
+    : court?.court.ruling === 1
+      ? `${ruledWords}, and the agent company's deposit paid the shop the basket, handling and the shop's court fee back.`
+      : `${ruledWords}${feeWords}.`;
   return (
     <>
       <p className="story-case">
@@ -272,7 +300,7 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
           </>
         ) : (
           <>
-            The story follows one claim, <a href={`#/claim/${PAYOUT_CLAIM}`}>{short(PAYOUT_CLAIM)}</a>, and ends with a second one that went to court.
+            The story follows one claim, <a href={`#/claim/${PAYOUT_CLAIM}`}>{short(PAYOUT_CLAIM)}</a>, and ends with a third one that went to court.
           </>
         )}
       </p>
@@ -432,7 +460,7 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
                 {at(court, 'Settled') && <span className="t">{at(court, 'Settled')}</span>}
               </li>
             </ol>
-            <figcaption>The second claim's way to the court and back.</figcaption>
+            <figcaption>The third claim's way to the court and back.</figcaption>
           </figure>
         }
       >
@@ -440,13 +468,17 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
           The side the pre-check finds at fault can contest it within the claim's contest window (when it finds neither side at fault, the shop can). A contested claim travels from Hedera to Arbitrum Sepolia, another test network, over Chainlink CCIP, a service that carries messages between chains. There human jurors in a Kleros court decide, and the ruling comes back over CCIP to settle the claim on Hedera.
         </p>
         <p className="note small-note">
-          That is what happened to a second claim. The agent showed {courtShown} where the buyer asked for {courtAsked}, and the records showed the change was approved under the buyer's standing spending mandate, the limits the buyer set in advance for what the agent may buy.{' '}
-          {by ? `${by[0]!.toUpperCase()}${by.slice(1)} contested.` : 'A side contested.'} In {dispute ? `dispute ${dispute}` : 'its dispute'} {outcome.ruled ? `the jurors ruled that ${outcome.ruled}` : 'the jurors ruled on the records'}
-          {outcome.fee && `, and the court fee, which the shop pays when it files a claim, ${outcome.fee}`}.
+          {sameRecords ? 'That is what happened to a third claim, which had the same records as the first: ' : 'That is what happened to a third claim: '}
+          the buyer asked for {courtAsked}, the agent showed {courtShown}, and its order said {courtOrdered}. {by ? `This time ${by} contested.` : 'This time a side contested.'} In {dispute ? `dispute ${dispute}` : 'its dispute'} {courtDid}
+        </p>
+        <p className="note small-note">
+          The court does not only side with shops. In dispute 212 the records showed that the buyer's standing spending mandate, the limits the buyer set in advance for what the agent may buy, had approved the size change, so the jurors ruled that neither side was at fault.
         </p>
         <p className="beat-links">
-          <a href={`#/claim/${COURT_CLAIM}`}>Open the second claim</a>
-          {disputeUrl && <ExtLink href={disputeUrl}>The dispute on Kleros</ExtLink>}
+          <a href={`#/claim/${COURT_CLAIM}`}>Open the third claim</a>
+          {disputeUrl && <ExtLink href={disputeUrl}>Dispute {dispute} on Kleros</ExtLink>}
+          <a href={`#/claim/${MANDATE_CLAIM}`}>Open the claim of dispute 212</a>
+          <ExtLink href={MANDATE_DISPUTE_URL}>Dispute 212 on Kleros</ExtLink>
         </p>
       </Beat>
 
@@ -479,8 +511,11 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
           <Door href={`#/claim/${PAYOUT_CLAIM}`} kicker="The first claim" title="Paid from the deposit">
             Asked M, ordered L. Nobody contested, so the agent company's deposit paid the shop.
           </Door>
-          <Door href={`#/claim/${COURT_CLAIM}`} kicker="The second claim" title="Decided in court">
-            {dispute ? `Kleros dispute ${dispute}` : 'A Kleros dispute'}: {outcome.ruled ? `the jurors ruled that ${outcome.ruled}.` : 'human jurors ruled on the records.'}
+          <Door href={`#/claim/${COURT_CLAIM}`} kicker="The third claim" title={court?.court.ruling === 1 ? 'Lost in court' : 'Decided in court'}>
+            Same records, but the agent company contested. {dispute ? `Kleros dispute ${dispute}` : 'A Kleros dispute'}: {outcome.ruled ? `the jurors ruled that ${outcome.ruled}.` : 'human jurors ruled on the records.'}
+          </Door>
+          <Door href={`#/claim/${MANDATE_CLAIM}`} kicker="The second claim" title="Neither side at fault">
+            Kleros dispute 212: the buyer's standing mandate had approved the size change, and the jurors ruled that neither side was at fault.
           </Door>
           <Door href="#/docket" kicker="Everyone" title="The docket">
             Ruled cases and monthly counts, read from Arkiv testnet, a public data store.
@@ -528,7 +563,7 @@ export function StoryPage() {
         <p className="eyebrow">The story</p>
         <h1>How it works</h1>
         <p className="lead">
-          A shopping agent is software that buys for a person, and the agent company that runs it answers for what it buys. When it buys the wrong thing, who pays the shop? Here is one claim from start to end in five steps, and a second claim that went to court, both read from the test networks.
+          A shopping agent is software that buys for a person, and the agent company that runs it answers for what it buys. When it buys the wrong thing, who pays the shop? Here is one claim from start to end in five steps, and a third claim, with the same records, that went to court, both read from the test networks.
         </p>
       </div>
       <StoryBody payout={payout.data} court={court.data} error={payout.error ?? court.error} />

@@ -1,6 +1,6 @@
 // The story page (#/story), rendered from the shapes the status API answers for the two claims it tells
-// (GET /v1/claims/{id}), and in its loading state. The fetch is mocked; ids, names and amounts follow the two
-// claims on the test networks, and the hashes are test values.
+// (GET /v1/claims/{id}), and in its loading state. The fetch is mocked; ids, names and amounts follow the
+// claims on the test networks (the court claim is Kleros dispute 213), and the hashes are test values.
 import { readFileSync } from 'node:fs';
 import type { VaultToken } from '@recourse/shared';
 import { renderToString } from 'react-dom/server';
@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Shell } from '../src/App.js';
 import { READS, apiUrl, fromV1, getRead } from '../src/lib/api.js';
 import { ApiFailure } from '../src/lib/api.js';
-import { COURT_CLAIM, PAYOUT_CLAIM, STORY_READS, StoryBody, StoryView, WITHDRAW_TX, courtOutcome, payoutMoney, sizesOf, windowWords, type StoryClaim } from '../src/pages/Story.js';
+import { COURT_CLAIM, MANDATE_CLAIM, MANDATE_DISPUTE_URL, PAYOUT_CLAIM, STORY_READS, StoryBody, StoryView, WITHDRAW_TX, courtOutcome, courtPaid, payoutMoney, sizesOf, windowWords, type StoryClaim } from '../src/pages/Story.js';
 
 const mock: VaultToken = { mode: 'mock', address: `0x${'6d'.repeat(20)}`, decimals: 6, symbol: 'mUSDC', label: 'mUSDC (testnet mock)', tokenId: null };
 const SHOP = '0x' + '0d'.repeat(20);
@@ -55,20 +55,20 @@ const payoutBody = body(PAYOUT_CLAIM, ['M', 'M', '', 'L', 'L', 'L'], 13, {
   events: [ev('ClaimFiled', 'hedera', '1793993007'), ev('PreCheckRecorded', 'hedera', '1793993040'), ev('ClosedUncontested', 'hedera', '1793993727')],
 });
 
-const KLEROS = 'https://v2-testnet.kleros.builders/#/cases/212/overview';
-const courtBody = body(COURT_CLAIM, ['M', 'L', '', 'L', 'L', 'L'], 7, {
-  filedAt: '1793955957',
+const KLEROS = 'https://v2-testnet.kleros.builders/#/cases/213/overview';
+const courtBody = body(COURT_CLAIM, ['M', 'M', '', 'L', 'L', 'L'], 19, {
+  filedAt: '1794001392',
   statusKey: 'settled',
-  findingSide: 'neither',
-  precheck: { gap: 0, answer: 3, side: 'neither', packHash: hex(2), preCheckedAt: '1793955978', result: { state: 'recorded', reasonKey: 'no_gap_approved_change' }, packHashOk: true },
-  contest: { by: SHOP, at: '1793956006', windowEndsAt: '1793956578' },
-  court: { state: 'relayed', attempts: 1, disputeIds: ['212'], period: 4, periodName: 'execution', currentRuling: '3', tied: false, overridden: false, ruling: 3, evidence: [], courtLinks: [{ disputeId: '212', url: KLEROS }] },
+  findingSide: 'platform',
+  precheck: { gap: 2, answer: 1, side: 'platform', packHash: hex(2), preCheckedAt: '1794001510', result: { state: 'recorded', reasonKey: 'gap2_shown_vs_ordered' }, packHashOk: true },
+  contest: { by: AGENT, at: '1794001809', windowEndsAt: '1794002110' },
+  court: { state: 'relayed', attempts: 1, disputeIds: ['213'], period: 4, periodName: 'execution', currentRuling: '1', tied: false, overridden: false, ruling: 1, evidence: [], courtLinks: [{ disputeId: '213', url: KLEROS }] },
   messages: [
-    { messageId: hex(3), direction: 'toArbitrum', sendNo: 1, sentAt: '1793956025', executionState: 2, ccipExplorer: `https://ccip.chain.link/msg/${hex(3)}` },
-    { messageId: hex(4), direction: 'toHedera', sendNo: 1, sentAt: '1793962317', executionState: 2, ccipExplorer: `https://ccip.chain.link/msg/${hex(4)}` },
+    { messageId: hex(3), direction: 'toArbitrum', sendNo: 1, sentAt: '1794001964', executionState: 2, ccipExplorer: `https://ccip.chain.link/msg/${hex(3)}` },
+    { messageId: hex(4), direction: 'toHedera', sendNo: 1, sentAt: '1794006283', executionState: 2, ccipExplorer: `https://ccip.chain.link/msg/${hex(4)}` },
   ],
-  money: { owed: '0', paid: '0', credited: '0', notCovered: '0', escrow: { amount: '1000000', fate: 'kept_by_pool' }, projected: false },
-  events: [ev('Contested', 'hedera', '1793956006'), ev('CaseOpened', 'arbitrum', '1793956101'), ev('Ruling', 'arbitrum', '1793961786'), ev('RulingReceived', 'hedera', '1793963435'), ev('Settled', 'hedera', '1793963452')],
+  money: { owed: '3575000', paid: '3575000', credited: '3575000', notCovered: '0', escrow: { amount: '1000000', fate: 'kept_by_pool' }, projected: false },
+  events: [ev('Contested', 'hedera', '1794001809'), ev('CaseOpened', 'arbitrum', '1794002117'), ev('Ruling', 'arbitrum', '1794006262'), ev('RulingReceived', 'hedera', '1794007411'), ev('Settled', 'hedera', '1794007435')],
 });
 
 const payout = () => fromV1(structuredClone(payoutBody)) as StoryClaim;
@@ -126,7 +126,7 @@ describe('the story page', () => {
     expect(html).toContain('At fault: <span class="fault">the agent company</span>');
   });
 
-  it('beat 4: a Kleros court of human jurors, over Chainlink CCIP and back, dispute 212 ruled neither side at fault', () => {
+  it('beat 4: a Kleros court of human jurors, over Chainlink CCIP and back, dispute 213 ruled the agent company at fault', () => {
     const html = render(payout(), court());
     const text = words(html);
     expect(text).toContain('If a side disagrees, a Kleros court decides.');
@@ -135,35 +135,59 @@ describe('the story page', () => {
     expect(text).not.toContain('Either side can contest');
     expect(text).toContain('human jurors in a Kleros court decide');
     expect(text).toContain('Chainlink CCIP, a service that carries messages between chains');
-    expect(text).toContain("approved under the buyer's standing spending mandate");
-    expect(text).toContain('The agent showed L where the buyer asked for M');
-    expect(text).toContain('Contested by the shop');
-    expect(text).toContain('The shop contested. In dispute 212 the jurors ruled that neither side was at fault');
-    expect(text).toContain('went to the fee pool');
-    expect(text).toContain('Ruling applied: neither side at fault');
-    expect(text).toContain('Kleros dispute 212: the jurors ruled that neither side was at fault.');
+    expect(text).toContain('That is what happened to a third claim, which had the same records as the first: the buyer asked for M, the agent showed M, and its order said L.');
+    expect(text).toContain('This time the agent company contested.');
+    expect(text).toContain("In dispute 213 the jurors ruled that the agent company was at fault, and Parcel Minds's deposit paid Halden Supply 3.575 mUSDC: the basket, 1.50 mUSDC, handling, 1.075 mUSDC, and the shop's 1.00 mUSDC court fee back.");
+    expect(text).toContain('Contested by the agent company');
+    expect(text).toContain('Ruling applied: the agent company at fault');
+    expect(text).toContain('Kleros dispute 213: the jurors ruled that the agent company was at fault.');
+    expect(text).toContain('Lost in court');
+    // the mandate sentence belongs to dispute 212 only
+    expect(text).toContain("The court does not only side with shops. In dispute 212 the records showed that the buyer's standing spending mandate");
+    expect(text).toContain('so the jurors ruled that neither side was at fault.');
+    expect(text.match(/standing spending mandate/g)).toHaveLength(1);
+    expect(text).not.toContain('fee pool');
     expect(html).toContain(`href="${KLEROS}"`);
+    expect(html).toContain(`href="${MANDATE_DISPUTE_URL}"`);
+    expect(html).toContain(`href="#/claim/${MANDATE_CLAIM}"`);
     expect(html).toContain(`href="https://ccip.chain.link/msg/${hex(3)}"`);
     expect(html).toContain(`href="https://ccip.chain.link/msg/${hex(4)}"`);
   });
 
-  it('beat 4: the ruling and the court fee are told from the court claim read, not fixed in the page', () => {
-    expect(courtOutcome(court())).toEqual({ ruled: 'neither side was at fault', applied: 'neither side at fault', fee: 'went to the fee pool' });
-    const other = court();
-    other.court.ruling = 1;
-    other.money.escrow.fate = 'refunded';
-    expect(courtOutcome(other)).toEqual({ ruled: 'the agent company was at fault', applied: 'the agent company at fault', fee: 'came back to the shop' });
-    const text = words(render(payout(), other));
-    expect(text).toContain('In dispute 212 the jurors ruled that the agent company was at fault, and the court fee, which the shop pays when it files a claim, came back to the shop.');
-    expect(text).toContain('Ruling applied: the agent company at fault');
-    expect(text).toContain('Kleros dispute 212: the jurors ruled that the agent company was at fault.');
-    expect(text).not.toContain('neither side was at fault');
-    expect(text).not.toContain('fee pool');
-    // before the read, the outcome is not stated
+  it('beat 4: the ruling, the money and the court fee are told from the court claim read, not fixed in the page', () => {
+    expect(courtOutcome(court())).toEqual({ ruled: 'the agent company was at fault', applied: 'the agent company at fault', fee: 'went to the fee pool' });
+    expect(courtPaid(court())).toEqual({ paid: 3_575_000n, basket: 1_500_000n, handling: 1_075_000n, fee: 1_000_000n });
+    // a ruling of neither side: no deposit payment is told, and the fee goes where the read says
+    const neither = court();
+    neither.court.ruling = 3;
+    neither.money = { ...neither.money, owed: '0', paid: '0' };
+    expect(courtOutcome(neither)).toEqual({ ruled: 'neither side was at fault', applied: 'neither side at fault', fee: 'went to the fee pool' });
+    expect(courtPaid(neither)).toBeNull();
+    const t3 = words(render(payout(), neither));
+    expect(t3).toContain('In dispute 213 the jurors ruled that neither side was at fault, and the court fee, which the shop pays when it files a claim, went to the fee pool.');
+    expect(t3).toContain('Ruling applied: neither side at fault');
+    expect(t3).not.toContain('deposit paid Halden');
+    expect(t3).not.toContain('Lost in court');
+    const refunded = court();
+    refunded.court.ruling = 2;
+    refunded.money.escrow.fate = 'refunded';
+    expect(words(render(payout(), refunded))).toContain('ruled that the shop was at fault, and the court fee, which the shop pays when it files a claim, came back to the shop.');
+    // ruled against the agent company but the amounts do not add up: words, no numbers
+    const odd = court();
+    odd.money.paid = '1000000';
+    expect(courtPaid(odd)).toBeNull();
+    const tOdd = words(render(payout(), odd));
+    expect(tOdd).toContain("the jurors ruled that the agent company was at fault, and the agent company's deposit paid the shop the basket, handling and the shop's court fee back.");
+    // before the read, the outcome and the money are not stated
     const before = words(render(payout(), null));
     expect(before).toContain('In its dispute the jurors ruled on the records.');
     expect(before).toContain('The ruling settles the claim');
-    expect(before).not.toMatch(/neither side was at fault|fee pool/);
+    expect(before).toContain('This time a side contested.');
+    expect(before).not.toMatch(/fee pool|deposit paid Halden|Lost in court/);
+    expect(before).not.toContain('dispute 213');
+    // the 212 sentence and its links stand without any read
+    expect(before).toContain('The court does not only side with shops.');
+    expect(render(null, null)).toContain(`href="${MANDATE_DISPUTE_URL}"`);
   });
 
   it('beat 5: the deposit paid the shop, every figure from the claim read', () => {
@@ -188,9 +212,9 @@ describe('the story page', () => {
     expect(img[0]).toMatch(/width="640" height="640" alt="" loading="lazy" decoding="async"/);
   });
 
-  it('ends with the two claims, the docket, the two sign-up pages and the operator steps', () => {
+  it('ends with the three claims, the docket, the two sign-up pages and the operator steps', () => {
     const html = render(payout(), court());
-    for (const href of [`#/claim/${PAYOUT_CLAIM}`, `#/claim/${COURT_CLAIM}`, '#/docket', '#/join', '#/bond']) expect(html).toContain(`href="${href}"`);
+    for (const href of [`#/claim/${PAYOUT_CLAIM}`, `#/claim/${COURT_CLAIM}`, `#/claim/${MANDATE_CLAIM}`, '#/docket', '#/join', '#/bond']) expect(html).toContain(`href="${href}"`);
     const text = words(html);
     expect(text).toContain('I run a shop');
     expect(text).toContain('I run a shopping agent');
@@ -206,7 +230,7 @@ describe('the story page', () => {
     expect(text).toContain('The amounts appear here once the claim is read.');
     expect(text).toContain('not read yet');
     expect(text).not.toMatch(/\d+\.\d+ mUSDC/);
-    expect(text).not.toContain('212');
+    expect(text).not.toContain('213');
     expect(text).not.toContain('10-minute');
     expect(text).not.toContain('read from the claim');
     expect(html).not.toContain('<img');
@@ -216,7 +240,7 @@ describe('the story page', () => {
     expect(text).toContain('as the story tells it; the claim is not read yet');
     expect(text).toContain('At fault, as the story tells it: the agent company. The claim is not read yet.');
     expect(html).not.toContain('class="fault"');
-    expect(text).not.toMatch(/neither side was at fault|fee pool/);
+    expect(text).not.toMatch(/fee pool|deposit paid Halden/);
     // the prose still names the operator steps and every way out
     expect(text).toContain('Only the operator can mint mUSDC');
     for (const href of ['#/docket', '#/join', '#/bond']) expect(html).toContain(`href="${href}"`);
@@ -269,7 +293,7 @@ describe('the story page', () => {
     const text = words(render(p, c));
     expect(text).toContain('Halden Supply v Parcel Minds');
     expect(text).toContain('Closed, not contested');
-    expect(text).toContain('Kleros dispute 212');
+    expect(text).toContain('Kleros dispute 213');
   });
 
   it('opens loading, its head unchanged and every beat already there, with nothing hidden before a script runs', async () => {
