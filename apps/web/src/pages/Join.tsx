@@ -166,7 +166,7 @@ export function Agreement({ params, token }: { params?: JoinParams | undefined; 
           difference points to the side at fault. <a href="#/story">How it works</a> walks through it.
         </li>
         <li>
-          <b>The agent company pays from its deposit when it is at fault.</b> An agent company, the business that runs a shopping agent, keeps a deposit in the vault. A claim it loses pays your net loss and a handling amount from that deposit, up
+          <b>The agent company pays from its deposit when it is at fault.</b> An agent company, the business that runs a shopping agent, keeps a deposit in the vault, the contract that holds the deposits and pays claims from them. A claim it loses pays your net loss and a handling amount from that deposit, up
           to what it holds.
         </li>
         <li>
@@ -174,7 +174,7 @@ export function Agreement({ params, token }: { params?: JoinParams | undefined; 
         </li>
         <li>
           <b>Each claim you file holds a court fee of {w.fee}.</b> It comes back when nobody contests the pre-check within the contest window ({w.window}) and the claim closes, when the claim expires, or when the court (Kleros jurors, on
-          Arbitrum Sepolia) finds the agent company at fault. It goes to the fee pool when the court finds you at fault, or finds neither side at fault and the pre-check had not flagged the agent company's part of the order.
+          Arbitrum Sepolia) finds the agent company at fault. It goes to the court-fee pool, the scheme's account that keeps court fees, when the court finds you at fault, or finds neither side at fault and the pre-check had not flagged the agent company's part of the order.
         </li>
       </ul>
       <p className="muted small">
@@ -191,7 +191,7 @@ export function Costs({ params, token }: { params?: JoinParams | undefined; toke
     <Card title="What joining costs" id="join-costs">
       <dl>
         <Row label="Registering">
-          One transaction on Hedera testnet. You pay its network fee (gas) in HBAR, Hedera's own coin. This page estimates the fee through your wallet before you sign, and your wallet shows its own figure.
+          One transaction on Hedera testnet. You pay its network fee (gas) in HBAR, Hedera's own coin. This page estimates the fee through your wallet before you sign, and your wallet shows its own figure. Once sent, you can follow it on HashScan, Hedera's public block explorer.
         </Row>
         <Row label="Each claim you file">The court fee, {w.fee}, held while the claim is open, and the gas of filing, in HBAR.</Row>
         <Row label="Anything else">Nothing: there is no joining, listing or monthly fee.</Row>

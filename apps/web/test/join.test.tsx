@@ -173,6 +173,8 @@ describe('what a shop agrees to and what joining costs', () => {
     expect(costs).toContain('estimates the fee through your wallet before you sign, and your wallet shows its own figure');
     expect(costs).toContain('The court fee, 1.00 mUSDC (testnet mock), held while the claim is open');
     expect(costs).toContain('there is no joining, listing or monthly fee');
+    expect(costs).toContain("HashScan, Hedera's public block explorer".replace("'", '&#x27;'));
+    expect(agree).toContain('the court-fee pool, the scheme&#x27;s account that keeps court fees');
   });
 
   it('shows no figure before the API answers, and marks defaults that were not read from the chain', async () => {
