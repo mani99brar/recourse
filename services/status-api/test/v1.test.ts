@@ -146,6 +146,33 @@ describe('/v1 reads', () => {
     expect(r.body.claim.contest.windowEndsAt).toBe((BigInt(r.body.claim.precheck.preCheckedAt) + 600n).toString());
   });
 
+  it('stops asking for terms once the claims contract reverts claimTermsOf, and keeps the current window', async () => {
+    // A claims contract from before per-claim terms has no claimTermsOf; viem reports the revert so.
+    const reverted = () => Object.assign(new Error('The contract function "claimTermsOf" reverted.'), { name: 'ContractFunctionExecutionError', cause: { name: 'ContractFunctionRevertedError' } });
+    const reader = fakeReader({ claimTerms: async () => { throw reverted(); } }) as Reader & { calls: string[] };
+    const { built, get, h } = await boot({ stages: ['finding_made', 'contested'], reader });
+    const termReads = () => reader.calls.filter((c) => c.startsWith('claimTerms:')).length;
+    expect((await get('/v1/claims')).status).toBe(200);
+    const first = termReads();
+    expect(first).toBeGreaterThan(0);
+    h.clock.now += 120;
+    expect((await get('/v1/claims')).status).toBe(200);
+    const r = await get(`/v1/claims/${built[0]!.claimId}`);
+    expect(termReads()).toBe(first);
+    expect(r.body.claim.contest.windowEndsAt).toBe((BigInt(r.body.claim.precheck.preCheckedAt) + 600n).toString());
+  });
+
+  it('asks again after a minute when a terms read fails for any other reason', async () => {
+    const reader = fakeReader() as Reader & { calls: string[] };
+    const { get, h } = await boot({ stages: ['finding_made'], reader });
+    const termReads = () => reader.calls.filter((c) => c.startsWith('claimTerms:')).length;
+    await get('/v1/claims');
+    const first = termReads();
+    h.clock.now += 61;
+    await get('/v1/claims');
+    expect(termReads()).toBeGreaterThan(first);
+  });
+
   it('answers typed errors: invalid_field, missing_field, not_found and method_not_allowed', async () => {
     const { built, get, url } = await boot();
     const cases: [string, number, string, Record<string, unknown>][] = [

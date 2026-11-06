@@ -78,7 +78,9 @@ block as `from`. A call the contract would refuse is answered with an error, nev
 | `relayRuling` | Arbitrum | anyone | `RecourseCase.relayRuling` (`value` = `quoteRelayNative`) | ccipFee (send, or contract pays in LINK) |
 
 The keeper makes the anyone-may calls on its own; the actions are for when it has not. Deadlines and
-timeouts come from the claim's own terms (`claimTermsOf`), fixed when it was filed.
+timeouts come from the claim's own terms (`claimTermsOf`), fixed when it was filed. A claims contract from
+before per-claim terms has no `claimTermsOf` and checks every claim against its current `params()`; the
+API then does the same and says so in a note.
 
 ### fileClaim: what you send, what the API derives
 
@@ -145,12 +147,16 @@ Hedera transfer for it with its own key and sends the same request with `PAYMENT
    4 building at once, each answering within 12 seconds. Bodies are closed, so no key can be sent.
 3. Window and timeout math comes from `claimTermsOf(claimId)`, including the claim's `contest.windowEndsAt`
    on `/v1/claims/{claimId}` and `/claims/{claimId}`; until a claim's terms are read, the current parameters
-   stand in.
+   stand in. The Hedera pair in `deployments/hedera.json` today predates per-claim terms and reservations (its
+   bytecode has no `claimTermsOf`, `escrowAndReserve`, `reservedOf`, `reservationOf` or `cancelExit`), so there
+   `params()` is exact, a fileClaim preview reserves nothing, and the API stops asking for terms after the first
+   revert.
 4. `SHOP_URL` (optional, default `http://127.0.0.1:8720`) for orderId-only fileClaim; without the shop,
    that path answers `upstream_unavailable` (upstream `shop`) and nonce plus platform still work. Action
    simulation reads Arbitrum through `ARB_RPC_URL`.
-5. The unversioned routes (`/claims`, `/params`, …) keep their shapes and `{ "error": code }` until the web
-   app reads `/v1`; they are not part of this contract.
+5. The unversioned routes (`/claims`, `/params`, …) keep their shapes and `{ "error": code }`; they are not
+   part of this contract. The web app reads `/v1` only, so the status API must serve `/v1` before a web build
+   from this version goes live.
 
 Not in v1: the platform's deposit calls (`postDeposit`, `requestExit`, `exit`, `cancelExit`), CCIP manual
 execution (use the claim's `ccipExplorer` link), `recordPreCheck` (the pre-check signer only), `markStale`,

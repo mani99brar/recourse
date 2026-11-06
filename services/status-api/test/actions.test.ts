@@ -4,6 +4,7 @@ import { decodeFunctionData, keccak256, type Address, type Hex } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CLAIMS_ABI, EVIDENCE_ABI, TOKEN_ABI, type ContractLabel } from '../src/abi/deployed.js';
 import { createApp } from '../src/app.js';
+import { FILE_CLAIM_BUDGET } from '../src/v1/build.js';
 import type { Config } from '../src/config.js';
 import type { FetchLike } from '../src/http.js';
 import { Store } from '../src/store.js';
@@ -101,6 +102,32 @@ describe('contest', () => {
     const r = await r0.post('contest', { from: PLATFORM, claimId: r0.b.claimId });
     expect(r.status).toBe(200);
     expect(r.body.notAfter).toBe((SEQ_SECONDS + 1800n).toString());
+    expect(r.body.preview.notes.join(' ')).not.toMatch(/keeps no terms per claim/);
+    expect(r0.chain.calls).not.toContain('claimsNow');
+  });
+
+  it('on a claims contract without claimTermsOf, its params() window stands in, with a note saying so', async () => {
+    // The deployed pair predates per-claim terms: claimTermsOf reverts, and the contract checks params().
+    const r0 = await rig({ chain: { terms: null }, now: SEQ_SECONDS + 1000n });
+    r0.chain.state.claimsNow = { ...r0.chain.state.claimsNow, contestWindow: 1800n };
+    r0.chain.state.claim = claim(r0.b);
+    const r = await r0.post('contest', { from: PLATFORM, claimId: r0.b.claimId });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    conforms('contest', r);
+    expect(r.body.notAfter).toBe((SEQ_SECONDS + 1800n).toString());
+    expect(r.body.preview.notes.join(' ')).toMatch(/keeps no terms per claim/);
+    r0.chain.state.claimsNow = { ...r0.chain.state.claimsNow, contestWindow: 600n };
+    expect(expectError('contest', await r0.post('contest', { from: PLATFORM, claimId: r0.b.claimId }), 409, 'window_closed').details).toEqual({ closesAt: (SEQ_SECONDS + 600n).toString() });
+    r0.chain.state.claim = claim(r0.b, { status: 6 });
+    expect(expectError('contest', await r0.post('contest', { from: PLATFORM, claimId: r0.b.claimId }), 409, 'wrong_status').details.statusName).toBe('Settled');
+  });
+
+  it('a claimTermsOf the relay cannot answer is upstream_unavailable, never the params() window', async () => {
+    const r0 = await rig({ chain: { down: new Set(['claimTerms']) } });
+    r0.chain.state.claim = claim(r0.b);
+    expect(expectError('contest', await r0.post('contest', { from: PLATFORM, claimId: r0.b.claimId }), 503, 'upstream_unavailable').details).toEqual({ upstream: 'hedera_rpc' });
+    expect(r0.chain.calls).not.toContain('claimsNow');
+    expect(r0.chain.sims).toHaveLength(0);
   });
 
   it('answers 403 not_contester for the side the finding went for, naming the contester', async () => {
@@ -185,8 +212,32 @@ describe('closeUncontested, settle and expireClaim', () => {
     expect(r.status).toBe(200);
     conforms('expireClaim', r);
     expect(r.body.preview.amounts[0]).toMatchObject({ name: 'feeRefund', amount: '3000000', movement: 'credit', account: SHOP });
+    expect(r.body.preview.changes.join(' ')).toMatch(/reserved for this claim is released/);
     r0.chain.state.claim = chainClaim({ orderId: r0.b.orderId, status: 2 });
     expect(expectError('expireClaim', await r0.post('expireClaim', { from: SHOP, claimId: r0.b.claimId }), 409, 'wrong_status').details.statusName).toBe('PreChecked');
+  });
+
+  it('closeUncontested and expireClaim on a claims contract without claimTermsOf count from its params(), and release no reservation on an older vault', async () => {
+    const r0 = await rig({ stage: 'window_lapsed', now: SEQ_SECONDS + 601n, chain: { terms: null, reserves: false } });
+    r0.chain.state.claimsNow = { ...r0.chain.state.claimsNow, contestWindow: 1800n, claimTimeout: 64_800n };
+    r0.chain.state.claim = chainClaim({ orderId: r0.b.orderId, status: 2, preCheckedAt: SEQ_SECONDS });
+    expect(expectError('closeUncontested', await r0.post('closeUncontested', { from: SHOP2, claimId: r0.b.claimId }), 409, 'window_open').details).toEqual({ closesAt: (SEQ_SECONDS + 1800n).toString() });
+    r0.chain.state.now = SEQ_SECONDS + 1801n;
+    const close = await r0.post('closeUncontested', { from: SHOP2, claimId: r0.b.claimId });
+    expect(close.status, JSON.stringify(close.body)).toBe(200);
+    conforms('closeUncontested', close);
+    expect(close.body.preview.notes.join(' ')).toMatch(/keeps no terms per claim/);
+
+    const filedAt = 1_700_000_000n;
+    r0.chain.state.claim = chainClaim({ orderId: r0.b.orderId, status: 1, filedAt });
+    r0.chain.state.now = filedAt + 64_800n;
+    expect(expectError('expireClaim', await r0.post('expireClaim', { from: SHOP, claimId: r0.b.claimId }), 409, 'not_expired').details).toEqual({ expiresAfter: (filedAt + 64_800n).toString() });
+    r0.chain.state.now = filedAt + 64_801n;
+    const exp = await r0.post('expireClaim', { from: SHOP, claimId: r0.b.claimId });
+    expect(exp.status, JSON.stringify(exp.body)).toBe(200);
+    conforms('expireClaim', exp);
+    expect(exp.body.preview.notes.join(' ')).toMatch(/keeps no terms per claim/);
+    expect(exp.body.preview.changes.join(' ')).not.toMatch(/reserved/);
   });
 
   it('expireClaim warns when a ruling is on its way back', async () => {
@@ -453,7 +504,7 @@ describe('fileClaim', () => {
     const [approve, file] = a.transactions;
     expect(approve).toMatchObject({ to: TOKEN, simulated: true, call: { contract: 'VaultToken', function: 'approve', args: { spender: VAULT, amount: '3000000' } } });
     expect(decodeFunctionData({ abi: TOKEN_ABI, data: approve.data }).args).toEqual([VAULT, 3_000_000n]);
-    expect(file).toMatchObject({ to: CLAIMS, simulated: false, gas: '450000' });
+    expect(file).toMatchObject({ to: CLAIMS, simulated: false, gas: FILE_CLAIM_BUDGET.toString() });
     const d = decodeFunctionData({ abi: CLAIMS_ABI, data: file.data });
     expect(d.functionName).toBe('fileClaim');
     const [n, p, refs, basket, netLoss] = d.args as [Hex, Address, { topicNum: bigint; seq: readonly bigint[]; hashes: readonly Hex[] }, bigint, bigint];
@@ -468,12 +519,31 @@ describe('fileClaim', () => {
     });
     expect(a.input.refs.seq).toEqual(['10', '11', '12', '13', '14', '15']);
     expect(a.preview.fee.basis).toBe('budget');
+    expect(a.preview.fee.gas).toBe((130_000n + FILE_CLAIM_BUDGET).toString());
     expect(a.preview.amounts.map((x: any) => [x.name, x.movement, x.account])).toEqual([
       ['basket', 'info', null], ['netLoss', 'info', null], ['handling', 'info', null], ['courtFee', 'escrow', SHOP], ['maxPayout', 'reserve', PLATFORM],
     ]);
     expect(a.preview.notes[0]).toMatch(/only after approve has mined/);
     // only the approve was simulated, as the shop
     expect(r0.chain.sims.map((s) => [s.fn, s.tx.from])).toEqual([['approve', SHOP]]);
+  });
+
+  it('the unsimulated fileClaim budget covers what the deployed fileClaim used on Hedera, at the shop\'s x1.3 margin', () => {
+    // Mirror node, the shop's last two fileClaims on the deployed pair: 559,974 and 559,986 gas used.
+    // A limit below that ran out of gas after its approve had mined.
+    expect(FILE_CLAIM_BUDGET).toBeGreaterThanOrEqual((559_986n * 13n) / 10n);
+  });
+
+  it('on a vault from before reservations, maxPayout is shown for information and nothing is said to be reserved', async () => {
+    const r0 = await filing({ chain: { allowance: 3_000_000n, reserves: false } });
+    const r = await r0.post('fileClaim', { from: SHOP, platform: PLATFORM, orderNonce: N });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    conforms('fileClaim', r);
+    expect(r.body.preview.amounts.find((x: any) => x.name === 'maxPayout')).toMatchObject({ amount: (25_000_000n + 16_250_000n + 3_000_000n).toString(), movement: 'info', account: null });
+    const changes = r.body.preview.changes.join(' ');
+    expect(changes).toMatch(/Nothing of the platform's deposit is reserved/);
+    expect(changes).not.toMatch(/is reserved for this claim\./);
+    expect(r.body.transactions[0].description).not.toMatch(/reserves/);
   });
 
   it('with enough allowance: fileClaim alone, simulated, basis estimate', async () => {

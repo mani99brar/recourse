@@ -34,7 +34,7 @@ import {
   type FoldedClaim,
   type Money,
 } from './join.js';
-import type { ClaimTerms } from './chain.js';
+import { ChainRevert, classify, type ClaimTerms } from './chain.js';
 import { TtlCache, type CaseParams, type ClaimsParams, type ConfigLocks, type PartyViews, type Reader, type VaultParams } from './live.js';
 import type { Store } from './store.js';
 import type { HcsRecord, IndexedEvent, SourceName } from './types.js';
@@ -104,6 +104,8 @@ export class StatusService {
   /** Claim terms by claim id: fixed at filing, so kept for good once read. */
   private terms = new Map<string, ClaimTerms>();
   private termsTried = new Map<string, number>();
+  /** The claims contract reverted a `claimTermsOf`: it predates per-claim terms, so none is asked again. */
+  private termsUnsupported = false;
 
   constructor(readonly d: ServiceDeps) {
     this.params$ = new TtlCache(d.cfg.viewCacheMs);
@@ -249,7 +251,7 @@ export class StatusService {
    */
   async loadTerms(ids: readonly string[], waitMs = 2_000): Promise<void> {
     const r = this.d.reader;
-    if (!r) return;
+    if (!r || this.termsUnsupported) return;
     const now = this.d.nowS();
     const todo = ids.filter((id) => !this.terms.has(id) && now - (this.termsTried.get(id) ?? -Infinity) >= 60).slice(0, 20);
     if (todo.length === 0) return;
@@ -259,8 +261,10 @@ export class StatusService {
         try {
           const t = await r.claimTerms(id as Hex);
           if (t.contestWindow > 0n && t.claimTimeout > 0n) this.terms.set(id, t);
-        } catch {
-          // read again later; the current parameters stand in meanwhile
+        } catch (e) {
+          // A revert: a claims contract from before per-claim terms, which checks every claim against
+          // its current parameters, so those are exact. Anything else: read again later.
+          if (classify(e, 'hedera') instanceof ChainRevert) this.termsUnsupported = true;
         }
       }),
     );

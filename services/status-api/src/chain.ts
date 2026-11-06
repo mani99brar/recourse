@@ -81,6 +81,9 @@ export interface CourtNow {
 
 export interface HederaClaimsNow {
   courtFeeUsdc: bigint;
+  /** `params()` now: what a claims contract without per-claim terms checks every claim against. */
+  contestWindow: bigint;
+  claimTimeout: bigint;
   resendGap: bigint;
   maxSends: number;
   bridgeMode: number;
@@ -96,6 +99,7 @@ export interface ActionReads {
   /** eth_call as `from` at the latest block, then eth_estimateGas when it did not revert. */
   simulate(chain: ChainName, tx: EvmTx): Promise<SimResult>;
   claim(claimId: Hex): Promise<ChainClaim>;
+  /** Throws ChainRevert on a claims contract from before per-claim terms (it has no `claimTermsOf`). */
   claimTerms(claimId: Hex): Promise<ClaimTerms>;
   claimsNow(): Promise<HederaClaimsNow>;
   previewSettle(claimId: Hex): Promise<{ toShop: bigint; refund: bigint; toPool: bigint }>;
@@ -108,6 +112,8 @@ export interface ActionReads {
   tokenOf(token: Address, owner: Address, spender: Address): Promise<{ balance: bigint; allowance: bigint }>;
   /** What the vault checks before it escrows a fee against `platform`. */
   vaultGate(platform: Address): Promise<{ exitRequestedAt: bigint; exitDelay: bigint; usdcAssociated: boolean }>;
+  /** Whether the vault reserves a platform's deposit for each claim filed (`escrowAndReserve`); a vault from before reservations does not. */
+  vaultReserves(): Promise<boolean>;
   creditOf(account: Address): Promise<bigint>;
   escrowOf(claimId: Hex): Promise<bigint>;
   caseNow(claimId: Hex): Promise<CaseNow>;
@@ -173,6 +179,8 @@ export class ViemActionReads implements ActionReads {
   private hedera: PublicClient;
   private arb: PublicClient | null;
   private token: Address | null = null;
+  private reserves: boolean | null = null;
+  private termsMissing = false;
 
   constructor(private cfg: ViemActionReadsConfig) {
     this.hedera = createPublicClient({ transport: fallback(cfg.hederaRpcUrls.map((u) => http(u, { timeout: cfg.timeoutMs }))) }) as PublicClient;
@@ -262,19 +270,36 @@ export class ViemActionReads implements ActionReads {
   }
 
   async claimTerms(claimId: Hex): Promise<ClaimTerms> {
-    const t = await this.read<{ contestWindow: bigint; claimTimeout: bigint; handling: bigint }>('hedera', this.cfg.claims, CLAIMS_ABI, 'claimTermsOf', [claimId]);
-    return { contestWindow: BigInt(t.contestWindow), claimTimeout: BigInt(t.claimTimeout), handling: t.handling };
+    // A claims contract from before per-claim terms reverts every claimTermsOf, and its code never
+    // changes: after the first revert the call is not sent again.
+    if (this.termsMissing) throw new ChainRevert('hedera', null);
+    try {
+      const t = await this.read<{ contestWindow: bigint; claimTimeout: bigint; handling: bigint }>('hedera', this.cfg.claims, CLAIMS_ABI, 'claimTermsOf', [claimId]);
+      return { contestWindow: BigInt(t.contestWindow), claimTimeout: BigInt(t.claimTimeout), handling: t.handling };
+    } catch (e) {
+      if (e instanceof ChainRevert) this.termsMissing = true;
+      throw e;
+    }
   }
 
   async claimsNow(): Promise<HederaClaimsNow> {
     const a = this.cfg.claims;
     const [p, bridgeMode, peer, feeToken] = await Promise.all([
-      this.read<{ courtFeeUsdc: bigint; resendGap: bigint; maxSends: number }>('hedera', a, CLAIMS_ABI, 'params'),
+      this.read<{ courtFeeUsdc: bigint; contestWindow: bigint; claimTimeout: bigint; resendGap: bigint; maxSends: number }>('hedera', a, CLAIMS_ABI, 'params'),
       this.read<number>('hedera', a, CLAIMS_ABI, 'bridgeMode'),
       this.read<Address>('hedera', a, CLAIMS_ABI, 'peer'),
       this.read<Address>('hedera', a, CLAIMS_ABI, 'feeToken'),
     ]);
-    return { courtFeeUsdc: p.courtFeeUsdc, resendGap: BigInt(p.resendGap), maxSends: Number(p.maxSends), bridgeMode: Number(bridgeMode), peer, feeToken };
+    return {
+      courtFeeUsdc: p.courtFeeUsdc,
+      contestWindow: BigInt(p.contestWindow),
+      claimTimeout: BigInt(p.claimTimeout),
+      resendGap: BigInt(p.resendGap),
+      maxSends: Number(p.maxSends),
+      bridgeMode: Number(bridgeMode),
+      peer,
+      feeToken,
+    };
   }
 
   async previewSettle(claimId: Hex) {
@@ -316,6 +341,21 @@ export class ViemActionReads implements ActionReads {
       this.read<boolean>('hedera', v, VAULT_ABI, 'usdcAssociated'),
     ]);
     return { exitRequestedAt: BigInt(exitRequestedAt), exitDelay: BigInt(params[1]), usdcAssociated };
+  }
+
+  async vaultReserves(): Promise<boolean> {
+    // A contract's code never changes: `reservedOf` answers on a vault that reserves and reverts on
+    // one from before reservations. Only a definite answer is kept; an RPC fault is thrown.
+    if (this.reserves === null) {
+      try {
+        await this.read<bigint>('hedera', this.cfg.vault, VAULT_ABI, 'reservedOf', ['0x0000000000000000000000000000000000000000']);
+        this.reserves = true;
+      } catch (e) {
+        if (!(e instanceof ChainRevert)) throw e;
+        this.reserves = false;
+      }
+    }
+    return this.reserves;
   }
 
   creditOf(account: Address) {

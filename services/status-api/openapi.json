@@ -555,7 +555,7 @@
         ],
         "operationId": "fileClaim",
         "summary": "File a claim",
-        "description": "Builds `approve` (only when the shop's allowance to the vault is below the court fee; exact amount, never unlimited) and `RecourseClaims.fileClaim(orderNonce, platform, refs, basketUsdc, netLossUsdc)` on Hedera. `from` is the shop.\n\n**The caller sends** `from`, and `platform` + `orderNonce` (or `orderId` alone for an order this deployment's shop took), and optionally `netLossUsdc`, `basketUsdc`, `allowUnpacked`.\n\n**The API derives** `orderId = orderIdOf(platform, from, orderNonce)`; `claimId = claimIdOf(296, RecourseClaims, orderId)` (checked against `claimIdFor`); `refs` from its records-topic index (per kind, the earliest message for the order paid by the order's own writers: the platform's for asked, shown, approval, ordered and arrived, the shop's for packed); `basketUsdc` from the ordered record document (its `amount` and `asset`, as micro-USDC: tinybar / 100 rounded up for HBAR); the court fee from `params()`, `handlingOf(basketUsdc)`, the allowance and balance on `vault.usdc()`.\n\n**Checks, in order:** fields; `same_party`; the ordered record (`no_ordered_record`, `ordered_unreadable`, and with `orderId` alone `order_nonce_unknown`, `not_paid`, `ordered_tx_mismatch`); `no_packed_record` unless `allowUnpacked`; `zero_basket`, `basket_mismatch`, `net_loss_above_basket`; `claim_exists`; `exit_due`; `insufficient_balance`; then an eth_call of fileClaim when no approve is needed. A records topic that is behind or failing answers `upstream_unavailable` (upstream `index`), not `no_ordered_record`.\n\n**Preview amounts:** basket, netLoss, handling (info); courtFee (escrow, the shop); maxPayout (reserve, the platform). `input.expectedFinding` is the shared fault rule on the referenced records.",
+        "description": "Builds `approve` (only when the shop's allowance to the vault is below the court fee; exact amount, never unlimited) and `RecourseClaims.fileClaim(orderNonce, platform, refs, basketUsdc, netLossUsdc)` on Hedera. `from` is the shop.\n\n**The caller sends** `from`, and `platform` + `orderNonce` (or `orderId` alone for an order this deployment's shop took), and optionally `netLossUsdc`, `basketUsdc`, `allowUnpacked`.\n\n**The API derives** `orderId = orderIdOf(platform, from, orderNonce)`; `claimId = claimIdOf(296, RecourseClaims, orderId)` (checked against `claimIdFor`); `refs` from its records-topic index (per kind, the earliest message for the order paid by the order's own writers: the platform's for asked, shown, approval, ordered and arrived, the shop's for packed); `basketUsdc` from the ordered record document (its `amount` and `asset`, as micro-USDC: tinybar / 100 rounded up for HBAR); the court fee from `params()`, `handlingOf(basketUsdc)`, the allowance and balance on `vault.usdc()`.\n\n**Checks, in order:** fields; `same_party`; the ordered record (`no_ordered_record`, `ordered_unreadable`, and with `orderId` alone `order_nonce_unknown`, `not_paid`, `ordered_tx_mismatch`); `no_packed_record` unless `allowUnpacked`; `zero_basket`, `basket_mismatch`, `net_loss_above_basket`; `claim_exists`; `exit_due`; `insufficient_balance`; then an eth_call of fileClaim when no approve is needed. A records topic that is behind or failing answers `upstream_unavailable` (upstream `index`), not `no_ordered_record`.\n\n**Preview amounts:** basket, netLoss, handling (info); courtFee (escrow, the shop); maxPayout (reserve, the platform; info with no account on a vault from before reservations, which holds nothing back at filing). With an approve first, fileClaim is not simulated and gets an 800000 gas budget; building again once the approve has mined simulates it. `input.expectedFinding` is the shared fault rule on the referenced records.",
         "x-recourse-call": {
           "chain": "hedera",
           "contract": "RecourseClaims",
@@ -649,7 +649,7 @@
                           "to": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
                           "data": "0x57ca1c393c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c000000000000000000000000222222222222222222222222222222222222222200000000000000000000000000000000000000000000000000000000006afff9000000000000000000000000000000000000000000000000000000000000006500000000000000000000000000000000000000000000000000000000000000660000000000000000000000000000000000000000000000000000000000000067000000000000000000000000000000000000000000000000000000000000006800000000000000000000000000000000000000000000000000000000000000690000000000000000000000000000000000000000000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000017d784000000000000000000000000000000000000000000000000000000000017d7840",
                           "value": "0",
-                          "gas": "450000",
+                          "gas": "800000",
                           "gasPrice": "710000000000",
                           "description": "File the claim for order 0xf60aebf5...: escrows the court fee and reserves the platform's deposit.",
                           "call": {
@@ -734,11 +734,11 @@
                           }
                         ],
                         "fee": {
-                          "amount": "360680000000000000",
+                          "amount": "609180000000000000",
                           "decimals": 18,
                           "symbol": "HBAR",
-                          "display": "0.36 HBAR",
-                          "gas": "508000",
+                          "display": "0.61 HBAR",
+                          "gas": "858000",
                           "gasPrice": "710000000000",
                           "basis": "budget"
                         },
@@ -750,7 +750,7 @@
                         ],
                         "statusAfter": "filed",
                         "notes": [
-                          "Send fileClaim only after approve has mined: it cannot be simulated before then."
+                          "Send fileClaim only after approve has mined: it cannot be simulated before then, so its gas limit is a fixed 800000 budget. Building again once approve has mined simulates it and gives an estimate instead."
                         ]
                       },
                       "simulated": false,
@@ -834,7 +834,7 @@
         ],
         "operationId": "contest",
         "summary": "Contest a claim",
-        "description": "Builds `RecourseClaims.contest(claimId)` on Hedera. Only the side the pre-check went against may sign: the platform when the answer is 1, otherwise the shop (`not_contester`, 403). The claim must be PreChecked (`wrong_status`) and inside its window, `preCheckedAt + claimTermsOf(claimId).contestWindow` inclusive (`window_closed`); `notAfter` is that second. Moves no money: the court fee was escrowed at filing. Preview amounts: courtFee (info).",
+        "description": "Builds `RecourseClaims.contest(claimId)` on Hedera. Only the side the pre-check went against may sign: the platform when the answer is 1, otherwise the shop (`not_contester`, 403). The claim must be PreChecked (`wrong_status`) and inside its window, `preCheckedAt + claimTermsOf(claimId).contestWindow` inclusive (`window_closed`); `notAfter` is that second. A claims contract from before per-claim terms has no `claimTermsOf` and checks against its current `params()`, so the API does too and adds a note saying so. Moves no money: the court fee was escrowed at filing. Preview amounts: courtFee (info).",
         "x-recourse-call": {
           "chain": "hedera",
           "contract": "RecourseClaims",
@@ -1609,7 +1609,7 @@
         ],
         "operationId": "expireClaim",
         "summary": "Expire a claim",
-        "description": "Builds `RecourseClaims.expireClaim(claimId)` on Hedera; anyone may sign. Filed claims expire once `filedAt + claimTimeout` has passed, Contested and AtCourt ones once `preCheckedAt + claimTimeout` has (the claim's own terms); else `not_expired` or `wrong_status`. Preview amounts: feeRefund (credit, the shop). A note warns when a ruling is on its way back, which expiring would discard.",
+        "description": "Builds `RecourseClaims.expireClaim(claimId)` on Hedera; anyone may sign. Filed claims expire once `filedAt + claimTimeout` has passed, Contested and AtCourt ones once `preCheckedAt + claimTimeout` has (the claim's own terms, or `params()` on a claims contract from before per-claim terms); else `not_expired` or `wrong_status`. Preview amounts: feeRefund (credit, the shop). A note warns when a ruling is on its way back, which expiring would discard.",
         "x-recourse-call": {
           "chain": "hedera",
           "contract": "RecourseClaims",

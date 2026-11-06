@@ -3,7 +3,7 @@
 import { claimIdOf, orderIdOf } from '@recourse/shared';
 import { decodeFunctionData, encodeErrorResult, getAddress, type Abi, type Address, type Hex } from 'viem';
 import { ABI_OF, type ContractLabel } from '../../src/abi/deployed.js';
-import { ChainUnavailable, type ActionReads, type CaseNow, type ChainClaim, type ChainName, type ClaimTerms, type CourtNow, type EvmTx, type HederaClaimsNow, type SimResult } from '../../src/chain.js';
+import { ChainRevert, ChainUnavailable, type ActionReads, type CaseNow, type ChainClaim, type ChainName, type ClaimTerms, type CourtNow, type EvmTx, type HederaClaimsNow, type SimResult } from '../../src/chain.js';
 import { CLAIMS, PLATFORM, SHOP, ZERO32 } from './fixtures.js';
 
 export const TOKEN = getAddress('0x' + 'c4'.repeat(20));
@@ -21,7 +21,8 @@ export interface Decoded {
 export interface FakeState {
   now: bigint;
   claim: ChainClaim | null;
-  terms: ClaimTerms;
+  /** null: a claims contract from before per-claim terms, whose claimTermsOf reverts. */
+  terms: ClaimTerms | null;
   claimsNow: HederaClaimsNow;
   settle: { toShop: bigint; refund: bigint; toPool: bigint };
   quoteSend: bigint;
@@ -29,6 +30,8 @@ export interface FakeState {
   balance: bigint;
   allowance: bigint;
   gate: { exitRequestedAt: bigint; exitDelay: bigint; usdcAssociated: boolean };
+  /** False: a vault from before reservations. */
+  reserves: boolean;
   credit: bigint;
   escrow: bigint;
   kase: CaseNow | null;
@@ -80,7 +83,7 @@ export function fakeChain(over: Partial<FakeState> = {}): ActionReads & { state:
     now: 1_700_000_100n,
     claim: null,
     terms: { contestWindow: 600n, claimTimeout: 14_400n, handling: 18_000_000n },
-    claimsNow: { courtFeeUsdc: 3_000_000n, resendGap: 1_800n, maxSends: 5, bridgeMode: 0, peer: getAddress('0x' + 'c3'.repeat(20)), feeToken: LINK_TOKEN },
+    claimsNow: { courtFeeUsdc: 3_000_000n, contestWindow: 600n, claimTimeout: 14_400n, resendGap: 1_800n, maxSends: 5, bridgeMode: 0, peer: getAddress('0x' + 'c3'.repeat(20)), feeToken: LINK_TOKEN },
     settle: { toShop: 0n, refund: 0n, toPool: 0n },
     quoteSend: 2_000_000_000_000_000n,
     handlingOf: (b) => {
@@ -90,6 +93,7 @@ export function fakeChain(over: Partial<FakeState> = {}): ActionReads & { state:
     balance: 10_000_000n,
     allowance: 0n,
     gate: { exitRequestedAt: 0n, exitDelay: 600n, usdcAssociated: true },
+    reserves: true,
     credit: 0n,
     escrow: 3_000_000n,
     kase: null,
@@ -105,7 +109,11 @@ export function fakeChain(over: Partial<FakeState> = {}): ActionReads & { state:
   const at = <T>(name: string, chain: ChainName, v: () => T): Promise<T> => {
     calls.push(name);
     if (state.down.has(name)) return Promise.reject(new ChainUnavailable(chain));
-    return Promise.resolve(v());
+    try {
+      return Promise.resolve(v());
+    } catch (e) {
+      return Promise.reject(e);
+    }
   };
   const none = () => chainClaim({ status: 0, shop: '0x0000000000000000000000000000000000000000', platform: '0x0000000000000000000000000000000000000000' });
   const reads: ActionReads = {
@@ -118,7 +126,11 @@ export function fakeChain(over: Partial<FakeState> = {}): ActionReads & { state:
         return state.rule(d);
       }),
     claim: () => at('claim', 'hedera', () => state.claim ?? none()),
-    claimTerms: () => at('claimTerms', 'hedera', () => state.terms),
+    claimTerms: () =>
+      at('claimTerms', 'hedera', () => {
+        if (state.terms === null) throw new ChainRevert('hedera', null);
+        return state.terms;
+      }),
     claimsNow: () => at('claimsNow', 'hedera', () => state.claimsNow),
     previewSettle: () => at('previewSettle', 'hedera', () => state.settle),
     quoteSend: () => at('quoteSend', 'hedera', () => state.quoteSend),
@@ -127,6 +139,7 @@ export function fakeChain(over: Partial<FakeState> = {}): ActionReads & { state:
     vaultToken: () => at('vaultToken', 'hedera', () => TOKEN),
     tokenOf: () => at('tokenOf', 'hedera', () => ({ balance: state.balance, allowance: state.allowance })),
     vaultGate: () => at('vaultGate', 'hedera', () => state.gate),
+    vaultReserves: () => at('vaultReserves', 'hedera', () => state.reserves),
     creditOf: () => at('creditOf', 'hedera', () => state.credit),
     escrowOf: () => at('escrowOf', 'hedera', () => state.escrow),
     caseNow: () => at('caseNow', 'arbitrum', () => state.kase ?? caseNow({ state: 0 })),

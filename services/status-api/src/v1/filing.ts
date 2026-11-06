@@ -194,7 +194,7 @@ export async function fileClaim(env: ActionEnv, raw: unknown): Promise<ActionAns
 
   // The chain: is the claim new, may the vault take it, can the shop pay the fee.
   const c = env.ctx.chain;
-  const [onChain, now, handling, token, gate, idFor, head, gasPrice] = await Promise.all([
+  const [onChain, now, handling, token, gate, idFor, head, gasPrice, reserves] = await Promise.all([
     c.claim(claimId),
     c.claimsNow(),
     c.handlingOf(basket),
@@ -203,6 +203,7 @@ export async function fileClaim(env: ActionEnv, raw: unknown): Promise<ActionAns
     c.claimIdFor(platform, from, orderNonce),
     c.head('hedera'),
     c.gasPrice('hedera'),
+    c.vaultReserves(),
   ]);
   if (idFor.toLowerCase() !== claimId) throw new V1Error('internal', 'The claims contract derives another claim id than this API; the deployment files do not match the contract.');
   if (onChain.status !== 0) throw new V1Error('claim_exists', 'A claim for this order is already filed.', { claimId });
@@ -232,13 +233,15 @@ export async function fileClaim(env: ActionEnv, raw: unknown): Promise<ActionAns
     await buildTx(env.ctx, {
       chain: 'hedera', contract: 'RecourseClaims', to: claims, fn: 'fileClaim',
       args: [orderNonce, platform, { topicNum: refs.topicNum, seq: refs.seq, hashes: refs.hashes }, basket, netLoss], from, gasPrice,
-      description: `File the claim for order ${orderId.slice(0, 10)}...: escrows the court fee and reserves the platform's deposit.`,
+      description: `File the claim for order ${orderId.slice(0, 10)}...: escrows the court fee${reserves ? " and reserves the platform's deposit" : ''}.`,
       simulate: !approveNeeded, budget: FILE_CLAIM_BUDGET, revertCtx: { balance, required: fee },
     }),
   );
   const finding = await expectedFinding(env, orderId, picked.messages).catch(() => null);
   const notes: string[] = [];
-  if (approveNeeded) notes.push('Send fileClaim only after approve has mined: it cannot be simulated before then.');
+  if (approveNeeded) {
+    notes.push(`Send fileClaim only after approve has mined: it cannot be simulated before then, so its gas limit is a fixed ${FILE_CLAIM_BUDGET} budget. Building again once approve has mined simulates it and gives an estimate instead.`);
+  }
   if (!picked.messages[KIND_PACKED]) notes.push('The topic holds no packed record from the shop: the fault rule answers against the shop from its packed step on.');
   if (finding) notes.push(`On these records the fault rule points at the ${finding.side} (${finding.reasonKey}); the pre-check service records the finding.`);
   const missing = picked.messages.map((m, k) => (m ? null : RECORD_KEYS[k])).filter((k): k is (typeof RECORD_KEYS)[number] => k !== null);
@@ -251,12 +254,15 @@ export async function fileClaim(env: ActionEnv, raw: unknown): Promise<ActionAns
       amountOf('netLoss', netLoss, unit, 'info', null),
       amountOf('handling', handling, unit, 'info', null),
       amountOf('courtFee', fee, unit, 'escrow', from),
-      amountOf('maxPayout', maxPayout, unit, 'reserve', platform),
+      // A vault from before reservations holds nothing back at filing: the most is then shown, not moved.
+      reserves ? amountOf('maxPayout', maxPayout, unit, 'reserve', platform) : amountOf('maxPayout', maxPayout, unit, 'info', null),
     ],
     changes: [
       ...(approveNeeded ? [`Your allowance to the deposit vault is set to ${tokenText(fee, unit)}.`] : []),
       'The claim is filed (status filed) and the court fee moves into its escrow.',
-      `Up to ${tokenText(maxPayout, unit)} of the platform's deposit is reserved for this claim.`,
+      reserves
+        ? `Up to ${tokenText(maxPayout, unit)} of the platform's deposit is reserved for this claim.`
+        : "Nothing of the platform's deposit is reserved for this claim: this vault does not reserve, so a payout comes from whatever the deposit holds when the claim settles.",
       'The pre-check service then records a finding on its own.',
     ],
     statusAfter: 'filed',

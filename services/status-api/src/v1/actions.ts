@@ -4,7 +4,7 @@
 
 import { ClaimStatus, CaseState, externalIdUint, sideOf, type Answer } from '@recourse/shared';
 import { keccak256, sha256, stringToBytes, type Address, type Hex } from 'viem';
-import type { CaseNow, ChainClaim } from '../chain.js';
+import { ChainRevert, type CaseNow, type ChainClaim } from '../chain.js';
 import { foldClaim } from '../join.js';
 import type { StatusService } from '../service.js';
 import { answer, buildTx, type ActionAnswer, type ActionName, type Ctx } from './build.js';
@@ -74,6 +74,33 @@ function claimInput(claimId: Hex, status: number, caseState: string | null) {
 
 const readBackOf = (claimId: Hex) => `/v1/claims/${claimId}`;
 
+interface Terms {
+  contestWindow: bigint;
+  claimTimeout: bigint;
+  /** False: the claims contract has no per-claim terms and checks against its current params(). */
+  frozen: boolean;
+}
+
+/**
+ * The contest window and claim timeout the claims contract checks this claim against: the claim's
+ * own, fixed at filing. A claims contract from before per-claim terms has no `claimTermsOf` (the
+ * call reverts) and checks every claim against its current `params()`, so those stand in. An RPC
+ * fault is still thrown: it answers upstream_unavailable, never a guessed window.
+ */
+async function termsOf(env: ActionEnv, claimId: Hex): Promise<Terms> {
+  const c = env.ctx.chain;
+  try {
+    const t = await c.claimTerms(claimId);
+    return { contestWindow: t.contestWindow, claimTimeout: t.claimTimeout, frozen: true };
+  } catch (e) {
+    if (!(e instanceof ChainRevert)) throw e;
+  }
+  const now = await c.claimsNow();
+  return { contestWindow: now.contestWindow, claimTimeout: now.claimTimeout, frozen: false };
+}
+
+const PARAMS_TERMS_NOTE = 'This claims contract keeps no terms per claim: it checks against its current parameters, not ones fixed when the claim was filed.';
+
 // ------------------------------------------------------------------ Hedera, one claim
 
 async function contest(env: ActionEnv, raw: unknown): Promise<ActionAnswer> {
@@ -81,7 +108,7 @@ async function contest(env: ActionEnv, raw: unknown): Promise<ActionAnswer> {
   const from = p.from as Address;
   const claimId = p.claimId as Hex;
   const c = env.ctx.chain;
-  const [claim, terms, head, gasPrice, fee] = await Promise.all([c.claim(claimId), c.claimTerms(claimId), c.head('hedera'), c.gasPrice('hedera'), c.escrowOf(claimId)]);
+  const [claim, terms, head, gasPrice, fee] = await Promise.all([c.claim(claimId), termsOf(env, claimId), c.head('hedera'), c.gasPrice('hedera'), c.escrowOf(claimId)]);
   known(claim, claimId);
   if (claim.status !== ClaimStatus.PreChecked) throw wrongStatus(claim.status);
   const closesAt = claim.preCheckedAt + terms.contestWindow;
@@ -107,7 +134,7 @@ async function contest(env: ActionEnv, raw: unknown): Promise<ActionAnswer> {
       `The ${tokenText(fee, unit)} court fee escrowed at filing stays in escrow until the claim ends.`,
     ],
     statusAfter: 'contested',
-    notes: [`The contest window closes at ${iso(closesAt)}: the transaction must mine by then.`],
+    notes: [`The contest window closes at ${iso(closesAt)}: the transaction must mine by then.`, ...(terms.frozen ? [] : [PARAMS_TERMS_NOTE])],
     builtAt: head.timestamp, notAfter: closesAt, readBack: readBackOf(claimId),
     input: claimInput(claimId, claim.status, caseStateOfIndex(env, claimId)),
   });
@@ -118,7 +145,7 @@ async function closeUncontested(env: ActionEnv, raw: unknown): Promise<ActionAns
   const from = p.from as Address;
   const claimId = p.claimId as Hex;
   const c = env.ctx.chain;
-  const [claim, terms, head, gasPrice, settle] = await Promise.all([c.claim(claimId), c.claimTerms(claimId), c.head('hedera'), c.gasPrice('hedera'), c.previewSettle(claimId)]);
+  const [claim, terms, head, gasPrice, settle] = await Promise.all([c.claim(claimId), termsOf(env, claimId), c.head('hedera'), c.gasPrice('hedera'), c.previewSettle(claimId)]);
   known(claim, claimId);
   if (claim.status !== ClaimStatus.PreChecked) throw wrongStatus(claim.status);
   const closesAt = claim.preCheckedAt + terms.contestWindow;
@@ -145,7 +172,7 @@ async function closeUncontested(env: ActionEnv, raw: unknown): Promise<ActionAns
       'The shop takes its credit out with withdrawCredit.',
     ],
     statusAfter: 'closed_uncontested',
-    notes: [],
+    notes: terms.frozen ? [] : [PARAMS_TERMS_NOTE],
     builtAt: head.timestamp, notAfter: null, readBack: readBackOf(claimId),
     input: claimInput(claimId, claim.status, caseStateOfIndex(env, claimId)),
   });
@@ -206,7 +233,9 @@ async function expireClaim(env: ActionEnv, raw: unknown): Promise<ActionAnswer> 
   const from = p.from as Address;
   const claimId = p.claimId as Hex;
   const c = env.ctx.chain;
-  const [claim, terms, head, gasPrice, fee] = await Promise.all([c.claim(claimId), c.claimTerms(claimId), c.head('hedera'), c.gasPrice('hedera'), c.escrowOf(claimId)]);
+  const [claim, terms, head, gasPrice, fee, reserves] = await Promise.all([
+    c.claim(claimId), termsOf(env, claimId), c.head('hedera'), c.gasPrice('hedera'), c.escrowOf(claimId), c.vaultReserves(),
+  ]);
   known(claim, claimId);
   const s = claim.status;
   if (s !== ClaimStatus.Filed && s !== ClaimStatus.Contested && s !== ClaimStatus.AtCourt) throw wrongStatus(s);
@@ -224,12 +253,17 @@ async function expireClaim(env: ActionEnv, raw: unknown): Promise<ActionAnswer> 
   if ((folded && folded.relayed.length > 0) || (live && (live.state === CaseState.Ruled || live.state === CaseState.Relayed))) {
     notes.push('A ruling is on its way back over CCIP: expiring the claim now discards it.');
   }
+  if (!terms.frozen) notes.push(PARAMS_TERMS_NOTE);
   const unit = vaultUnit(env);
   return answer(env.ctx, {
     action: 'expireClaim', chain: 'hedera', from, claimId, transactions: [tx],
     summary: `Expire the claim; the ${tokenText(fee, unit)} court fee is refunded to the shop.`,
     amounts: [amountOf('feeRefund', fee, unit, 'credit', claim.shop)],
-    changes: ['The claim expires (status expired).', `The ${tokenText(fee, unit)} court fee is refunded to the shop as credit; nothing is paid from the platform's deposit.`, "The platform's reserved deposit is released."],
+    changes: [
+      'The claim expires (status expired).',
+      `The ${tokenText(fee, unit)} court fee is refunded to the shop as credit; nothing is paid from the platform's deposit.`,
+      ...(reserves ? ["The part of the platform's deposit reserved for this claim is released."] : []),
+    ],
     statusAfter: 'expired',
     notes,
     builtAt: head.timestamp, notAfter: null, readBack: readBackOf(claimId),
