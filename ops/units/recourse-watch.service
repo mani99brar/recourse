@@ -11,11 +11,20 @@ WorkingDirectory=@REPO@/ops/watch
 # RECOURSE_NOTIFY_CMD=<path of the notify script> in watch.env (a path, no secret; it wins over the
 # empty value here). With none, every message is only logged to this unit's journal.
 # No shared env file: the watch needs no key, keyed URL or token, and the notifier reads its own config.
+# The watch keeps a message for the next run only when the notifier exits non-zero, so NOTIFY_STRICT=1 asks
+# a notifier that knows it (the operator's notify script) to exit 1 when its main channel failed, instead of
+# its best-effort exit 0 that would count a lost message as sent. Other notifiers ignore it.
 Environment=RECOURSE_NOTIFY_CMD=
+Environment=NOTIFY_STRICT=1
 EnvironmentFile=-%h/.config/recourse/watch.env
 Environment=WATCH_STATE_DIR=%h/.local/state/recourse/watch
 UnsetEnvironment=SSH_AUTH_SOCK
 ExecStart=/bin/bash @REPO@/ops/watch/watch.sh
+# The run's time: no send starts after WATCH_BUDGET_S (80 s, counted from the start, which includes the
+# health read: at most 5 s per service), and a send started near the end is cut to what is left of it, plus
+# 5 s for the notifier to die. 80 + 5 and a little jq stay under 120. Each send gets at most 40 s
+# (WATCH_SEND_TIMEOUT_S), above the notify script's 15 s Telegram call plus its 15 s ntfy call. A run stopped
+# here anyway only defers what it had not sent: the journal place moves after each send, not before.
 TimeoutStartSec=120
 MemoryMax=64M
 OOMScoreAdjust=100

@@ -179,10 +179,15 @@ test('systemd on this host gives a user unit the OOMScoreAdjust it asks for', { 
 
 test('the watch is a oneshot run by its timer every two minutes, with a cap and OOMScoreAdjust=100', () => {
   const unit = readFileSync(join(unitsDir, 'recourse-watch.service'), 'utf8');
-  for (const want of ['Type=oneshot', 'OOMScoreAdjust=100', 'Environment=RECOURSE_NOTIFY_CMD=']) {
+  for (const want of ['Type=oneshot', 'OOMScoreAdjust=100', 'Environment=RECOURSE_NOTIFY_CMD=', 'Environment=NOTIFY_STRICT=1']) {
     assert.ok(unit.split('\n').includes(want), `recourse-watch.service lacks ${want}`);
   }
   assert.match(unit, /^MemoryMax=\d+M$/m);
+  // systemd stops the run at TimeoutStartSec; the watch stops starting sends at its budget and gives the
+  // last one 5 s to die, so the timeout must leave room above both.
+  const timeout = Number(/^TimeoutStartSec=(\d+)$/m.exec(unit)?.[1]);
+  const budget = Number(/WATCH_BUDGET_S:-(\d+)/.exec(readFileSync(join(repo, 'ops/watch/watch.sh'), 'utf8'))?.[1]);
+  assert.ok(budget > 0 && timeout >= budget + 5 + 15, `TimeoutStartSec=${timeout} leaves too little room above the ${budget} s budget`);
   const timer = readFileSync(join(unitsDir, 'recourse-watch.timer'), 'utf8');
   assert.match(timer, /^OnCalendar=\*:0\/2$/m);
   assert.match(timer, /^Unit=recourse-watch\.service$/m);
