@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { ActionReads } from '../src/chain.js';
-import type { Reader } from '../src/live.js';
+import { refreshLive, type Reader } from '../src/live.js';
 import { Store } from '../src/store.js';
 import { fakeChain } from './helpers/chain.js';
 import { Sim } from './helpers/encode.js';
@@ -152,6 +152,30 @@ describe('reads on a relay that hangs or fails', () => {
       expect(r.ms, path).toBeLessThan(WAIT_MS + 400);
       expect(r.body.degraded, path).toContain('params');
     }
+  });
+});
+
+describe('the live refresh on a relay that hangs', () => {
+  it('stops reading a chain once one of its reads is late, and reports live on that chain', async () => {
+    const sim = new Sim();
+    const built = [buildClaim(sim, 'at_court', 1), buildClaim(sim, 'at_court', 2), buildClaim(sim, 'at_court', 3)];
+    const store = new Store();
+    ingest(store, sim);
+    let caseReads = 0;
+    const reader = fakeReader({ caseOf: () => (caseReads++, hang()), executionState: async () => 2 });
+    const t = Date.now();
+    await refreshLive(store, reader, () => 1_700_000_500, 50);
+    expect(Date.now() - t).toBeLessThan(400);
+    expect(caseReads).toBe(1);
+    expect(store.liveReads.arbitrum).toEqual({ failing: true, okAt: null });
+    expect(store.status.arbitrum.lastError).toMatch(/did not answer in time/);
+    const h = harness({ store, now: 1_700_000_500 });
+    expect(h.svc.degraded()).toContain('live');
+    expect(h.svc.stale()).toContainEqual({ read: 'live', upstreams: ['arbitrum_rpc'], readAt: null, ageS: null });
+    // The case reads answer again: live is current once a refresh reads Arbitrum without a failure.
+    await refreshLive(store, fakeReader({ caseOf: async () => built[0]!.live!.caseView!, executionState: async () => 2 }), () => 1_700_000_600, 50);
+    expect(store.liveReads.arbitrum).toEqual({ failing: false, okAt: 1_700_000_600 });
+    expect(h.svc.degraded()).not.toContain('live');
   });
 });
 

@@ -10,6 +10,7 @@ import { klerosAbi, offRampAbi } from './abi/outside.js';
 import { vaultAbi } from './abi/vault.js';
 import { foldClaim, isTerminal } from './join.js';
 import { safeError } from './http.js';
+import { bounded } from './lastgood.js';
 import { ClaimStatus } from '@recourse/shared';
 import type { KlerosRead, RawCaseView, Store } from './store.js';
 
@@ -346,12 +347,24 @@ export class TtlCache<T> {
 /**
  * Per-poll refresh of the live state of every claim that has reached court and is not final:
  * the Arbitrum case, each known message's execution state and the Kleros dispute. A message that
- * already succeeded is not read again. One failing read is recorded and skipped.
+ * already succeeded is not read again. One failing read is recorded and skipped. A read that has
+ * not answered within `waitMs` counts as failed, and its chain is not read again this refresh: a
+ * hanging relay (viem's retries over the fallback URLs run past a minute a read) would otherwise
+ * hold the poll, and every source behind it, for each claim in turn.
  */
-export async function refreshLive(store: Store, reader: Reader, nowS: () => number): Promise<void> {
+export async function refreshLive(store: Store, reader: Reader, nowS: () => number, waitMs = 10_000): Promise<void> {
   // By the chain each read goes to: the case and Kleros on Arbitrum, an OffRamp on its own chain.
   const errors: Record<'hedera' | 'arbitrum', string[]> = { hedera: [], arbitrum: [] };
   const tried = { hedera: false, arbitrum: false };
+  const late = { hedera: false, arbitrum: false };
+  const readOn = <T>(chain: 'hedera' | 'arbitrum', read: () => Promise<T>): Promise<T> => {
+    tried[chain] = true;
+    if (late[chain]) return Promise.reject(new Error(`${chain}: an earlier read did not answer in time`));
+    return bounded(read(), waitMs, () => {
+      late[chain] = true;
+      return new Error(`${chain}: the read did not answer in time`);
+    });
+  };
   for (const id of store.claimIds()) {
     const evs = store.eventsOf(id);
     const claim = foldClaim(evs);
@@ -363,18 +376,16 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
     const finished = isTerminal(claim.status) || claim.status === ClaimStatus.Ruled;
     const messages = [...bridgeless(claim.toCourt, 'arbitrum'), ...bridgeless(claim.relayed, 'hedera')];
     if (finished && live.caseView && messages.every((m) => live.exec[m.messageId] === 2)) continue;
-    tried.arbitrum = true;
     try {
-      live.caseView = await reader.caseOf(claim.claimId);
+      live.caseView = await readOn('arbitrum', () => reader.caseOf(claim.claimId));
       live.caseReadAt = nowS();
     } catch (e) {
       errors.arbitrum.push(safeError(e));
     }
     for (const m of messages) {
       if (live.exec[m.messageId] === 2) continue;
-      tried[m.chain] = true;
       try {
-        live.exec[m.messageId] = await reader.executionState(m.chain, m.messageId);
+        live.exec[m.messageId] = await readOn(m.chain, () => reader.executionState(m.chain, m.messageId));
       } catch (e) {
         errors[m.chain].push(safeError(e));
       }
@@ -383,7 +394,7 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
     for (const d of disputes) {
       if (d === 0n) continue;
       try {
-        live.kleros[d.toString()] = await reader.kleros(d);
+        live.kleros[d.toString()] = await readOn('arbitrum', () => reader.kleros(d));
       } catch (e) {
         errors.arbitrum.push(safeError(e));
       }
@@ -412,8 +423,9 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
 /**
  * Reads the chain's preCheckedAt once for each pre-checked claim that does not have it yet, at
  * most `budget` a poll. A claim the chain does not show as pre-checked yet is read again later.
+ * A read that has not answered within `waitMs` ends this poll's reads.
  */
-export async function refreshPreChecks(store: Store, reader: Reader, nowS: () => number, budget = 20): Promise<void> {
+export async function refreshPreChecks(store: Store, reader: Reader, nowS: () => number, budget = 20, waitMs = 10_000): Promise<void> {
   for (const id of store.claimIds()) {
     if (budget <= 0) return;
     const live = store.live.get(id);
@@ -421,13 +433,18 @@ export async function refreshPreChecks(store: Store, reader: Reader, nowS: () =>
     const claim = foldClaim(store.eventsOf(id));
     if (!claim || !claim.preChecked) continue;
     budget--;
+    let late = false;
     try {
-      const at = await reader.preCheckedAt(claim.claimId);
+      const at = await bounded(reader.preCheckedAt(claim.claimId), waitMs, () => {
+        late = true;
+        return new Error('the read did not answer in time');
+      });
       if (at === 0n) continue;
       store.live.set(id, { ...(live ?? { caseView: null, exec: {}, kleros: {}, at: nowS() }), preCheckedAt: at });
     } catch {
       // read again next poll; the mirror time stands in meanwhile
     }
+    if (late) return;
   }
 }
 

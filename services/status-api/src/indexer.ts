@@ -75,12 +75,14 @@ export class Indexer {
       this.settle('arbitrum');
       if (!store.status.arbitrum.failing) await this.evidence(arb);
     }
+    // Before the live reads and the documents: a fresh store serves once its sources have caught up,
+    // not once a slow relay has answered for every claim.
+    if (store.rebuilding && this.caughtUp()) store.rebuilding = false;
     if (this.d.reader) {
-      await refreshLive(store, this.d.reader, this.d.nowS);
-      await refreshPreChecks(store, this.d.reader, this.d.nowS);
+      await refreshLive(store, this.d.reader, this.d.nowS, cfg.sourceTimeoutMs);
+      await refreshPreChecks(store, this.d.reader, this.d.nowS, 20, cfg.sourceTimeoutMs);
     }
     await this.prefetchDocs();
-    if (store.rebuilding && this.caughtUp()) store.rebuilding = false;
   }
 
   /**
