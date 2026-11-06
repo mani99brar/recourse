@@ -162,11 +162,12 @@
       "sku": "jacket-navy-m",
       "fault": null,
       "through": "pack",
+      "via": "order",
       "shopMode": "port",
-      "asked": { "brand": "Northwind", "size": "M", "colour": "Navy", "price": "2.00" },
+      "asked": { "brand": "Northwind", "size": "M", "colour": "Navy", "price": "3.00" },
       "arrived": null,
       "outcome": "awaiting-approval",
-      "shows": "A 3 USDC order above Tallyhouse's 1 USDC spend limit waits for the buyer: orders.sh approve tallyhouse-kestrel-approval signs it (pnpm --filter @recourse/agent approve <id> --yes) and pays, then the shop packs. Kestrel runs as its own process on its registered port for this order, since the payment comes on a later run to the URL the agent journaled at the first 402. No claim."
+      "shows": "A 3 USDC order, as asked and shown with no change, above Tallyhouse's 1 USDC spend limit, waits for the buyer: orders.sh approve tallyhouse-kestrel-approval signs it (pnpm --filter @recourse/agent approve <id> --yes) and pays, then the shop packs. Kestrel runs as its own process on its registered port for this order, since the payment comes on a later run to the URL the agent journaled at the first 402. No claim."
     },
     {
       "id": "wren-fernhill-no-claim",
@@ -175,6 +176,8 @@
       "sku": "tulips-white-10",
       "fault": null,
       "through": "pack",
+      "via": "order",
+      "shopMode": "port",
       "asked": { "brand": "Fernhill Growers", "size": "Bunch of 10", "colour": "White", "price": "1.50" },
       "arrived": null,
       "outcome": "no-claim",
@@ -187,6 +190,8 @@
       "sku": "forecast-100",
       "fault": null,
       "through": "pack",
+      "via": "order",
+      "shopMode": "port",
       "asked": { "brand": "Quillon Forecast API", "size": "Standard plan, 100 calls", "colour": "Hourly forecast", "price": "1.00" },
       "arrived": null,
       "outcome": "no-claim",

@@ -6,7 +6,7 @@ Three more shops and three more agent companies, beside the agent company Parcel
 |---|---|
 | `cast.json` | The cast: each shop and agent company with its type, catalogue or limits, funding, and the planned orders. |
 | `setup.ts` | Creates the keys, the Hedera accounts and the ERC-8004 identities, adds the party map entries, and funds the deposits. Dry run by default. |
-| `orders.sh` | Places the planned orders through `live-order --local-shop`, each with its own identities. Dry run by default. |
+| `orders.sh` | Places the planned orders through `live-order --local-shop`, or through the agent's `order` and the shop's `pack` commands, each with its own identities. Dry run by default. |
 
 ## The cast
 
@@ -46,11 +46,14 @@ The fault rule compares six attributes across the order's records: brand, size, 
 |---|---|---|
 | `wren-kestrel-payout` | Wren, Kestrel, `shell-navy-m`, `--fault ordered-size=S` | A claim nobody contests. The pre-check answers 1 (agent company) at step 2a-ii. After the contest window the claim closes, the shop is paid from Wren's deposit, and the shop withdraws its credit. |
 | `wren-kestrel-neither` | Wren, Kestrel, `shell-navy-l` | The buyer asked for M. The screen showed L, flagged the change, and Wren approved it, so L is what was packed and received. The pre-check answers neither (step 11), and nothing is paid. |
-| `tallyhouse-kestrel-approval` | Tallyhouse, Kestrel, `jacket-navy-m` (3 USDC) | The order waits for the buyer, then `orders.sh approve tallyhouse-kestrel-approval --send` signs it, pays, and the shop packs. No claim. The agent pays to the shop URL it saved at the first 402, so for this order Kestrel runs as its own process (the shop service's code with Kestrel's settings) on its registered port, 8731, for as long as each command runs. |
+| `tallyhouse-kestrel-approval` | Tallyhouse, Kestrel, `jacket-navy-m` (3 USDC) | The buyer asked for this jacket at up to 3.00, so the approval text shows no change. The order is above Tallyhouse's 1 USDC spend limit, so it waits for the buyer. Then `orders.sh approve tallyhouse-kestrel-approval --send` signs it and pays, and the shop packs. No claim. |
 | `wren-fernhill-no-claim` | Wren, Fernhill, `tulips-white-10` | Paid and packed, with no claim. A late delivery is refunded by the shop. |
 | `lumen-quillon-calls` | Lumen, Quillon, `forecast-100` | Paid with x402. The shop records the plan it delivered. No claim. |
 
-Each shop gets at least one paid order. One limit applies: `live-order` writes fixed values for what the buyer asked for (Northwind, M, Navy, up to 2.00) and for what arrived (Northwind, Navy, the staged size, else L). These values are correct for the Kestrel orders. They would misstate the Fernhill and Quillon orders, so `orders.sh --send` skips those two until `live-order` takes the asked and arrived values from the order.
+Each shop gets at least one paid order, and the orders go through two paths:
+
+- **The Kestrel claim orders** go through `live-order --local-shop`, which runs the shop inside the same process and carries the order on to the claim. `live-order` writes fixed values for what the buyer asked for (Northwind, M, Navy, up to 2.00) and for what arrived (Northwind, Navy, the staged size, else L). These values are correct for these two orders.
+- **The other three orders** (`"via": "order"` in `cast.json`) go through the agent's `order` command, with the buyer's asked values from `cast.json`, so their records state what that buyer asked for. Once an order is paid, the shop's `pack` command writes the packed record: the catalogue item and the price charged. For these orders the shop runs as its own process (the shop service's code with that shop's settings) on its registered port (8731 to 8733), for as long as each command runs. The approval order needs this: the agent pays to the shop URL it saved at the first 402, and the payment comes on a later run. The agent finds the shop through its ERC-8004 registration. While the registry cannot be read, it uses `SHOP_BASE_URL`, which `orders.sh` sets to the same port, and it still pays the shop's own account from the party map.
 
 ## Running it
 
