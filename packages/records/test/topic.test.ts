@@ -3,7 +3,7 @@ import { getAddress } from 'viem';
 import { ZERO_HASH, encodeRecordMsg, recordHash, utf8ToBytes, type Parties, type RecordKind } from '@recourse/shared';
 import { cidOfHash } from '../src/car.js';
 import { MemoryLedger } from '../src/testing.js';
-import { TopicReader, topicNumOf } from '../src/topic.js';
+import { TopicReader, topicNumOf, writerFilter } from '../src/topic.js';
 import { AGENT_PAYER, ORDER, OTHER_ORDER, PARTIES, SHOP_PAYER, STRANGER, TOPIC, doc } from './helpers.js';
 
 function message(kind: RecordKind, orderId = ORDER, variant = 0): Uint8Array {
@@ -72,6 +72,38 @@ describe('topic reads', () => {
     expect((await reader.refsFor(ORDER, parties)).seq[2]).toBe(1n);
     // An order naming an address that is not a platform party has no writers at all.
     expect((await reader.refsFor(ORDER, parties, { ...order, platform: PARTIES[1]!.evmAddress })).seq[2]).toBe(0n);
+  });
+
+  it('holds only valid messages, and with a writer filter only those some party writes with', async () => {
+    const ledger = new MemoryLedger();
+    ledger.createTopic(TOPIC);
+    const reader = new TopicReader(ledger.mirror(), TOPIC, { pageSize: 2, keep: writerFilter(PARTIES) });
+    ledger.append(TOPIC, STRANGER, utf8ToBytes('junk'));
+    ledger.append(TOPIC, STRANGER, message(0)); // well formed, but no party writes with this account
+    ledger.append(TOPIC, AGENT_PAYER, message(0));
+    ledger.append(TOPIC, SHOP_PAYER, message(4));
+    ledger.append(TOPIC, SHOP_PAYER, message(0)); // the shop's account is no platform writer
+    expect(await reader.sync()).toBe(5);
+    expect(reader.dropped).toBe(3);
+    expect((await reader.readOrderRecords(ORDER)).map((m) => [m.seq, m.payer])).toEqual([
+      [3, AGENT_PAYER],
+      [4, SHOP_PAYER],
+    ]);
+    // Without a filter a stranger's well-formed message is held, but junk never is.
+    const open = new TopicReader(ledger.mirror(), TOPIC, 2);
+    expect((await open.readOrderRecords(ORDER)).map((m) => m.seq)).toEqual([2, 3, 4, 5]);
+    expect(open.dropped).toBe(1);
+  });
+
+  it('reads to the head of the topic however many pages that takes, once per concurrent caller', async () => {
+    const { ledger, reader } = setup();
+    for (let i = 0; i < 2101; i++) ledger.append(TOPIC, STRANGER, utf8ToBytes(`junk ${i}`));
+    ledger.append(TOPIC, AGENT_PAYER, message(3));
+    const [a, b] = await Promise.all([reader.readOrderRecords(ORDER), reader.readOrderRecords(ORDER)]);
+    expect(reader.lastSeq).toBe(2102);
+    expect(a.map((m) => m.seq)).toEqual([2102]);
+    expect(b.map((m) => m.seq)).toEqual([2102]);
+    expect(reader.dropped).toBe(2101);
   });
 
   it('parses topic numbers', () => {

@@ -1,5 +1,6 @@
 // Reads the records topic from the mirror node. Every message is decoded with the shared record
-// message codec; a message that does not decode is returned flagged, never thrown on. `refsFor`
+// message codec; a message that does not decode is returned flagged, never thrown on, and the
+// reader keeps only valid ones. `refsFor`
 // builds the on-chain record pointers of an order from the first message of each kind whose payer
 // is an allowed writer for that kind: given the order's platform and shop, only their own writers.
 
@@ -92,16 +93,53 @@ export function refsFromMessages(
   return { topicNum: refs.topicNum, seq, hashes };
 }
 
-/** Keeps an in-memory copy of the topic, paging forward from the last sequence number it has read. */
+/** True for a message whose payer some party may use for its kind (the role-wide writer set). */
+export function writerFilter(parties: Parties): (m: ValidRecordMsg) => boolean {
+  const byKind = new Map<number, Set<string>>();
+  return (m) => {
+    if (m.payer === null) return true; // the mirror did not say; the reader of the order decides
+    let set = byKind.get(m.kind);
+    if (set === undefined) {
+      set = hcsWritersFor(parties, m.kind);
+      byKind.set(m.kind, set);
+    }
+    return set.has(m.payer);
+  };
+}
+
+export interface TopicReaderOptions {
+  pageSize?: number;
+  /**
+   * Keeps a valid message only when this returns true, for example `writerFilter(parties)`. The
+   * topic has no submit key, so without a filter every well-formed message anyone posts is kept.
+   */
+  keep?: (m: ValidRecordMsg) => boolean;
+}
+
+/**
+ * Keeps an in-memory index of the topic's record messages by order, paging forward from the last
+ * sequence number it has read. Messages that do not decode (and, with `keep`, messages from
+ * accounts that write for no party) are counted and dropped, never held: anyone can post to the
+ * topic, so what is held must not grow with what strangers post.
+ */
 export class TopicReader {
-  private readonly messages: RecordMsg[] = [];
+  private readonly byOrder = new Map<string, ValidRecordMsg[]>();
   private nextSeq = 1;
+  private droppedCount = 0;
+  private running: Promise<number> | undefined;
+  private readonly pageSize: number;
+  private readonly keep: ((m: ValidRecordMsg) => boolean) | undefined;
 
   constructor(
     private readonly mirror: MirrorClient,
     readonly topicId: string,
-    private readonly pageSize = 100,
-  ) {}
+    options: number | TopicReaderOptions = {},
+  ) {
+    const o = typeof options === 'number' ? { pageSize: options } : options;
+    // The mirror serves at most 100 messages a page; a short page means the reader has caught up.
+    this.pageSize = Math.min(o.pageSize ?? 100, 100);
+    this.keep = o.keep;
+  }
 
   /** One page of messages from `fromSeq`, decoded; reads the mirror node directly. */
   async readTopic(fromSeq: number, limit = this.pageSize): Promise<RecordMsg[]> {
@@ -109,27 +147,47 @@ export class TopicReader {
     return raws.map(decodeTopicMessage);
   }
 
-  /** Pulls every message newer than the last one read. Returns how many were added. */
-  async sync(maxPages = 1000): Promise<number> {
-    let added = 0;
+  /**
+   * Pulls every message newer than the last one read, until the mirror returns a short page (the
+   * reader has caught up) or `maxPages` pages were read. Returns how many messages were read. Calls
+   * made while one is running wait for it instead of reading the same pages again.
+   */
+  async sync(maxPages = Number.POSITIVE_INFINITY): Promise<number> {
+    while (this.running !== undefined) await this.running.catch(() => undefined);
+    const run = this.pull(maxPages);
+    this.running = run;
+    try {
+      return await run;
+    } finally {
+      this.running = undefined;
+    }
+  }
+
+  private async pull(maxPages: number): Promise<number> {
+    let read = 0;
     for (let page = 0; page < maxPages; page++) {
       const batch = await this.readTopic(this.nextSeq, this.pageSize);
       for (const m of batch) {
         if (m.seq < this.nextSeq) continue;
-        this.messages.push(m);
         this.nextSeq = m.seq + 1;
-        added += 1;
+        read += 1;
+        if (!m.valid || (this.keep !== undefined && !this.keep(m))) {
+          this.droppedCount += 1;
+          continue;
+        }
+        const list = this.byOrder.get(m.orderId) ?? [];
+        list.push(m);
+        this.byOrder.set(m.orderId, list);
       }
       if (batch.length < this.pageSize) break;
     }
-    return added;
+    return read;
   }
 
-  /** Valid messages for the order at or after `fromSeq`, oldest first, after syncing. */
+  /** Valid kept messages for the order at or after `fromSeq`, oldest first, after syncing. */
   async readOrderRecords(orderId: Hex, fromSeq = 1): Promise<ValidRecordMsg[]> {
     await this.sync();
-    const target = orderId.toLowerCase();
-    return this.messages.filter((m): m is ValidRecordMsg => m.valid && m.orderId === target && m.seq >= fromSeq);
+    return (this.byOrder.get(orderId.toLowerCase()) ?? []).filter((m) => m.seq >= fromSeq);
   }
 
   async refsFor(orderId: Hex, parties: Parties, order?: OrderParties): Promise<RecordRefs> {
@@ -139,5 +197,10 @@ export class TopicReader {
   /** Highest sequence number read so far (0 before the first sync). */
   get lastSeq(): number {
     return this.nextSeq - 1;
+  }
+
+  /** Messages read and not kept: they did not decode, or (with `keep`) no party writes with their payer. */
+  get dropped(): number {
+    return this.droppedCount;
   }
 }

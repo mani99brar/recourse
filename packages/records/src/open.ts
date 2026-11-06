@@ -2,8 +2,9 @@
 // writer's Hedera account and key, the mirror node, the pin client and the journal. Fails at
 // start, naming what is missing, rather than on the first commit.
 
+import { existsSync } from 'node:fs';
 import { ENV_DEFAULTS } from '@recourse/shared';
-import { loadKeyBytes } from '@recourse/shared/node';
+import { loadKeyBytes, readParties } from '@recourse/shared/node';
 import { assertRecordWriter, hederaAccountOf } from './accounts.js';
 import { readH0Ids } from './h0-ids.js';
 import { SdkHcsSubmitter } from './hcs.js';
@@ -12,7 +13,7 @@ import { Journal } from './journal.js';
 import type { Logger } from './log.js';
 import { MirrorClient } from './mirror.js';
 import { RecordsClient, type RecordsJournalRow, type WriterRole } from './records-client.js';
-import { TopicReader } from './topic.js';
+import { TopicReader, writerFilter } from './topic.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -48,7 +49,8 @@ export function openRecordsClient(options: { role: WriterRole; journalPath: stri
   assertRecordWriter(options.role, payer, env);
   const submitter = SdkHcsSubmitter.fromKeyBytes(payer, loadKeyBytes(options.role === 'agent' ? 'AGENT_KEY_FILE' : 'SHOP_KEY_FILE', env));
   const mirror = mirrorFromEnv(env);
-  const reader = new TopicReader(mirror, topicId);
+  // With the party map, only messages some party's writer paid for are kept (the topic is open to anyone).
+  const reader = new TopicReader(mirror, topicId, env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? { keep: writerFilter(readParties(env)) } : {});
   const journal = Journal.open<RecordsJournalRow>(options.journalPath);
   const client = new RecordsClient({
     role: options.role,
