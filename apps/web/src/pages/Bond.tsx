@@ -203,7 +203,7 @@ export function NumbersCard({ input, onChange, p, token, failed = false }: { inp
               value={input.order}
               onChange={set('order')}
               problem={problems.order}
-              hint={`Orders here are paid in HBAR, at 1 HBAR per 1 USDC of list price; claims and deposits count in ${unit}.`}
+              hint={`Orders here are paid in HBAR (this deployment's price setting: 1 HBAR per 1 USDC of list price); claims and deposits count in ${unit}.`}
             />
             <NumberInput
               id="bn-share"
@@ -669,9 +669,8 @@ function DepositCard({ p, token, suggested, names }: { p: BondParams | null; tok
   const shown = platform ?? wallet.account;
   const standing = usePoll<PartyRead>(shown ? READS.party(shown) : null, 30_000);
 
-  const problems: string[] = [];
-  if (amountText.trim() && (amount === null || amount <= 0n)) problems.push('Enter an amount above 0, like 5.00.');
-  if (typed && !platform) problems.push('That is not an address. Leave it empty to post for your own account.');
+  const amountProblem = amountText.trim() && (amount === null || amount <= 0n) ? 'Enter an amount above 0, like 5.00.' : null;
+  const platformProblem = typed && !platform ? 'That is not an address. Leave it empty to post for your own account.' : null;
   const ready = vault !== null && tokenAddr !== null && amount !== null && amount > 0n && (!typed || platform !== null);
   const plan = ready
     ? depositPlan({ vault, token: tokenAddr, amount, platform, vaultToken: token, names }, injectedProvider(), (t) => {
@@ -706,7 +705,16 @@ function DepositCard({ p, token, suggested, names }: { p: BondParams | null; tok
                 : `Your wallet's mUSDC is read once it is on Hedera testnet; the next step asks it to switch. ${OPERATOR_STEPS.mint}`}
         </p>
         <label htmlFor="dp-amount">Amount ({token?.symbol ?? 'USDC'})</label>
-        <input id="dp-amount" inputMode="decimal" value={amountText} onChange={(e) => setAmount(e.target.value)} placeholder={floor !== null ? figure(floor) : '5.00'} aria-describedby="dp-amount-h" autoComplete="off" />
+        <input
+          id="dp-amount"
+          inputMode="decimal"
+          value={amountText}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder={floor !== null ? figure(floor) : '5.00'}
+          aria-invalid={amountProblem ? true : undefined}
+          aria-describedby={`dp-amount-h${amountProblem ? ' dp-amount-e' : ''}`}
+          autoComplete="off"
+        />
         <p className="hint" id="dp-amount-h">
           {floor !== null && (
             <>
@@ -726,16 +734,30 @@ function DepositCard({ p, token, suggested, names }: { p: BondParams | null; tok
           )}
           {floor === null && 'The floor is not read yet.'}
         </p>
+        {amountProblem && (
+          <p className="error" id="dp-amount-e">
+            {amountProblem}
+          </p>
+        )}
         <label htmlFor="dp-platform">Agent company address (optional)</label>
-        <input id="dp-platform" value={platformText} onChange={(e) => setPlatform(e.target.value)} placeholder="Empty: your wallet's own account" spellCheck={false} autoComplete="off" aria-describedby="dp-platform-h" />
+        <input
+          id="dp-platform"
+          value={platformText}
+          onChange={(e) => setPlatform(e.target.value)}
+          placeholder="Empty: your wallet's own account"
+          spellCheck={false}
+          autoComplete="off"
+          aria-invalid={platformProblem ? true : undefined}
+          aria-describedby={`dp-platform-h${platformProblem ? ' dp-platform-e' : ''}`}
+        />
         <p className="hint" id="dp-platform-h">
           The deposit belongs to this company. Leave it empty to post for your own account.
         </p>
-        {problems.map((t) => (
-          <p key={t} className="error" role="alert">
-            {t}
+        {platformProblem && (
+          <p className="error" id="dp-platform-e">
+            {platformProblem}
           </p>
-        ))}
+        )}
         {!vault && <p className="muted small">The vault address is not read yet.</p>}
         {shown && (
           <div className="bond-now">

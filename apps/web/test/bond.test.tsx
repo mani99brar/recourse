@@ -110,6 +110,7 @@ describe('the bond page', () => {
     expect(page).toContain('30.90 mUSDC');
     expect(page).toMatch(/Suggested deposit<small>An estimate, not the required amount<\/small><\/span><b>31\.00<small> mUSDC<\/small>/);
     expect(page).toContain('Months of payouts the deposit covers (an assumption of this page, not a rule)');
+    expect(page).toContain('Orders here are paid in HBAR (this deployment&#x27;s price setting: 1 HBAR per 1 USDC of list price)');
     expect(page).toContain('the operator cannot set a required deposit below 5.00 mUSDC');
     expect(page).toContain('Top-up window: 7 days');
     expect(page).toContain('1.00 plus 5% of the order, at most 4.00');
