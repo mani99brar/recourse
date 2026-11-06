@@ -51,7 +51,7 @@ export const READS = {
   orderRecords: (orderId: string) => `/v1/orders/${encodeURIComponent(orderId)}/records`,
 } as const;
 
-const FRESH_KEYS = ['asOf', 'degraded', 'vaultToken', 'configLock'] as const;
+const FRESH_KEYS = ['asOf', 'degraded', 'stale', 'vaultToken', 'configLock'] as const;
 
 /**
  * A /v1 read as the pages use it: `{ <key>: value, meta }` becomes the value with meta's freshness
@@ -88,6 +88,8 @@ export function isRebuilding(e: ApiFailure): boolean {
 export interface Fresh {
   asOf?: { hedera: number | null; arbitrum: number | null; hcs: number | null };
   degraded?: string[];
+  /** Each live read in `degraded` served from its last good value, and how old that value is (null: never read). */
+  stale?: { read: string; ageS: number | null }[];
   /** The deployment's vault token: every vault amount in the body is in it. */
   vaultToken?: VaultToken;
   /** Until every contract is locked, what the owner can still change (`notice`, plain words). */

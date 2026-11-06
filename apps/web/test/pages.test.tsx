@@ -6,7 +6,7 @@ import { Shell, route } from '../src/App.js';
 import { Banner, lateWords } from '../src/components.js';
 import { ApiFailure, READS, failureFrom, fromV1, isRebuilding } from '../src/lib/api.js';
 import { mockNote, parseUsdc, usdc } from '../src/lib/format.js';
-import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS } from '../src/lib/words.js';
+import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS, statusPlain } from '../src/lib/words.js';
 import { CaseView, contestedBy, type CaseDetail } from '../src/pages/Case.js';
 import { Finding, chainNote, standingWords } from '../src/pages/File.js';
 import { ClaimList } from '../src/pages/Party.js';
@@ -125,6 +125,15 @@ describe('pages render', () => {
     expect(lateWords('arbitrum', asOf, now)).toBe('Arbitrum (30 s behind)');
     expect(lateWords('hcs', asOf, now)).toBe('the records topic (not read through yet)');
     expect(renderToString(<Banner fresh={{ degraded: ['hcs'], asOf }} />)).toContain('the records topic (not read through yet)');
+    const stale = [{ read: 'params', ageS: 40 }, { read: 'vault', ageS: null }];
+    expect(lateWords('params', asOf, now, stale)).toBe('the contract parameters (last read 40 s ago)');
+    expect(lateWords('vault', asOf, now, stale)).toBe('the deposit and credit figures (not read yet)');
+    expect(lateWords('identity', asOf, now, stale)).toBe('the ERC-8004 registrations');
+  });
+  it('a court case that can no longer move does not offer a retry', () => {
+    expect(statusPlain('stuck', null)).toContain('nothing to send');
+    expect(statusPlain('stuck', null)).not.toContain('retry');
+    expect(statusPlain('stuck', 'relayRuling')).toContain('send it again');
   });
   it('degraded and unreachable states show a banner, not a crash', () => {
     expect(renderToString(<Banner fresh={{ degraded: ['hedera'] }} />)).toContain('running late');

@@ -107,6 +107,9 @@ export function statusPlain(key: StatusKey, call: NextCall | null, courtState?: 
   if ((key === 'at_court' || key === 'refused_once') && call === null && courtState === 'relayed') {
     return 'The court has ruled and the ruling is on its way back to Hedera, where it decides the claim.';
   }
+  if (key === 'stuck' && call === null) {
+    return 'The court case can no longer move, so there is nothing to send. Once the claim times out on Hedera, anyone can end it.';
+  }
   return STATUS_WORDS[key].plain;
 }
 
