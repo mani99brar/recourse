@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/store.js';
 import { Sim, encodeLog } from './helpers/encode.js';
-import { FEE, PLATFORM, SHOP, SHOP2, buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
+import { CASE_DEADLINE, FEE, PLATFORM, SHOP, SHOP2, buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
 import { harness } from './helpers/service.js';
 import { TtlCache } from '../src/live.js';
 
@@ -194,6 +194,24 @@ describe('the court case read and its events', () => {
     expect(d.court.state).toBe('opened');
     expect(d.court.attempts).toBe(2);
     expect(d.court.disputeIds).toEqual([901n, 951n]);
+  });
+
+  it('the case events keep the read expiry, so a refile stays open until expiresAt - caseDeadline', async () => {
+    const { sim, b } = atCourt();
+    sim.tick(600);
+    sim.arb('RefileNeeded', { claimId: b.claimId });
+    const now = sim.t + CASE_DEADLINE + 60n; // past ruledAt + caseDeadline, the rule without an expiry
+    const expiresAt = now + CASE_DEADLINE + 600n;
+    const store = new Store();
+    ingest(store, sim);
+    // The last case read is from before the RefileNeeded; the reads since failed.
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, expiresAt } });
+    const h = harness({ store, now: Number(now) });
+    const d = await h.svc.claimDetail(b.claimId);
+    expect(d.court.state).toBe('refile_pending');
+    expect(d.statusKey).toBe('refused_once');
+    expect(d.nextCall).toBe('refile');
+    expect(d.deadline).toBe(expiresAt - CASE_DEADLINE);
   });
 
   it('a case read further along than the events still wins', async () => {

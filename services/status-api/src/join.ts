@@ -186,9 +186,11 @@ export function caseViewOf(claim: FoldedClaim, events: readonly IndexedEvent[], 
   const rebuilt = eventCaseView(events);
   let v = read ?? rebuilt;
   if (read && rebuilt && (rebuilt.attempts > read.attempts || (rebuilt.attempts === read.attempts && rebuilt.state > read.state))) {
-    // What the events do not carry stays from the read: the payload hash (fixed at receipt) and
-    // the templates and dispute ids of the attempts it saw. Its expiry was for an earlier state.
+    // What the events do not carry stays from the read: the payload hash (fixed at receipt), the
+    // expiry (filedAt + claimTimeout, the same in every state) and the templates and dispute ids
+    // of the attempts it saw.
     v = { ...rebuilt, payloadHash: read.payloadHash, templateIds: read.templateIds, disputeIds: [rebuilt.disputeIds[0] || read.disputeIds[0], rebuilt.disputeIds[1] || read.disputeIds[1]] };
+    if (read.expiresAt !== undefined) v.expiresAt = read.expiresAt;
   }
   if (!v) return null;
   void claim;
