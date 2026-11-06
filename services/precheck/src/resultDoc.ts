@@ -33,6 +33,18 @@ export const REASON_TEXT: Record<ReasonKey, string> = {
     'No difference was found between the records that could be compared, but some held attributes or records had no counterpart to compare with.',
 };
 
+/**
+ * Step 2b gives the gap1 key too, for the opposite shape: the shown record departed from the asked
+ * record while the ordered record kept to it. The step-2a sentence would be false there.
+ */
+export const REASON_TEXT_2B =
+  'The shown record departs from the asked record on at least one attribute while the ordered record keeps to it, and no approved change covers it.';
+
+/** The sentence for a result: by reason key, except step 2b. */
+export function reasonTextOf(r: Pick<PrecheckResult, 'reasonKey' | 'step'>): string {
+  return r.step === '2b' ? REASON_TEXT_2B : REASON_TEXT[r.reasonKey];
+}
+
 export interface ResultDocInput {
   claimId: Hex;
   orderId: Hex;
@@ -85,7 +97,7 @@ export function buildResultDoc(input: ResultDocInput): ResultDoc {
     gap: String(r.gap),
     answer: String(r.answer),
     reasonKey: r.reasonKey,
-    reasonText: REASON_TEXT[r.reasonKey],
+    reasonText: reasonTextOf(r),
   };
   const bytes = canonicalBytes(doc);
   return { bytes, packHash: packHash(bytes) };

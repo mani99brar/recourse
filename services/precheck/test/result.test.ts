@@ -1,6 +1,6 @@
 import { REASON_KEYS, parseCanonical, runFaultRule } from '@recourse/shared';
 import { describe, expect, it } from 'vitest';
-import { REASON_TEXT, buildResultDoc } from '../src/resultDoc.js';
+import { REASON_TEXT, REASON_TEXT_2B, buildResultDoc } from '../src/resultDoc.js';
 import type { SlotOutcome } from '../src/slots.js';
 import { slotFromJson, slotToJson } from '../src/slots.js';
 import { orderIdOf, recordDoc } from './support.js';
@@ -44,6 +44,22 @@ describe('result document', () => {
 
   it('has one sentence for every reason key', () => {
     for (const k of REASON_KEYS) expect(REASON_TEXT[k].length).toBeGreaterThan(20);
+  });
+
+  it('says what step 2b found, not the step-2a sentence of the same key', () => {
+    const attrs = { brand: 'acme', size: 'm' };
+    // The screen showed size L; the order kept to the asked M; no approved change.
+    const r2b = runFaultRule({ asked: { attrs }, shown: { attrs: { ...attrs, size: 'l' }, changes: [] }, ordered: { attrs } });
+    expect(r2b).toMatchObject({ step: '2b', reasonKey: 'gap1_asked_vs_shown' });
+    const text2b = (JSON.parse(new TextDecoder().decode(buildResultDoc({ claimId, orderId, slots, result: r2b }).bytes)) as { reasonText: string }).reasonText;
+    expect(text2b).toBe(REASON_TEXT_2B);
+    expect(text2b).toContain('the ordered record keeps to it');
+    // The order departed too and nothing flagged it: step 2a keeps the sentence that says so.
+    const r2a = runFaultRule({ asked: { attrs }, shown: { attrs: { ...attrs, size: 'l' }, changes: [] }, ordered: { attrs: { ...attrs, size: 'l' } } });
+    expect(r2a).toMatchObject({ step: '2a-ii', reasonKey: 'gap1_asked_vs_shown' });
+    const text2a = (JSON.parse(new TextDecoder().decode(buildResultDoc({ claimId, orderId, slots, result: r2a }).bytes)) as { reasonText: string }).reasonText;
+    expect(text2a).toBe(REASON_TEXT.gap1_asked_vs_shown);
+    expect(text2a).toContain('The ordered record departs from the asked record');
   });
 
   it('slots survive the journal', () => {
