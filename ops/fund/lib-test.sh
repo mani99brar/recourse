@@ -41,6 +41,8 @@ NAME="an Arbitrum RPC that answers Hedera's chain (swapped endpoints) is refused
 if send 296 "$ARB_RPC_URL" --send || sent; then bad "$NAME"; else ok "$NAME"; fi
 NAME="an RPC that is neither HEDERA_RPC_URL_1 nor ARB_RPC_URL is refused"
 if send 296 https://other.example.invalid --send || sent; then bad "$NAME"; else ok "$NAME"; fi
+NAME="an Arbitrum send is refused, before the RPC is asked, when ARB_RPC_URL is the same URL as HEDERA_RPC_URL_1"
+if HEDERA_RPC_URL_1=$ARB_RPC_URL send 296 "$ARB_RPC_URL" --send || sent || [ -s "$STUB_LOG.asked" ]; then bad "$NAME"; else ok "$NAME"; fi
 NAME="an RPC that does not answer is refused"
 if send "" "$HEDERA_RPC_URL_1" --send || sent; then bad "$NAME"; else ok "$NAME"; fi
 NAME="the refusal does not print the RPC URL's key"

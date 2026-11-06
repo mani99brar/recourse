@@ -94,12 +94,16 @@ has_usdc() {
 # send_cast <role> <rpc> <cast send args...>   (signs with that role's keystore)
 # Sends only to HEDERA_RPC_URL_1 answering Hedera testnet (296) or ARB_RPC_URL answering Arbitrum Sepolia
 # (421614), and signs for that chain id, so a swapped or mistyped endpoint stops the run before anything is
-# signed. A refusal names the host only: a keyed URL carries its key in the path.
+# signed. The chain is read from which of the two the caller passed, so the two must differ: one URL in both
+# would send an Arbitrum transfer on Hedera. A refusal names the host only: a keyed URL carries its key in the path.
 send_cast() {
   local role=$1 rpc=$2 want got host; shift 2
   echo "+ cast send $* [signer: $role]"
   [[ $SEND == 1 ]] || return 0
   host=${rpc#*://}; host=${host%%[/?#]*}; host=${host##*@}
+  if [[ $HEDERA_RPC_URL_1 == "$ARB_RPC_URL" ]]; then
+    echo "refusing to send: HEDERA_RPC_URL_1 and ARB_RPC_URL are the same URL (at $host), so a send's chain is unknown" >&2; exit 1
+  fi
   if [[ $rpc == "$HEDERA_RPC_URL_1" ]]; then want=296
   elif [[ $rpc == "$ARB_RPC_URL" ]]; then want=421614
   else echo "refusing to send: the RPC at $host is neither HEDERA_RPC_URL_1 nor ARB_RPC_URL" >&2; exit 1; fi
