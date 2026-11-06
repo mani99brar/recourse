@@ -7,8 +7,9 @@
 #                                 then any process of this checkout that listens on a port from outside the units
 #   ctl.sh health [--json] [service...]
 #                                 per service: unit state, restarts, the HTTP code of its health endpoint, up or
-#                                 down, and the error fields its health JSON reports (redacted); then any stray
-#                                 listener. --json prints the same as one JSON object, for scripts.
+#                                 down, and the error fields its health JSON reports (redacted; for the docket
+#                                 also the last poll error from its GET /sources); then any stray listener.
+#                                 --json prints the same as one JSON object, for scripts.
 #   ctl.sh logs <service> [n]     last n journal lines (default 100)
 #   ctl.sh urls                   the current public https name of each tunnel
 #   ctl.sh keeper <args>          keeper-ctl with the unit's port and state dir (status, pause, resume, ...)
@@ -67,17 +68,21 @@ strays() {
 # One service's health as a JSON object: unit state and restarts, the HTTP code, up (unit active and the
 # endpoint answering 200), the service's own ok flag when it has one, and the error fields its health JSON
 # reports, each "field: text" and redacted (ops/watch/redact.jq). Nothing else from the body is passed on.
+# The docket keeps its last poll failure at GET /sources, not in /health, so that one field is read from there
+# (only when /health answered; a docket without /sources adds nothing). It does not change http or up.
 health_one() {
-  local s=$1 p=${HPATH[$1]:-/health} props out code body
+  local s=$1 p=${HPATH[$1]:-/health} props out code body src=""
   props=$(systemctl --user show "recourse-$s" -p LoadState -p ActiveState -p NRestarts -p Result 2>/dev/null || true)
   out=$(curl -s -m 5 -w '\n%{http_code}' "http://127.0.0.1:${PORT[$s]}$p" 2>/dev/null || true)
   code=${out##*$'\n'}; body=${out%$'\n'*}
   [ "$out" != "$code" ] || body=""
   [[ "$code" =~ ^[0-9]{3}$ ]] || code=000
+  if [ "$s" = docket ] && [ "$code" != 000 ]; then src=$(curl -s -m 5 "http://127.0.0.1:${PORT[$s]}/sources" 2>/dev/null || true); fi
   printf '%s' "$body" | jq -c -R -s -L "$REPO/ops/watch" --arg svc "$s" --arg port "${PORT[$s]}" --arg path "$p" \
-    --arg code "$code" --arg props "$props" '
+    --arg code "$code" --arg props "$props" --arg src "$src" '
     include "redact";
     (try fromjson catch null) as $b
+    | ($src | try fromjson catch null) as $sources
     | ($props | split("\n") | map(select(length > 0) | capture("^(?<key>[^=]+)=(?<value>.*)$")) | from_entries) as $u
     | (if ($u.LoadState // "") == "not-found" then "not-installed" else ($u.ActiveState // "unknown") end) as $unit
     | (if ($b | type) != "object" then []
@@ -96,7 +101,9 @@ health_one() {
          ($b.degraded // [] | select(length > 0) | "degraded: " + join(", ")),
          ($b.rebuilding | select(. == true) | "rebuilding: true"),
          ($b.sources // {} | to_entries[] | select(.value.lastError? != null) | "sources.\(.key).lastError: \(.value.lastError)")]
-       elif $svc == "docket" then [($b.failedWrites // 0 | select(. > 0) | "failedWrites: \(.)")]
+       elif $svc == "docket" then [
+         ($b.failedWrites // 0 | select(. > 0) | "failedWrites: \(.)"),
+         (if ($sources | type) == "object" then $sources.lastError else null end | select(. != null) | "sources.lastError: \(.)")]
        elif $svc == "intake" then [($b.llmStatus | select(. != null and . != "ok" and . != "disabled") | "llmStatus: \(.)")]
        elif ($svc | startswith("tunnel-")) then [($b.readyConnections | select(. == 0) | "readyConnections: 0")]
        else [] end) as $errors
