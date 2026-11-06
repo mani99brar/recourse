@@ -105,7 +105,10 @@ async function main(): Promise<number> {
       console.log('dry run: nothing written; rerun with --send');
       return 0;
     }
-    const confirm = confirmFrom(env);
+    // The topic and party map are read only for an order that needs confirming.
+    const book = new OrderBook();
+    for (const row of journal.read().rows) book.apply(row);
+    const confirm = book.get(orderId)?.status === 'paid_unconfirmed' ? confirmFrom(env) : undefined;
     return await withFileLock(join(stateDir, 'records.jsonl.lock'), async () => {
       const records = openRecordsClient({ role: 'shop', journalPath: join(stateDir, 'records.jsonl'), env, log: createLogger('shop') });
       try {
