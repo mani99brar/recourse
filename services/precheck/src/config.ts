@@ -27,6 +27,8 @@ export interface PrecheckConfig {
   startTimestamp: string;
   /** Milliseconds between ticks. */
   tickMs: number;
+  /** Seconds after a filing from which a record document that still cannot be read is rejected; default DOC_WAIT_S (one hour). */
+  docWaitS?: number;
 }
 
 export interface Deployment {

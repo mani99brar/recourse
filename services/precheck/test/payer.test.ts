@@ -32,9 +32,10 @@ describe('payer check', () => {
       const named = refsOf(500n, { [kind]: { seq: rec.seq, hash: rec.hash } });
       const p = await proveSlot(kind, proofClaim(orderId, named), ports);
       expect(p).toMatchObject({ final: true, slot: { outcome: 'rejected', reason: 'payer_mismatch', seq: BigInt(rec.seq) } });
-      // and found only through the index
+      // Found only through the index it is not even held there (the index keeps party writers'
+      // messages for their own kinds), so the slot is absent: missing either way.
       const viaIndex = await proveSlot(kind, proofClaim(orderId, refs), ports);
-      expect(viaIndex).toMatchObject({ final: true, slot: { outcome: 'rejected', reason: 'payer_mismatch' } });
+      expect(viaIndex).toEqual({ final: true, slot: { kind, outcome: 'absent' } });
     });
   }
 

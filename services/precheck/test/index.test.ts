@@ -2,10 +2,13 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildEvidence } from '../../../packages/court/src/evidence.js';
 import { recordHash, type ClaimToCourt, type RecordKind } from '@recourse/shared';
+import { bytesToHex } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TOPIC_INDEX_FILE, TopicIndex } from '../src/topicIndex.js';
 import {
   AGENT_ACCOUNT,
+  SHOP_ACCOUNT,
+  STRANGER_ACCOUNT,
   cleanupRigs,
   FILED_AT,
   KINDS,
@@ -21,7 +24,7 @@ import {
 afterEach(cleanupRigs);
 
 function open(rig: Rig, mirror = rig.world.mirror()) {
-  return TopicIndex.open({ mirror, topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock });
+  return TopicIndex.open({ mirror, topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock, parties: PARTIES });
 }
 
 describe('topic index', () => {
@@ -46,29 +49,37 @@ describe('topic index', () => {
     second.close();
   });
 
-  it('keeps what a message holds: payer, transaction account, bytes, decode error', async () => {
+  it('holds a record message from a party writer with its payer, and only moves the cursor past anything else', async () => {
     const rig = makeRig();
     const orderId = orderIdOf(1);
     rig.world.addRecord({ kind: 0, orderId });
-    rig.world.addMessage({ bytes: new TextEncoder().encode('hello'), payer: '9.9.3001' });
+    rig.world.addMessage({ bytes: new TextEncoder().encode('hello'), payer: AGENT_ACCOUNT });
+    rig.world.addRecord({ kind: 0, orderId, payer: STRANGER_ACCOUNT });
+    rig.world.addRecord({ kind: 1, orderId, payer: SHOP_ACCOUNT }); // the shop writes packed only
     const idx = open(rig);
-    await idx.advance();
+    expect(await idx.advance()).toBe(4);
     expect(idx.get(1n)).toMatchObject({ payer: AGENT_ACCOUNT, decoded: { ok: true } });
-    expect(idx.get(2n)).toMatchObject({ payer: '9.9.3001', decoded: { ok: false } });
-    expect(idx.get(2n)?.consensusAt).toMatch(/^\d+\.\d{9}$/);
+    expect(idx.get(1n)?.consensusAt).toMatch(/^\d+\.\d{9}$/);
+    for (const seq of [2n, 3n, 4n]) expect(idx.get(seq)).toBeUndefined();
+    expect(idx.size).toBe(1);
+    expect(idx.lastSeq).toBe(4n);
     idx.close();
   });
 
-  it('drops an oversized body but keeps its place in the sequence', async () => {
+  it('an oversized body is not held, but its place in the sequence survives a restart', async () => {
     const rig = makeRig();
     rig.world.addMessage({ bytes: new Uint8Array(5000).fill(65) });
     const idx = open(rig);
     await idx.advance();
-    expect(idx.get(1n)).toMatchObject({ decoded: { ok: false, error: 'body over 1024 bytes' } });
-    expect(idx.get(1n)?.bytes.length).toBe(0);
+    expect(idx.get(1n)).toBeUndefined();
+    expect(idx.lastSeq).toBe(1n);
     idx.close();
+    rig.world.requests.length = 0;
     const again = open(rig);
-    expect(again.get(1n)?.decoded.ok).toBe(false);
+    expect(again.lastSeq).toBe(1n);
+    expect(again.get(1n)).toBeUndefined();
+    await again.advance();
+    expect(rig.world.requests.some((u) => u.includes('sequencenumber=gte:2'))).toBe(true);
     again.close();
   });
 
@@ -140,6 +151,81 @@ describe('topic index', () => {
     expect(e.readThrough(FILED_AT + 1n, 120)).toBe(false);
     idx.close();
     e.close();
+  });
+});
+
+describe('topic index under spam: the topic has no submit key', () => {
+  const junk = (i: number) => new TextEncoder().encode(`{"spam":"${String(i).padStart(6, '0')}${'x'.repeat(980)}"}`);
+
+  it('holds and journals only party records, reads a backlog in one call, and resumes after it on restart', async () => {
+    const rig = makeRig();
+    const orderId = orderIdOf(1);
+    rig.world.addRecord({ kind: 0, orderId });
+    for (let i = 0; i < 3000; i++) rig.world.addMessage({ bytes: junk(i), payer: STRANGER_ACCOUNT, ts: `${FILED_AT - 1n}.000000001` });
+    rig.world.addRecord({ kind: 0, orderId, payer: STRANGER_ACCOUNT }); // well formed, but no party writes with it
+    rig.world.addMessage({ bytes: junk(-1), payer: STRANGER_ACCOUNT, ts: `${FILED_AT + 3n}.000000000` });
+    const idx = open(rig);
+    expect(await idx.advance()).toBe(3003);
+    expect(idx.size).toBe(1);
+    expect(idx.lastSeq).toBe(3003n);
+    expect(idx.readThrough(FILED_AT, 120)).toBe(true);
+    idx.close();
+    // One message line and one cursor line, not three thousand lines of junk.
+    const lines = readFileSync(join(rig.dir, TOPIC_INDEX_FILE), 'utf8').trim().split('\n');
+    expect(lines.map((l) => (JSON.parse(l) as { t: string }).t)).toEqual(['msg', 'cursor']);
+
+    rig.world.requests.length = 0;
+    const again = open(rig);
+    expect(again.size).toBe(1);
+    expect(again.lastSeq).toBe(3003n);
+    expect(again.readThrough(FILED_AT, 120)).toBe(true);
+    expect(await again.advance()).toBe(0);
+    expect(rig.world.requests.some((u) => u.includes('sequencenumber=gte:3004'))).toBe(true);
+    again.close();
+  });
+
+  it('an older journal that held junk lines replays line by line and keeps only party records', async () => {
+    const rig = makeRig();
+    const orderId = orderIdOf(1);
+    const added = rig.world.addOrder(orderId);
+    const rows: string[] = [];
+    for (const m of rig.world.messages) {
+      rows.push(JSON.stringify({ t: 'msg', seq: String(m.seq), ts: m.ts, payer: m.payer, tx: m.txAccount, chunks: 1, size: m.bytes.length, hex: bytesToHex(m.bytes), at: 1 }));
+    }
+    for (let i = 0; i < 2000; i++) {
+      const bytes = junk(i);
+      rows.push(JSON.stringify({ t: 'msg', seq: String(7 + i), ts: `${FILED_AT + 1n}.000000001`, payer: STRANGER_ACCOUNT, chunks: 1, size: bytes.length, hex: bytesToHex(bytes), at: 1 }));
+    }
+    writeFileSync(join(rig.dir, TOPIC_INDEX_FILE), rows.join('\n') + '\n');
+    const idx = open(rig);
+    expect(idx.size).toBe(6);
+    expect(idx.lastSeq).toBe(2006n);
+    expect(idx.candidates(orderId, 3).map((m) => m.seq)).toEqual([BigInt(added[3]!.seq)]);
+    idx.close();
+  });
+
+  it('rewrites a journal grown long with cursor lines into the held messages and one cursor', async () => {
+    const rig = makeRig();
+    rig.world.addRecord({ kind: 0, orderId: orderIdOf(1) });
+    const opts = { mirror: rig.world.mirror(), topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock, parties: PARTIES, compactAfter: 3 };
+    const idx = TopicIndex.open(opts);
+    for (let round = 0; round < 5; round++) {
+      rig.world.addMessage({ bytes: junk(round), payer: STRANGER_ACCOUNT });
+      await idx.advance();
+    }
+    idx.close();
+    const path = join(rig.dir, TOPIC_INDEX_FILE);
+    expect(readFileSync(path, 'utf8').trim().split('\n')).toHaveLength(6);
+    const compacted = TopicIndex.open(opts);
+    expect(readFileSync(path, 'utf8').trim().split('\n').map((l) => (JSON.parse(l) as { t: string }).t)).toEqual(['msg', 'cursor']);
+    expect(compacted.lastSeq).toBe(6n);
+    expect(compacted.size).toBe(1);
+    rig.world.addRecord({ kind: 1, orderId: orderIdOf(1) });
+    expect(await compacted.advance()).toBe(1);
+    compacted.close();
+    const last = TopicIndex.open(opts);
+    expect(last.size).toBe(2);
+    last.close();
   });
 });
 

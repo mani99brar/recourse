@@ -62,11 +62,11 @@ describe('rule adapter, from chain data to the shared rule', () => {
 
   it('a rejected record is left out of the rule input, exactly like an absent one', async () => {
     const rig = makeRig();
-    for (const kind of KINDS) rig.world.addRecord({ kind, orderId, payer: kind === 3 ? STRANGER_ACCOUNT : undefined });
+    const added = KINDS.map((kind) => rig.world.addRecord({ kind, orderId, payer: kind === 3 ? STRANGER_ACCOUNT : undefined }));
     addLaterMessage(rig.world);
     const { index, ports } = await proofKit(rig);
     await index.advance();
-    const proof = await proveClaim(proofClaim(orderId, refsFor([])), ports);
+    const proof = await proveClaim(proofClaim(orderId, refsFor(added)), ports);
     if (!proof.final) throw new Error('expected a final proof');
     expect(proof.slots[3]).toMatchObject({ outcome: 'rejected', reason: 'payer_mismatch' });
     expect(runRule(proof.slots, orderId)).toEqual(runFaultRule(handInput({ name: '', expectedKey: '', omit: [3] })));

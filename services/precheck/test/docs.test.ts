@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { TransientError } from '@recourse/keeper';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openPinClient } from '@recourse/records';
-import { GatewayDocStore, LocalDocStore, PinnedDocStore, rawBlockCid } from '../src/docs.js';
+import { DocTooLarge, GatewayDocStore, LocalDocStore, PinnedDocStore, rawBlockCid } from '../src/docs.js';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -96,6 +96,15 @@ describe('docs', () => {
     const cid = await store.pin(bytes);
     expect(cid).toBe(rawBlockCid(bytes));
     expect(await store.fetch(cid)).toEqual(bytes);
-    await expect(store.fetch(rawBlockCid(new Uint8Array([4, 4, 4])))).rejects.toBeInstanceOf(TransientError);
+    // A document the store does not hold, with no gateway to ask, is a definite miss.
+    expect(await store.fetch(rawBlockCid(new Uint8Array([4, 4, 4])))).toBeNull();
+  });
+
+  it('over the shared pin client: a miss is null, an oversize document DocTooLarge, any other failure a retry', async () => {
+    const fails = (code: string) => new PinnedDocStore({ source: { fetch: async () => Promise.reject(Object.assign(new Error(`${code}: x`), { code })) } });
+    expect(await fails('not_found').fetch('bafkmiss')).toBeNull();
+    await expect(fails('document_too_large').fetch('bafkbig')).rejects.toBeInstanceOf(DocTooLarge);
+    await expect(fails('fetch_failed').fetch('bafkflaky')).rejects.toBeInstanceOf(TransientError);
+    await expect(fails('hash_mismatch').fetch('bafkwrong')).rejects.toBeInstanceOf(TransientError);
   });
 });

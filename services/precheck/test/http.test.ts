@@ -2,7 +2,8 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp, listen } from '../src/http.js';
-import { addLaterMessage, cleanupRigs, makeRig, setupClaim } from './support.js';
+import { ZERO_HASH } from '@recourse/shared';
+import { addLaterMessage, cleanupRigs, KINDS, makeRig, orderIdOf, refsFor, setupClaim } from './support.js';
 
 afterEach(cleanupRigs);
 
@@ -70,10 +71,12 @@ describe('http', () => {
 
   it('a rejected slot shows its reason', async () => {
     const rig = makeRig();
-    const { claimId, orderId } = setupClaim(rig, { omit: [4] });
-    // A packed record for this order from an account that is not the shop's.
-    rig.world.addRecord({ kind: 4, orderId, payer: '9.9.3001' });
+    const orderId = orderIdOf(1);
+    const added = KINDS.map((kind) => rig.world.addRecord({ kind, orderId, payer: kind === 4 ? '9.9.3001' : undefined }));
     addLaterMessage(rig.world);
+    // The refs name a packed record from an account that is not the shop's.
+    const claimId = rig.world.fileClaim(orderId, refsFor(added));
+    rig.chain.claims.set(claimId, { status: 1, packHash: ZERO_HASH });
     const svc = await rig.start();
     await svc.tick();
     const { base } = await serve(svc);

@@ -8,6 +8,7 @@
 
 import type { Hex } from 'viem';
 import {
+  RECORD_DOC_MAX_BYTES,
   RECORD_KEYS,
   RECORD_WRITERS,
   encodeRecordMsg,
@@ -23,8 +24,8 @@ import type { Logger } from './log.js';
 import type { MirrorClient } from './mirror.js';
 import type { TopicReader } from './topic.js';
 
-/** Record documents stay small so all six fit in one court evidence file with room to spare. */
-export const RECORD_DOC_MAX_BYTES = 1536;
+/** Record documents stay small so all six fit in one court evidence file (the cap lives in shared). */
+export { RECORD_DOC_MAX_BYTES };
 
 export type RecordsErrorCode = 'record_invalid' | 'record_too_large' | 'record_conflict' | 'wrong_writer' | 'submit_failed';
 

@@ -2,7 +2,15 @@
 // slots proved) -> built (document bytes, written before pinning) -> pinned (cid) -> intent (the
 // signed transaction is journaled by the sender) -> recorded (PreCheckRecorded seen on the mirror
 // with our packHash), or conflict (the chain holds a different packHash) or closed (the claim left
-// Filed with no pre-check). State is a fold over the journal, so a restart rebuilds it exactly.
+// Filed with no pre-check) or skipped (the claim names a platform or shop that is not a party).
+// State is a fold over the journal, so a restart rebuilds it exactly.
+//
+// Only claims between parties of the party map are answered. Anyone can file a claim naming any
+// shop address (an address the platform controls, say) against a registered platform, and the
+// platform writes most of an order's records itself, so a finding for such a claim could pay out
+// of the platform's deposit to whoever filed it. The safe answer to a claim naming an unknown shop
+// or platform is no pre-check at all: the claim stays Filed, expires after claimTimeout and pays
+// nothing; the filer only gets its court fee back. That is recorded as `claimSkipped` and alerted.
 
 import {
   Alerter,
@@ -24,9 +32,11 @@ import {
   type TxSigner,
 } from '@recourse/keeper';
 import {
+  ClaimStatus,
   isHex32,
   isSendPaused,
   packHash as hashDoc,
+  partyWithRole,
   type Parties,
   type RecordRefs,
 } from '@recourse/shared';
@@ -34,17 +44,19 @@ import { decodeEventLog, getAddress, hexToBytes, bytesToHex, type Address, type 
 import { systemClock, type Clock } from './clock.js';
 import type { PrecheckConfig } from './config.js';
 import type { DocStore } from './docs.js';
-import { proveClaim, type ProofClaim, type ProofPorts } from './proof.js';
+import { DOC_WAIT_S, proveClaim, type ProofClaim, type ProofPorts } from './proof.js';
 import { runRule } from './ruleAdapter.js';
 import { buildResultDoc } from './resultDoc.js';
 import { slotFromJson, slotToJson, type SlotOutcome } from './slots.js';
 import { TopicIndex } from './topicIndex.js';
 import { RecordWriter, type ClaimsChain } from './writer.js';
 
-export type ClaimState = 'seen' | 'resolved' | 'built' | 'pinned' | 'intent' | 'recorded' | 'conflict' | 'closed';
+export type ClaimState = 'seen' | 'resolved' | 'built' | 'pinned' | 'intent' | 'recorded' | 'conflict' | 'closed' | 'skipped';
 
-const TERMINAL: readonly ClaimState[] = ['recorded', 'conflict', 'closed'];
+const TERMINAL: readonly ClaimState[] = ['recorded', 'conflict', 'closed', 'skipped'];
 const LATE_MS = 10 * 60_000;
+/** While a claim's records cannot be proved yet, its status on chain is read at most this often. */
+const CHAIN_CHECK_MS = 10 * 60_000;
 const SOURCE_ALERT_MS = 2 * 60_000;
 
 interface Built {
@@ -60,6 +72,9 @@ interface ClaimRuntime {
   orderId: Hex;
   refs: RecordRefs;
   filedAt: bigint;
+  /** From ClaimFiled; absent only in a journal written before they were recorded. */
+  platform?: string;
+  shop?: string;
   state: ClaimState;
   slots?: SlotOutcome[];
   built?: Built;
@@ -70,6 +85,9 @@ interface ClaimRuntime {
   lastError?: string;
   inFlight: boolean;
   suspects: Map<string, Hex>;
+  unread: Map<string, number>;
+  /** Clock ms of the last read of the claim's status on chain while its records were not proved yet. */
+  chainCheckedAt?: number;
 }
 
 export interface ServiceDeps {
@@ -209,6 +227,7 @@ export class PrecheckService {
       topicId: cfg.topicId,
       dir: cfg.stateDir,
       clock: this.clock,
+      parties: this.d.parties,
       log: (l) => this.log(l),
     });
     this.reader = new HederaLogReader({
@@ -252,11 +271,14 @@ export class PrecheckService {
             return h;
           })),
           filedAt: BigInt(str(rec, 'filedAt')),
+          ...(typeof rec.platform === 'string' ? { platform: rec.platform } : {}),
+          ...(typeof rec.shop === 'string' ? { shop: rec.shop } : {}),
           state: 'seen',
           failures: 0,
           nextAttemptAt: 0,
           inFlight: false,
           suspects: new Map(),
+          unread: new Map(),
         });
         return;
       }
@@ -302,6 +324,9 @@ export class PrecheckService {
         return;
       case 'claimClosed':
         this.claim(rec).state = 'closed';
+        return;
+      case 'claimSkipped':
+        this.claim(rec).state = 'skipped';
         return;
       case 'preCheckSeen':
         if (!this.observed.has(hex32(rec, 'claimId'))) this.observed.set(hex32(rec, 'claimId'), hex32(rec, 'packHash'));
@@ -417,7 +442,40 @@ export class PrecheckService {
       quietS: this.d.config.quietS,
       clock: this.clock,
       suspects: c.suspects,
+      unread: c.unread,
+      docWaitS: this.d.config.docWaitS ?? DOC_WAIT_S,
     };
+  }
+
+  /** The claim's platform and shop when both are parties with those roles; else undefined. */
+  private claimParties(c: ClaimRuntime): { platform: string; shop: string } | undefined {
+    if (c.platform === undefined || c.shop === undefined) return undefined;
+    if (partyWithRole(this.d.parties, 'platform', c.platform) === undefined) return undefined;
+    if (partyWithRole(this.d.parties, 'shop', c.shop) === undefined) return undefined;
+    return { platform: c.platform, shop: c.shop };
+  }
+
+  /**
+   * While the records cannot be proved yet, reads the claim on chain now and then; a claim that has
+   * left Filed (expired, say) is closed, so it is not retried for ever. True when it was closed.
+   */
+  private async closedOnChain(c: ClaimRuntime): Promise<boolean> {
+    const now = this.clock.now();
+    if (c.chainCheckedAt !== undefined && now - c.chainCheckedAt < CHAIN_CHECK_MS) return false;
+    if (c.chainCheckedAt === undefined && c.retryingSince === undefined) {
+      c.chainCheckedAt = now; // first failed look: the claim was just seen Filed, read it in ten minutes
+      return false;
+    }
+    c.chainCheckedAt = now;
+    let onchain;
+    try {
+      onchain = await this.d.chain.getClaim(c.claimId);
+    } catch {
+      return false; // the rpc is down: the proof's own reason stays the claim's error
+    }
+    if (onchain.status === ClaimStatus.None || onchain.status === ClaimStatus.Filed) return false;
+    this.record({ t: 'claimClosed', claimId: c.claimId, status: onchain.status });
+    return true;
   }
 
   private progress(c: ClaimRuntime): void {
@@ -454,9 +512,23 @@ export class PrecheckService {
   private async advance(c: ClaimRuntime): Promise<void> {
     if (this.checkObserved(c)) return;
     if (c.state === 'seen') {
-      const claim: ProofClaim = { claimId: c.claimId, orderId: c.orderId, filedAt: c.filedAt, refs: c.refs };
+      const parties = this.claimParties(c);
+      if (parties === undefined) {
+        // No pre-check for a claim outside the party map: see the note at the top of this file.
+        this.record({ t: 'claimSkipped', claimId: c.claimId, reason: 'unknown_party', platform: c.platform, shop: c.shop });
+        this.alerter.raise({
+          kind: 'claim_held',
+          claimId: c.claimId,
+          state: 'skipped',
+          hint: 'the claim names a platform or shop that is not in the party map; no pre-check is recorded and it will expire',
+          detail: { platform: c.platform ?? 'unknown', shop: c.shop ?? 'unknown' },
+        });
+        return;
+      }
+      const claim: ProofClaim = { claimId: c.claimId, orderId: c.orderId, filedAt: c.filedAt, refs: c.refs, ...parties };
       const proof = await proveClaim(claim, this.ports(c));
       if (!proof.final) {
+        if (await this.closedOnChain(c)) return;
         for (const seq of proof.payerUnresolved) {
           this.alerter.raise({
             kind: 'mirror_lag',

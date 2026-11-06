@@ -12,6 +12,12 @@ export const REASONS = [
   'payer_mismatch',
   'after_filing',
   'bytes_mismatch',
+  /** The document is larger than RECORD_DOC_MAX_BYTES (or than the store reads). */
+  'doc_too_large',
+  /** The document could not be read by the time the wait after the filing was over. */
+  'doc_unavailable',
+  /** An approval or arrived record whose signature is missing, broken or by a signer the party map does not allow. */
+  'signature_invalid',
 ] as const;
 export type Reason = (typeof REASONS)[number];
 

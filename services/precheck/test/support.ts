@@ -2,6 +2,7 @@
 // shapes, plus a fake transaction node. Names and ids are fictional; Hedera accounts use realm 9.
 
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,6 +18,9 @@ import {
   type TxRpc,
 } from '@recourse/keeper';
 import {
+  APPROVAL_DOMAIN,
+  APPROVAL_TYPES,
+  REPORT_TYPES,
   ZERO_HASH,
   canonicalBytes,
   encodeRecordMsg,
@@ -32,8 +36,12 @@ import {
   encodeEventTopics,
   getAbiItem,
   getAddress,
+  hashTypedData,
+  hexToBytes,
   keccak256,
+  numberToHex,
   parseTransaction,
+  serializeSignature,
   type Address,
   type Hex,
 } from 'viem';
@@ -54,6 +62,12 @@ export const AGENT_ACCOUNT = '9.9.1001';
 export const SHOP_ACCOUNT = '9.9.2001';
 export const STRANGER_ACCOUNT = '9.9.3001';
 export const FILED_AT = 1_700_000_000n;
+
+/** Test-only keys (generated per run): the agent signs mandate approvals, the buyer approvals above the limit and arrived reports. */
+export const AGENT_KEY = generatePrivateKey();
+export const BUYER_KEY = generatePrivateKey();
+export const AGENT_EVM = privateKeyToAccount(AGENT_KEY).address;
+export const BUYER_EVM = privateKeyToAccount(BUYER_KEY).address;
 
 export const PARTIES: Parties = [
   {
@@ -77,7 +91,52 @@ export const PARTIES: Parties = [
     hcsWriters: [],
     displayName: 'Fictional Signer',
   },
+  { role: 'agent', evmAddress: AGENT_EVM, hederaAccountId: AGENT_ACCOUNT, hcsWriters: [], displayName: 'Fictional Agent' },
+  { role: 'buyer', evmAddress: BUYER_EVM, hcsWriters: [], displayName: 'Fictional Buyer' },
 ];
+
+// Synchronous EIP-712 signing for fixtures, with the curve viem itself signs with.
+const viemRequire = createRequire(createRequire(import.meta.url).resolve('viem'));
+const { secp256k1 } = viemRequire('@noble/curves/secp256k1') as {
+  secp256k1: { sign(hash: Uint8Array, key: Uint8Array): { r: bigint; s: bigint; recovery: number } };
+};
+
+function signTyped(key: Hex, typed: Parameters<typeof hashTypedData>[0]): Hex {
+  const sig = secp256k1.sign(hexToBytes(hashTypedData(typed)), hexToBytes(key));
+  return serializeSignature({ r: numberToHex(sig.r, { size: 32 }), s: numberToHex(sig.s, { size: 32 }), yParity: sig.recovery });
+}
+
+const TEXT_HASH = keccak256('0x01');
+
+/** Signs an approval document's fields as the agent (basis mandate) or the buyer (basis buyer). */
+function signedApproval(doc: Record<string, CanonicalValue>): Record<string, CanonicalValue> {
+  const key = doc.approvalBasis === 'mandate' ? AGENT_KEY : BUYER_KEY;
+  const signature = signTyped(key, {
+    domain: APPROVAL_DOMAIN,
+    types: APPROVAL_TYPES,
+    primaryType: 'RecourseApproval',
+    message: {
+      orderId: doc.orderId as Hex,
+      textHash: doc.textHash as Hex,
+      amount: BigInt(doc.amount as string),
+      payTo: doc.payTo as string,
+      decision: doc.approval as string,
+      expiresAt: BigInt(doc.expiresAt as string),
+    },
+  });
+  return { signer: privateKeyToAccount(key).address, signature, ...doc };
+}
+
+/** Adds the buyer's signature over the arrived document's body. */
+function signedArrived(body: Record<string, CanonicalValue>): Record<string, CanonicalValue> {
+  const buyerSignature = signTyped(BUYER_KEY, {
+    domain: APPROVAL_DOMAIN,
+    types: REPORT_TYPES,
+    primaryType: 'RecourseArrived',
+    message: { orderId: body.orderId as Hex, bodyHash: recordHash(canonicalBytes(body)) },
+  });
+  return { ...body, buyerSigner: BUYER_EVM, buyerSignature };
+}
 
 export class FakeClock implements Clock {
   constructor(public ms: number) {}
@@ -97,14 +156,29 @@ const KEYS = ['asked', 'shown', 'approval', 'ordered', 'packed', 'arrived'] as c
 
 export const ATTRS = { brand: 'acme', size: 'm', colour: 'red', quantity: '1', price: '20', merchant: 'northwind' };
 
-/** A record document of the kind, agreeing with ATTRS unless `attrs` says otherwise. */
+/**
+ * A record document of the kind, agreeing with ATTRS unless `attrs` says otherwise. Approval and
+ * arrived documents are signed over their final fields (after `extra`) by the fixture buyer, or
+ * the fixture agent for a mandate approval; `extra` may set the signature fields to break them.
+ */
 export function recordDoc(kind: RecordKind, orderId: Hex, attrs: Record<string, string> = ATTRS, extra: Record<string, CanonicalValue> = {}): Uint8Array {
   const base: Record<string, CanonicalValue> = { v: '1', kind: KEYS[kind], orderId };
-  if (kind === 2) Object.assign(base, { approval: 'approved', approvalBasis: 'buyer' });
-  else base.attrs = attrs;
+  if (kind === 2) {
+    Object.assign(base, { approval: 'approved', approvalBasis: 'buyer', textHash: TEXT_HASH, amount: '20000000', payTo: '9.9.2000', expiresAt: '1700000600' });
+  } else base.attrs = attrs;
   if (kind === 1) base.changes = [];
   if (kind === 3) base.x402TxId = 'settlement-1';
-  return canonicalBytes({ ...base, ...extra });
+  if (kind === 5) base.reportedAt = '1699999900';
+  const doc = { ...base, ...extra };
+  if (kind === 2) return canonicalBytes(signedApproval(doc));
+  if (kind === 5) {
+    const { buyerSigner, buyerSignature, ...body } = doc;
+    const signed = signedArrived(body);
+    if (buyerSigner !== undefined) signed.buyerSigner = buyerSigner;
+    if (buyerSignature !== undefined) signed.buyerSignature = buyerSignature;
+    return canonicalBytes(signed);
+  }
+  return canonicalBytes(doc);
 }
 
 export interface FakeMessage {
@@ -198,13 +272,13 @@ export class World {
     });
   }
 
-  fileClaim(orderId: Hex, refs: RecordRefs, filedAt: bigint = FILED_AT): Hex {
+  fileClaim(orderId: Hex, refs: RecordRefs, filedAt: bigint = FILED_AT, by: { shop?: Address; platform?: Address } = {}): Hex {
     const claimId = keccak256(orderId);
     const item = getAbiItem({ abi: claimsAbi, name: 'ClaimFiled' });
     const topics = encodeEventTopics({
       abi: claimsAbi,
       eventName: 'ClaimFiled',
-      args: { claimId, shop: PARTIES[1]!.evmAddress, platform: PARTIES[0]!.evmAddress },
+      args: { claimId, shop: by.shop ?? PARTIES[1]!.evmAddress, platform: by.platform ?? PARTIES[0]!.evmAddress },
     });
     const data = encodeAbiParameters(
       item.inputs.filter((i) => !('indexed' in i && i.indexed)),
@@ -504,17 +578,20 @@ export function gatewayBackedDocs(world: World, local: LocalDocStore): DocStore 
 }
 
 /** The proof layer on its own: a topic index over the fake mirror and the ports it needs. */
-export async function proofKit(rig: Rig, over: { quietS?: number } = {}) {
-  const index = TopicIndex.open({ mirror: rig.world.mirror(), topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock });
+export async function proofKit(rig: Rig, over: { quietS?: number; docWaitS?: number; parties?: Parties } = {}) {
+  const parties = over.parties ?? PARTIES;
+  const index = TopicIndex.open({ mirror: rig.world.mirror(), topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock, parties });
   const ports: ProofPorts = {
     index,
     mirror: rig.world.mirror(),
     docs: gatewayBackedDocs(rig.world, rig.docs),
-    parties: PARTIES,
+    parties,
     topicNum: 500n,
     quietS: over.quietS ?? 120,
     clock: rig.clock,
     suspects: new Map(),
+    unread: new Map(),
+    docWaitS: over.docWaitS ?? 3600,
   };
   return { index, ports };
 }
@@ -525,7 +602,7 @@ export function addLaterMessage(world: World, filedAt: bigint = FILED_AT): void 
 }
 
 export function proofClaim(orderId: Hex, refs: RecordRefs, filedAt: bigint = FILED_AT): ProofClaim {
-  return { claimId: keccak256(orderId), orderId, filedAt, refs };
+  return { claimId: keccak256(orderId), orderId, filedAt, refs, platform: PARTIES[0]!.evmAddress, shop: PARTIES[1]!.evmAddress };
 }
 
 export interface SetupOptions {

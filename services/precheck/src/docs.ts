@@ -12,8 +12,22 @@ export interface FetchOptions {
   fresh?: boolean;
 }
 
+/** The document is larger than the store reads. Its size is fixed by its CID, so this never passes. */
+export class DocTooLarge extends Error {
+  constructor(readonly cid: string, detail: string) {
+    super(`document ${cid} is too large: ${detail}`);
+    this.name = 'DocTooLarge';
+  }
+}
+
+/** Largest document a store reads: the records package's fetch limit. */
+export const DOC_FETCH_MAX_BYTES = 256 * 1024;
+
 export interface DocStore {
-  /** Bytes at the CID, or null when the store has no such document. Throws TransientError on a retryable failure. */
+  /**
+   * Bytes at the CID, or null when the store has no such document (a definite miss). Throws
+   * DocTooLarge for a document over DOC_FETCH_MAX_BYTES and TransientError on a failure that may pass.
+   */
   fetch(cid: string, options?: FetchOptions): Promise<Uint8Array | null>;
   /** Pins the exact bytes and returns their CID. */
   pin(bytes: Uint8Array): Promise<string>;
@@ -84,6 +98,7 @@ export class GatewayDocStore implements DocStore {
     this.spendRequest();
     const bytes = await getBytes(`${this.base}/ipfs/${cid}`, { fetch: this.o.fetch, timeoutMs: this.o.timeoutMs });
     if (bytes === null) return null;
+    if (bytes.length > DOC_FETCH_MAX_BYTES) throw new DocTooLarge(cid, `${bytes.length} bytes`);
     this.cache.delete(cid);
     this.cache.set(cid, bytes);
     const cap = this.o.cacheEntries ?? 256;
@@ -136,7 +151,11 @@ export class LocalDocStore implements DocStore {
   }
 }
 
-/** Fetch half of the records package's pin client: bytes checked against the CID, throws on a miss. */
+/**
+ * Fetch half of the records package's pin client: bytes checked against the CID, throws on a miss.
+ * Its errors carry a `code`: `not_found` for a definite miss, `document_too_large` for a document
+ * over its limit, anything else for a failure that may pass.
+ */
 export interface CheckedFetcher {
   fetch(cid: string): Promise<Uint8Array>;
 }
@@ -151,8 +170,10 @@ export interface PinnedDocStoreOptions {
 
 /**
  * Store over the shared pin client (the host's local content store, or Filebase through the
- * gateway). Every failure to read is a retry: a document that is not there yet, a gateway error,
- * or bytes that do not match their CID.
+ * gateway). A definite miss (`not_found`: not in the store and no gateway, a gateway 404, a CID
+ * that is not raw SHA-256) is null; a document over the fetch limit is DocTooLarge; every other
+ * failure (a gateway error, bytes that do not match their CID) is a retry. The pre-check turns a
+ * miss or a retry that lasts past its wait into a rejection.
  */
 export class PinnedDocStore implements DocStore {
   private readonly cache = new Map<string, Uint8Array>();
@@ -169,7 +190,11 @@ export class PinnedDocStore implements DocStore {
     try {
       bytes = await this.o.source.fetch(cid);
     } catch (err) {
-      throw new TransientError(`document ${cid} not readable yet: ${err instanceof Error ? err.message : String(err)}`);
+      const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
+      const message = err instanceof Error ? err.message : String(err);
+      if (code === 'not_found') return null;
+      if (code === 'document_too_large') throw new DocTooLarge(cid, message);
+      throw new TransientError(`document ${cid} not readable yet: ${message}`);
     }
     this.cache.delete(cid);
     this.cache.set(cid, bytes);

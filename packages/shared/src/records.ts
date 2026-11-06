@@ -67,6 +67,12 @@ export interface RecordRefs {
   hashes: readonly [Hex, Hex, Hex, Hex, Hex, Hex];
 }
 
+/**
+ * Largest record document, in bytes. The writer refuses a larger one and the pre-check rejects
+ * one, so all six records of an order always fit in one court evidence string.
+ */
+export const RECORD_DOC_MAX_BYTES = 1536;
+
 export const ZERO_HASH: Hex = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 export function emptyRecordRefs(topicNum: bigint): RecordRefs {
