@@ -415,9 +415,11 @@ The base is `filedAt` for a Filed claim and `preCheckedAt` for a Contested or At
 PreChecked claim never expires; it closes uncontested after its window.
 
 **Stuck**: the latest message on either leg is `Failure`, or is `Untouched` and now > `sentAt` +
-`stuckAfter`; or the case is `Stale`; or the case is `Received` at or after `receivedAt` +
-`caseDeadline`, or `RefilePending` at or after `ruledAt` + `caseDeadline`, or either of them at or
-after `CaseView.expiresAt` when known (it can no longer open); or the claim can expire on Hedera.
+`stuckAfter`; or the case is `Stale`; or the case is `Received` or `RefilePending` at or after its
+`openBy` (it can no longer open); or the claim can expire on Hedera. `openBy` is
+`CaseView.expiresAt` − `caseDeadline` when `expiresAt` is known, else `receivedAt` (for
+`RefilePending`, `ruledAt`) + `caseDeadline`. Before `openBy` a case that waits on a full cap or a
+short fee pool is not stuck.
 
 | Order | Condition | statusKey | nextActor → nextCall | deadline |
 |---|---|---|---|---|
@@ -429,15 +431,15 @@ after `CaseView.expiresAt` when known (it can no longer open); or the claim can 
 | 5a | Closed and undrawn | `closed_undrawn` | shop → `withdrawCredit` (refund) | – |
 | 6 | Closed | `closed_uncontested` | shop → `withdrawCredit` | – |
 | 7 | AtCourt and stuck | `stuck` | anyone → `expireClaim` (past the timeout or case dead; it succeeds only after the deadline), else `relayRuling` / `manualExecute` (return leg), else `resend` / `manualExecute` (outbound leg) | `preCheckedAt` + `claimTimeout` |
-| 8 | AtCourt and (case RefilePending or case attempts = 2) | `refused_once` | anyone → `refile` (RefilePending; deadline `ruledAt` + `caseDeadline`), else court | – |
-| 9 | AtCourt | `at_court` | none (case not yet received); keeper → `openCase` (Received); court (Opened); keeper → `relayRuling` (case Ruled); none (Relayed) | when Received, `receivedAt` + `caseDeadline` or `expiresAt` if earlier (row 8's refile deadline likewise) |
+| 8 | AtCourt and (case RefilePending or case attempts = 2) | `refused_once` | anyone → `refile` (RefilePending; deadline `openBy`), else court | – |
+| 9 | AtCourt | `at_court` | none (case not yet received); keeper → `openCase` (Received); court (Opened); keeper → `relayRuling` (case Ruled); none (Relayed) | when Received, `openBy`: `expiresAt` − `caseDeadline`, or `receivedAt` + `caseDeadline` while `expiresAt` is unknown (row 8's refile deadline likewise, from `ruledAt`) |
 | 10 | Contested | `contested` | anyone → `sendToCourt`; once it can expire, anyone → `expireClaim` | `preCheckedAt` + `claimTimeout` (before expiry) |
 | 11 | PreChecked and now > `preCheckedAt` + `contestWindow` | `window_lapsed` | anyone → `closeUncontested` | – |
 | 12 | PreChecked, answer 0 | `no_finding` | shop → `contest` | `preCheckedAt` + `contestWindow` |
 | 13 | PreChecked | `finding_made` | platform (answer 1), else shop → `contest` | `preCheckedAt` + `contestWindow` |
 | 14 | Filed | `filed` | `preCheckSigner` → `recordPreCheck`; once it can expire, anyone → `expireClaim` | `filedAt` + `claimTimeout` (before expiry) |
 
-Deadlines are inclusive (the action is still open at that second), except `caseDeadline` ones,
+Deadlines are inclusive (the action is still open at that second), except `openBy` ones,
 which are exclusive. A Settled claim after ruling 0 twice with an answer shows `settled`.
 
 `StatusKey` (15): `filed`, `finding_made`, `no_finding`, `window_lapsed`, `closed_uncontested`,
@@ -675,11 +677,17 @@ list.
   views and never reverts `EarlierClaimOpen`.
 - Keeper on a refused payout: `EarlierClaimOpen` on `closeUncontested` or `settle` is a wait, not
   a failure. It is not counted against the row's tries, never holds the claim, and raises no
-  `close_late`, `settle_late` or `settle_failed`. The keeper reads `oldestOpenClaimOf(platform)`
-  every 2 minutes and sends again on the tick that sees the named claim end (or, without the view,
-  at the row's retry interval). If the wait outlasts the earlier claim's own timeout (its
-  `claimTimeout` after its pre-check, or after filing) by 15 minutes, it raises `payout_waiting`
-  once, with the earlier claim id (`detail.earlierClaimId`), `endsBy` and `waitingSince`.
+  `close_late`, `settle_late` or `settle_failed`. The call is still tried at the row's retry
+  interval (2 minutes for a close, 5 for a settle), since a top-up or another claim ending can
+  raise `availableTo` before the earlier claim ends; a refusal is only the sender's simulation. The
+  keeper also reads `oldestOpenClaimOf(platform)` every 2 minutes and sends at once on the tick
+  that sees the named claim end. Anyone can end the earlier claim by a second its status gives: a
+  Filed one `claimTimeout` after filing, a Contested or AtCourt one `claimTimeout` after its
+  pre-check, a PreChecked one once its `contestWindow` has passed, a Ruled one at once (from its
+  `RulingReceived`, or from the start of the wait when the keeper has not seen it), each by that
+  claim's own terms. If the wait outlasts that second by 15 minutes, the keeper raises
+  `payout_waiting` once, with the earlier claim id (`detail.earlierClaimId`), `endsBy` (that
+  second) and `waitingSince`.
 - `deployments/hedera.json` top-level keys: `contracts {claims, vault}` (each `{address, id}`),
   `deployOrder`, `startTimestamp`, `associationTx`, `mode`, `params {preLock, locked}`,
   `extraArgs`, `sizes`, `gas`, `dpTx`, `sourcify`. ABIs in `deployments/abi/RecourseClaims.json`
@@ -705,12 +713,17 @@ list.
   `caseDeadline` as well as at `expiresAt`; its ABI is the same. The keeper applies `openBy` to
   both: a call the old contract takes after its own deadline only marks the case Stale and spends
   nothing, and the keeper never opens a round with less than one court round plus an hour left
-  before `expiresAt` on either.
-- Keeper on opening: it sends `openCase` or `refile` only before `openBy`. It waits for the
-  evidence until `openBy` − 15 min or 6,300 s after `receivedAt` (or `ruledAt`), whichever is
+  before `expiresAt` on either. `deriveStatus` (section 4) uses `openBy` too, so on the old
+  contract a Received case past its own deadline reads `at_court` until a call marks it Stale.
+- Keeper on opening: it sends `openCase` or `refile` only up to its last second, the earlier of
+  `openBy` and `expiresAt` − (one court round + 1 h); court 8's round is 8,100 s, so that is
+  `expiresAt` − 11,700 s, 900 s before `openBy` with `caseDeadline` 10,800. From then on it raises
+  `claim_stale` once and the case goes stale at `expiresAt`. It waits for the evidence until 15
+  minutes before that last second or 6,300 s after `receivedAt` (or `ruledAt`), whichever is
   first, then opens without it. A short fee pool or a full cap (read before the call, or as
   `FeePoolLow` / `CapReached` from it) is a wait: not counted, no hold, one `fee_pool_low` or
-  `open_cases_near_cap` per attempt, and the call goes again every 2 minutes until `openBy`.
+  `open_cases_near_cap` per attempt (`detail.lastOpen` is that last second), and the call goes
+  again every 2 minutes until it.
 - Expiry: `expiresAt = filedAt + claimTimeout`, set when the claim is received. `claimTimeout` is
   Hedera's locked value less a relay budget (`CaseTimeouts.RELAY_BUDGET`, 7,200 s): 64,800 −
   7,200 = 57,600 s, fixed at deploy (constructor's 9th argument `claimTimeout_`, non-zero; the
