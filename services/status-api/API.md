@@ -137,12 +137,18 @@ Hedera transfer for it with its own key and sends the same request with `PAYMENT
 1. `ops/units/web-server.mjs` forwards only `accept` today, so a POST reaches the status API without its
    type: forward `content-type` and `content-length` on `/api`, send its own 429 and 502 in the error shape
    (`rate_limited`; `upstream_unavailable` with upstream `status_api`), and every action must answer inside its
-   15-second upstream timeout.
-2. The status API answers 405 to anything but GET today: take POST on `/v1/actions/*` with a 64 KB JSON
-   limit, add POST and `content-type` to the CORS reply, and use the error shape on every `/v1` answer.
-3. Window and timeout math comes from `claimTermsOf(claimId)`, including the claim's `contest.windowEndsAt`.
-4. `SHOP_URL` (new, optional, default `http://127.0.0.1:8720`) for orderId-only fileClaim; without the shop,
-   that path answers `upstream_unavailable` and nonce plus platform still work.
+   15-second upstream timeout. Until it forwards them, the status API reads an action body as JSON whatever
+   its type, and every client behind it shares one rate limit.
+2. The status API takes POST on `/v1/actions/*` with a 64 KB JSON limit, adds POST and `content-type` to the
+   CORS reply on `/v1`, and uses the error shape on every `/v1` answer. Actions are limited per client
+   (`cf-connecting-ip` when the request comes from the local proxy): 30 a minute with a burst of 10, at most
+   4 building at once, each answering within 12 seconds. Bodies are closed, so no key can be sent.
+3. Window and timeout math comes from `claimTermsOf(claimId)`, including the claim's `contest.windowEndsAt`
+   on `/v1/claims/{claimId}` and `/claims/{claimId}`; until a claim's terms are read, the current parameters
+   stand in.
+4. `SHOP_URL` (optional, default `http://127.0.0.1:8720`) for orderId-only fileClaim; without the shop,
+   that path answers `upstream_unavailable` (upstream `shop`) and nonce plus platform still work. Action
+   simulation reads Arbitrum through `ARB_RPC_URL`.
 5. The unversioned routes (`/claims`, `/params`, …) keep their shapes and `{ "error": code }` until the web
    app reads `/v1`; they are not part of this contract.
 

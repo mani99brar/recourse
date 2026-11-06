@@ -11,6 +11,8 @@ import { harness } from './helpers/service.js';
 
 const AGENT_ACCOUNT = '0.0.1002';
 const SHOP_ACCOUNT = '0.0.2001';
+/** The second shop in the test party map writes its own records from this account. */
+const SHOP2_ACCOUNT = '0.0.2002';
 
 function docFor(kind: number, orderId: string) {
   return canonicalBytes({ v: '1', kind: RECORD_KEYS[kind]!, orderId, attrs: { brand: 'Sample', price: '10.00' } } as never);
@@ -152,6 +154,27 @@ describe('record checks', () => {
     only.m.topics.get(TOPIC)!.push({ seq: 7, ts: '1700000001.000000000', payer: '0.0.9999', body: encodeRecordMsg({ cid: fcid, hash: fh, kind: 4, orderId: only.b.orderId }) });
     await pollHcs(only.store, { fetch: only.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 }, TOPIC);
     expect((await only.h.svc.recordsOfOrder(only.b.orderId)).records[4]).toMatchObject({ seq: 7, payerOk: false, held: false });
+  });
+
+  it("another shop's writer never counts for this order's record, though it writes for its own shop", async () => {
+    // The claim's refs name a Packed message paid by the second shop's writer.
+    const s = await setup({ payerOverride: { 4: SHOP2_ACCOUNT } });
+    const d = await s.h.svc.claimDetail(s.b.claimId);
+    expect(d.records[4]).toMatchObject({ seq: 5, payer: SHOP2_ACCOUNT, payerOk: false, held: false, doc: null });
+    expect(d.records[3]).toMatchObject({ payerOk: true, held: true });
+    // By order id: the other shop posts first, the order's own shop later; the own shop's counts.
+    const o = await setup({ skipKind: 4 }, { refs: false });
+    o.m.topics.get(TOPIC)!.push({ seq: 7, ts: '1700000001.000000000', payer: SHOP2_ACCOUNT, body: encodeRecordMsg({ cid: o.cids[4]!, hash: o.hashes[4]!, kind: 4, orderId: o.b.orderId }) });
+    o.m.topics.get(TOPIC)!.push({ seq: 8, ts: '1700000002.000000000', payer: SHOP_ACCOUNT, body: encodeRecordMsg({ cid: o.cids[4]!, hash: o.hashes[4]!, kind: 4, orderId: o.b.orderId }) });
+    await pollHcs(o.store, { fetch: o.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 }, TOPIC);
+    expect((await o.h.svc.recordsOfOrder(o.b.orderId)).records[4]).toMatchObject({ seq: 8, payer: SHOP_ACCOUNT, payerOk: true, held: true });
+    // An order no claim names yet: any shop's writer still counts.
+    const unfiled = ('0x' + '6b'.repeat(32)) as `0x${string}`;
+    o.m.topics.get(TOPIC)!.push({ seq: 9, ts: '1700000003.000000000', payer: SHOP2_ACCOUNT, body: encodeRecordMsg({ cid: o.cids[4]!, hash: o.hashes[4]!, kind: 4, orderId: unfiled }) });
+    await pollHcs(o.store, { fetch: o.fetch, baseUrl: 'http://mirror.test', timeoutMs: 1000, nowS: () => 1_700_000_100 }, TOPIC);
+    const free = await o.h.svc.recordsOfOrder(unfiled);
+    expect(free.claimId).toBeNull();
+    expect(free.records[4]).toMatchObject({ seq: 9, payerOk: true });
   });
 
   it('keeps messages from non-writers only up to a cap, counting the rest; writers are always kept', async () => {

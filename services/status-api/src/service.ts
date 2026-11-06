@@ -9,10 +9,12 @@ import {
   deriveStatus,
   externalIdUint,
   hcsWritersFor,
+  orderWritersFor,
   partyByAddress,
   partiesByRole,
   sideOf,
   type Answer,
+  type OrderParties,
   type Parties,
   type Party,
   type StatusKey,
@@ -32,6 +34,7 @@ import {
   type FoldedClaim,
   type Money,
 } from './join.js';
+import type { ClaimTerms } from './chain.js';
 import { TtlCache, type CaseParams, type ClaimsParams, type ConfigLocks, type PartyViews, type Reader, type VaultParams } from './live.js';
 import type { Store } from './store.js';
 import type { HcsRecord, IndexedEvent, SourceName } from './types.js';
@@ -98,6 +101,9 @@ export class StatusService {
   private lastGood: LiveParamBundle | null = null;
   private locks: { flags: ConfigLocks | null; at: number; pending: Promise<void> | null } = { flags: null, at: -Infinity, pending: null };
   private hcsOrder: { size: number; map: Map<string, HcsRecord[]> } = { size: -1, map: new Map() };
+  /** Claim terms by claim id: fixed at filing, so kept for good once read. */
+  private terms = new Map<string, ClaimTerms>();
+  private termsTried = new Map<string, number>();
 
   constructor(readonly d: ServiceDeps) {
     this.params$ = new TtlCache(d.cfg.viewCacheMs);
@@ -236,7 +242,43 @@ export class StatusService {
     return ps ? (partyByAddress(ps, a)?.displayName ?? null) : null;
   }
 
-  private statusOf(c: FoldedClaim, lp: LiveParamBundle) {
+  /**
+   * Reads each claim's own terms (contest window, timeout, handling; fixed at filing) once, at most
+   * 20 a call and waiting at most `waitMs`; slower reads finish in the background. A failed read is
+   * tried again after a minute; until a claim's terms are known, the current parameters stand in.
+   */
+  async loadTerms(ids: readonly string[], waitMs = 2_000): Promise<void> {
+    const r = this.d.reader;
+    if (!r) return;
+    const now = this.d.nowS();
+    const todo = ids.filter((id) => !this.terms.has(id) && now - (this.termsTried.get(id) ?? -Infinity) >= 60).slice(0, 20);
+    if (todo.length === 0) return;
+    for (const id of todo) this.termsTried.set(id, now);
+    const all = Promise.all(
+      todo.map(async (id) => {
+        try {
+          const t = await r.claimTerms(id as Hex);
+          if (t.contestWindow > 0n && t.claimTimeout > 0n) this.terms.set(id, t);
+        } catch {
+          // read again later; the current parameters stand in meanwhile
+        }
+      }),
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([all, new Promise((resolve) => (timer = setTimeout(resolve, waitMs)))]);
+    clearTimeout(timer);
+  }
+
+  /** The parameters one claim runs under: its own contest window, timeout and handling once read. */
+  private paramsFor(lp: LiveParamBundle, claimId: string): LiveParamBundle {
+    const t = this.terms.get(claimId);
+    if (!t) return lp;
+    // A fixed handling H: handlingOf(basket) = min(H + 0, H) = H.
+    return { ...lp, claims: { ...lp.claims, contestWindow: t.contestWindow, claimTimeout: t.claimTimeout, handlingBase: t.handling, handlingBps: 0n, handlingCap: t.handling } };
+  }
+
+  private statusOf(c: FoldedClaim, bundle: LiveParamBundle) {
+    const lp = this.paramsFor(bundle, c.claimId);
     const events = this.d.store.eventsOf(c.claimId);
     const live = this.d.store.live.get(c.claimId);
     const caseView = caseViewOf(c, events, live);
@@ -252,7 +294,8 @@ export class StatusService {
     return { status, caseView, bridge };
   }
 
-  private moneyFor(c: FoldedClaim, lp: LiveParamBundle): Money {
+  private moneyFor(c: FoldedClaim, bundle: LiveParamBundle): Money {
+    const lp = this.paramsFor(bundle, c.claimId);
     return moneyOf(
       c,
       {
@@ -297,6 +340,7 @@ export class StatusService {
 
   async claimRows(filter: { party?: Address; status?: string } = {}) {
     const lp = await this.liveParams();
+    await this.loadTerms(this.d.store.claimIds());
     const rows = [];
     for (const id of this.d.store.claimIds()) {
       const c = this.foldOf(id);
@@ -363,9 +407,15 @@ export class StatusService {
     return `${prefix}.${num}`;
   }
 
-  async recordInfo(orderId: Hex, kind: number, ref?: { topicNum: bigint; seq: bigint; hash: Hex }): Promise<RecordInfo> {
+  /**
+   * One record of an order. With `order` (the platform and shop the claim names), only that
+   * platform's or shop's own hcsWriters count as payers, as in the pre-check; without it (an order
+   * with no claim yet), a writer of any party of the role does.
+   */
+  async recordInfo(orderId: Hex, kind: number, ref?: { topicNum: bigint; seq: bigint; hash: Hex }, order?: OrderParties): Promise<RecordInfo> {
     const key = RECORD_KEYS[kind] ?? 'unknown';
     const parties = this.d.parties();
+    const writers = parties === null ? null : order ? orderWritersFor(parties, kind, order) : hcsWritersFor(parties, kind);
     const store = this.d.store;
     let msg: HcsRecord | undefined;
     // True when the topic has not been read far enough to say whether the message exists.
@@ -378,10 +428,9 @@ export class StatusService {
     }
     if (!msg && !(ref && ref.seq > 0n)) {
       // The topic has no submit key: anyone can post a well-formed record for any order. The
-      // earliest message from a configured writer of this kind counts; a stranger's is shown only
-      // when no writer's exists.
+      // earliest message from a writer of this kind (the order's own platform or shop when the
+      // claim names them) counts; anyone else's is shown only when no writer's exists.
       const cand = (this.ordersIndex().get(orderId) ?? []).filter((r) => r.kind === kind).sort((a, b) => a.seq - b.seq);
-      const writers = parties ? hcsWritersFor(parties, kind) : null;
       msg = (writers ? cand.find((r) => writers.has(r.payer)) : undefined) ?? cand[0];
       const st = store.status.hcs;
       if (!msg && this.d.cfg.recordsTopic !== '' && (st.indexedThrough === null || st.failing)) unread = true;
@@ -390,7 +439,7 @@ export class StatusService {
     if (!msg) {
       return { kind, key, seq: Number(ref?.seq ?? 0n), payer: null, payerOk: false, hash: refHash === ZERO32 ? null : refHash, cid: null, held: unread ? null : false, hashOk: null, refsMatch: false, doc: null, unread };
     }
-    const payerOk = parties !== null && hcsWritersFor(parties, kind).has(msg.payer);
+    const payerOk = writers !== null && writers.has(msg.payer);
     let hashOk: boolean | null = null;
     let doc: unknown | null = null;
     if (payerOk) {
@@ -421,9 +470,18 @@ export class StatusService {
   async recordsOfOrder(orderId: string) {
     if (!HEX32.test(orderId)) throw new ApiError(400, 'bad_id');
     const id = orderId.toLowerCase() as Hex;
+    let claimId: string | null = null;
+    let order: OrderParties | undefined;
+    for (const cid of this.d.store.claimIds()) {
+      const c = this.foldOf(cid);
+      if (c?.orderId === id) {
+        claimId = cid;
+        order = { platform: c.platform, shop: c.shop };
+        break;
+      }
+    }
     const records = [];
-    for (let k = 0; k < 6; k++) records.push(await this.recordInfo(id, k));
-    const claimId = this.d.store.claimIds().find((cid) => this.foldOf(cid)?.orderId === id) ?? null;
+    for (let k = 0; k < 6; k++) records.push(await this.recordInfo(id, k, undefined, order));
     return { orderId: id, claimId, records };
   }
 
@@ -445,13 +503,16 @@ export class StatusService {
     const c = this.foldOf(id);
     if (!c) throw new ApiError(404, 'unknown');
     const lp = await this.liveParams();
+    await this.loadTerms([id]);
     const { status, caseView, bridge } = this.statusOf(c, lp);
     const money = this.moneyFor(c, lp);
     const events = this.d.store.eventsOf(id);
     const live = this.d.store.live.get(id);
     const records = [];
     for (let k = 0; k < 6; k++) {
-      records.push(await this.recordInfo(c.orderId, k, { topicNum: c.refs.topicNum, seq: c.refs.seq[k] ?? 0n, hash: (c.refs.hashes[k] ?? ZERO32) as Hex }));
+      records.push(
+        await this.recordInfo(c.orderId, k, { topicNum: c.refs.topicNum, seq: c.refs.seq[k] ?? 0n, hash: (c.refs.hashes[k] ?? ZERO32) as Hex }, { platform: c.platform, shop: c.shop }),
+      );
     }
     const dep = this.d.deployments;
     const attemptsOpened = events.filter((e) => e.name === 'CaseOpened');
@@ -488,7 +549,7 @@ export class StatusService {
       precheck: c.preChecked
         ? { gap: c.gap, answer: c.answer, side: sideOf(c.answer as Answer), packHash: c.packHash, preCheckedAt: c.preCheckedAt, result: precheckRes, packHashOk }
         : null,
-      contest: { by: c.contestedBy, at: c.contestedAt, windowEndsAt: c.preChecked ? c.preCheckedAt + lp.claims.contestWindow : null },
+      contest: { by: c.contestedBy, at: c.contestedAt, windowEndsAt: c.preChecked ? c.preCheckedAt + this.paramsFor(lp, id).claims.contestWindow : null },
       court: {
         state: caseView ? CASE_STATES[caseView.state] ?? 'unknown' : 'none',
         attempts: caseView?.attempts ?? attemptsOpened.length,

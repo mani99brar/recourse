@@ -4,6 +4,8 @@
 import { createPublicClient, fallback, http, type Address, type Hex, type PublicClient } from 'viem';
 import { caseAbi } from './abi/case.js';
 import { claimsAbi } from './abi/claims.js';
+import { CLAIMS_ABI } from './abi/deployed.js';
+import type { ClaimTerms } from './chain.js';
 import { klerosAbi, offRampAbi } from './abi/outside.js';
 import { vaultAbi } from './abi/vault.js';
 import { foldClaim, isTerminal } from './join.js';
@@ -83,6 +85,8 @@ export interface Reader {
   locks(): Promise<ConfigLocks>;
   /** `getClaim(claimId).preCheckedAt`; 0 while the chain has no pre-check for it. */
   preCheckedAt(claimId: Hex): Promise<bigint>;
+  /** `claimTermsOf(claimId)`: the contest window, timeout and handling fixed at filing (zeros when unknown). */
+  claimTerms(claimId: Hex): Promise<ClaimTerms>;
 }
 
 /** Claims and vault `configLocked`, case `locked`. A lock is one-way: once true it stays true. */
@@ -214,6 +218,12 @@ export class ViemReader implements Reader {
       this.arb.readContract({ address: this.cfg.caseAddress, abi: caseAbi, functionName: 'locked', blockNumber }),
     ]);
     return { claims, vault, case: kase };
+  }
+
+  async claimTerms(claimId: Hex): Promise<ClaimTerms> {
+    const t = await this.hedera.readContract({ address: this.cfg.claims, abi: CLAIMS_ABI, functionName: 'claimTermsOf', args: [claimId] });
+    const v = t as { contestWindow: bigint; claimTimeout: bigint; handling: bigint };
+    return { contestWindow: BigInt(v.contestWindow), claimTimeout: BigInt(v.claimTimeout), handling: v.handling };
   }
 
   async preCheckedAt(claimId: Hex): Promise<bigint> {
