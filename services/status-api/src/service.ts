@@ -184,6 +184,7 @@ export class StatusService {
       parties: this.d.parties() !== null,
       reader: this.d.reader !== null,
       claims: this.d.store.claimIds().length,
+      documents: this.d.docs.describe(),
     };
   }
 
@@ -345,10 +346,11 @@ export class StatusService {
     let hashOk: boolean | null = null;
     let doc: unknown | null = null;
     if (payerOk) {
-      const info = await this.d.docs.get(msg.cid);
+      // Checked against the message's hash: a document that is not canonical counts as failed.
+      const info = await this.d.docs.get(msg.cid, msg.hash);
       if (info) {
-        hashOk = info.hash === msg.hash && info.canonical;
-        doc = hashOk ? info.doc : null;
+        hashOk = info.ok && info.canonical;
+        doc = info.ok && hashOk ? info.doc : null;
       }
     }
     const held = !payerOk ? false : hashOk;
@@ -422,9 +424,9 @@ export class StatusService {
     const precheckRes = c.preChecked ? await this.external<Record<string, unknown>>(`pc:${id}`, `${this.d.cfg.precheckUrl}/results/${id}`) : null;
     let packHashOk: boolean | null = null;
     const pcCid = precheckRes && typeof precheckRes.cid === 'string' ? precheckRes.cid : null;
-    if (pcCid) {
-      const info = await this.d.docs.get(pcCid);
-      packHashOk = info ? info.hash === c.packHash : null;
+    if (pcCid && HEX32.test(c.packHash) && c.packHash !== ZERO32) {
+      const info = await this.d.docs.get(pcCid, c.packHash.toLowerCase() as Hex);
+      packHashOk = info ? info.ok : null;
     }
     const dock = await this.external<Record<string, unknown>>(`dk:${id}`, `${this.d.cfg.docketUrl}/write-status/${id}`);
     const docketStatus = dock ? String(dock.writeStatus ?? 'none') : 'unreachable';

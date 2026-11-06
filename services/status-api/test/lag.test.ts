@@ -19,7 +19,7 @@ function rig() {
   const store = new Store();
   const cfg = testConfig({ recordsTopic: '', viewCacheMs: 0 });
   const deployments = testDeployments({ caseAddress: undefined });
-  const docs = new DocFetcher({ fetch: m.fetch, gatewayUrl: null, ratePerMin: 10, timeoutMs: 100 });
+  const docs = new DocFetcher({ fetch: async () => new Response(null, { status: 503 }), ipfs: null, ratePerMin: 10, timeoutMs: 100 });
   const indexer = new Indexer({ store, cfg, deployments, fetch: m.fetch, arbRpc: null, reader: null, parties: () => testParties(), docs, nowS: () => clock.now });
   const h = harness({ store, now: clock.now, reader: null, cfg: { recordsTopic: '' }, deployments: { caseAddress: undefined } });
   h.clock = clock as never;

@@ -1,3 +1,4 @@
+import { cidOfHash } from '@recourse/records';
 import { canonicalBytes, encodeRecordMsg, recordHash, RECORD_KEYS } from '@recourse/shared';
 import { describe, expect, it } from 'vitest';
 import type { FetchLike } from '../src/http.js';
@@ -21,6 +22,7 @@ interface Rig {
   fetch: FetchLike;
   hashes: `0x${string}`[];
   seqs: number[];
+  cids: string[];
 }
 
 function rig(orderId: `0x${string}`, opts: { payerOverride?: Record<number, string>; skipKind?: number } = {}): Rig {
@@ -28,12 +30,14 @@ function rig(orderId: `0x${string}`, opts: { payerOverride?: Record<number, stri
   const gateway = new Map<string, Uint8Array>();
   const hashes: `0x${string}`[] = [];
   const seqs: number[] = [];
+  const cids: string[] = [];
   const msgs = [];
   for (let k = 0; k < 6; k++) {
     const bytes = docFor(k, orderId);
     const hash = recordHash(bytes);
-    const cid = `bafysample${k}`;
+    const cid = cidOfHash(hash).toString();
     gateway.set(cid, bytes);
+    cids.push(cid);
     hashes.push(hash);
     seqs.push(k + 1);
     msgs.push({
@@ -46,13 +50,13 @@ function rig(orderId: `0x${string}`, opts: { payerOverride?: Record<number, stri
   m.topics.set(TOPIC, msgs.filter((x) => x.seq - 1 !== opts.skipKind));
   const fetch: FetchLike = async (url) => {
     if (url.startsWith('http://gateway.test/ipfs/')) {
-      const bytes = gateway.get(url.split('/ipfs/')[1]!);
+      const bytes = gateway.get(url.split('/ipfs/')[1]!.split('?')[0]!);
       if (!bytes) return { ok: false, status: 404, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) };
       return { ok: true, status: 200, json: async () => ({}), arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer };
     }
     return m.fetch(url);
   };
-  return { m, gateway, fetch, hashes, seqs };
+  return { m, gateway, fetch, hashes, seqs, cids };
 }
 
 async function setup(opts: Parameters<typeof rig>[1] = {}, claimOpts: { refs?: boolean } = { refs: true }) {
@@ -74,7 +78,7 @@ describe('record checks', () => {
     const s = await setup();
     const d = await s.h.svc.claimDetail(s.b.claimId);
     for (const rec of d.records) expect(rec).toMatchObject({ payerOk: true, hashOk: true, refsMatch: true, held: true });
-    expect(d.records[0]!.cid).toBe('bafysample0');
+    expect(d.records[0]!.cid).toBe(s.cids[0]);
   });
 
   it('never holds a record paid by the wrong account', async () => {
@@ -92,7 +96,7 @@ describe('record checks', () => {
 
   it('flags altered bytes: hashOk false and not held', async () => {
     const s = await setup();
-    s.gateway.set('bafysample2', canonicalBytes({ v: '1', kind: 'approval', orderId: s.b.orderId, approval: 'approved' } as never));
+    s.gateway.set(s.cids[2]!, canonicalBytes({ v: '1', kind: 'approval', orderId: s.b.orderId, approval: 'approved' } as never));
     const d = await s.h.svc.claimDetail(s.b.claimId);
     expect(d.records[2]).toMatchObject({ hashOk: false, held: false, doc: null });
   });

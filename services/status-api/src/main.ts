@@ -2,12 +2,13 @@
 // deployments directory or party file is reported by /health, never fatal. A malformed `usdc`
 // object in the Hedera file stops startup: the vault token is never guessed.
 
+import { ipfsOptionsFromEnv, type IpfsOptions } from '@recourse/records';
 import { readParties } from '@recourse/shared/node';
 import type { Parties } from '@recourse/shared';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { loadDeployments } from './deployments.js';
-import { realFetch } from './http.js';
+import { realFetch, safeError } from './http.js';
 import { Indexer } from './indexer.js';
 import { DocFetcher } from './ipfs.js';
 import { ViemReader, type Reader } from './live.js';
@@ -34,7 +35,15 @@ function main(): void {
   setInterval(loadParties, 30_000).unref();
 
   const nowS = () => Math.floor(Date.now() / 1000);
-  const docs = new DocFetcher({ fetch: realFetch, gatewayUrl: cfg.ipfsGatewayUrl, ratePerMin: cfg.ipfsRatePerMin, timeoutMs: cfg.sourceTimeoutMs });
+  // The same document sources as every other service: the content store on this host first
+  // (IPFS_PIN_API_URL=file://...), then IPFS_GATEWAY_URL. Neither set: records read as unknown.
+  let ipfs: IpfsOptions | null = null;
+  try {
+    ipfs = ipfsOptionsFromEnv(process.env);
+  } catch (e) {
+    console.error(`status-api: record documents cannot be fetched (${safeError(e)}); records will read as unchecked`);
+  }
+  const docs = new DocFetcher({ fetch: (u, i) => fetch(u, i), ipfs, ratePerMin: cfg.ipfsRatePerMin, timeoutMs: cfg.sourceTimeoutMs });
   const arbRpc = cfg.arbRpcUrl ? viemArbRpc(cfg.arbRpcUrl, cfg.sourceTimeoutMs) : null;
   let reader: Reader | null = null;
   if (deployments.claims && deployments.vault && deployments.caseAddress && cfg.hederaRpcUrls.length > 0 && cfg.arbRpcUrl) {

@@ -67,7 +67,7 @@ describe.skipIf(!enabled)('two local chains, one claim end to end', () => {
     });
     const cfg = testConfig({ recordsTopic: '', arbConfirmations: 0, arbLogChunk: 500, viewCacheMs: 0 });
     const clock = { now: 0 };
-    const docs = new DocFetcher({ fetch: mirror.fetch, gatewayUrl: null, ratePerMin: 1, timeoutMs: 100 });
+    const docs = new DocFetcher({ fetch: async () => new Response(null, { status: 503 }), ipfs: null, ratePerMin: 1, timeoutMs: 100 });
     const indexer = new Indexer({ store, cfg, deployments: dep, fetch: mirror.fetch, arbRpc: viemArbRpc(A!, 5000), reader, parties: () => null, docs, nowS: () => clock.now });
     const h = harness({ store, reader, cfg: { viewCacheMs: 0, recordsTopic: '' }, deployments: dep });
     (h.svc.d as { nowS: () => number }).nowS = () => clock.now;

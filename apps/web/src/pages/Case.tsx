@@ -196,7 +196,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
       </div>
       <Card title="Records" id="records">
         <p className="muted">
-          Record documents are public to anyone who has their content id. Buyer details inside them appear only as salted hashes.
+          Each record document is fetched by its content id and checked against the hash on the records topic. A record that could not be fetched yet reads as unchecked, never as verified. Buyer details inside the documents appear only as salted hashes.
         </p>
         <div className="table-wrap">
           <table>

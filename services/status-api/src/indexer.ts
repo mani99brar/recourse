@@ -109,10 +109,10 @@ export class Indexer {
     let budget = 20;
     for (const r of this.d.store.hcs.values()) {
       if (budget <= 0) break;
-      if (this.d.docs.peek(r.cid)) continue;
+      if (this.d.docs.peek(r.cid, r.hash) !== undefined) continue;
       if (!hcsWritersFor(parties, r.kind).has(r.payer)) continue;
       budget--;
-      await this.d.docs.get(r.cid);
+      await this.d.docs.get(r.cid, r.hash);
     }
   }
 

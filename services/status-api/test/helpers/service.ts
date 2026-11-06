@@ -2,7 +2,7 @@ import { PARAMS, parseParties, type Parties } from '@recourse/shared';
 import { loadConfig, type Config } from '../../src/config.js';
 import type { Deployments } from '../../src/deployments.js';
 import type { FetchLike } from '../../src/http.js';
-import { DocFetcher } from '../../src/ipfs.js';
+import { DocFetcher, type DocFetch, type DocFetcherOptions } from '../../src/ipfs.js';
 import type { Reader } from '../../src/live.js';
 import { StatusService } from '../../src/service.js';
 import { Store } from '../../src/store.js';
@@ -54,14 +54,22 @@ export interface Harness {
   reader: Reader & { calls: string[] };
 }
 
-export function harness(opts: { store?: Store; reader?: Reader | null; now?: number; fetch?: FetchLike; parties?: Parties | null; cfg?: Partial<Config>; deployments?: Partial<Deployments> } = {}): Harness {
+/** A WHATWG fetch over a test FetchLike, for the document fetcher. */
+export function docFetchOf(f: FetchLike): DocFetch {
+  return async (url, init) => {
+    const r = await f(url, init as never);
+    return new Response(r.ok ? new Uint8Array(await r.arrayBuffer()) : null, { status: r.status });
+  };
+}
+
+export function harness(opts: { store?: Store; reader?: Reader | null; now?: number; fetch?: FetchLike; parties?: Parties | null; cfg?: Partial<Config>; deployments?: Partial<Deployments>; docs?: Partial<DocFetcherOptions> } = {}): Harness {
   const store = opts.store ?? new Store();
   const clock = { now: opts.now ?? 1_700_000_100 };
   const reader = (opts.reader ?? fakeReader()) as Reader & { calls: string[] };
   const cfg = testConfig({ viewCacheMs: 0, ...opts.cfg });
   const fetch: FetchLike = opts.fetch ?? (async () => ({ ok: false, status: 503, json: async () => ({}), arrayBuffer: async () => new ArrayBuffer(0) }));
   const parties = opts.parties === undefined ? testParties() : opts.parties;
-  const docs = new DocFetcher({ fetch, gatewayUrl: 'http://gateway.test', ratePerMin: 1000, timeoutMs: 1000 });
+  const docs = new DocFetcher({ fetch: docFetchOf(fetch), ipfs: { gatewayUrl: 'http://gateway.test' }, ratePerMin: 1000, timeoutMs: 1000, ...opts.docs });
   const svc = new StatusService({
     store,
     cfg,
