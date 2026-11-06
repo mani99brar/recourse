@@ -141,7 +141,7 @@
       "asked": { "brand": "Northwind", "size": "M", "colour": "Navy", "price": "2.00" },
       "arrived": { "brand": "Northwind", "size": "S", "colour": "Navy" },
       "outcome": "claim-closes-paid",
-      "shows": "The agent's ordered record says size S though the buyer asked for M and was shown M (a staged agent-company mistake). The shop ships S, the buyer reports it, the pre-check answers 1 (agent company) at step 2a-ii, nobody contests, and the claim closes after the contest window: the shop is paid from Wren Errands' deposit and withdraws its credit."
+      "shows": "The agent's ordered record says size S though the buyer asked for M and was shown M (a staged agent-company mistake). The shop ships S, the buyer reports it, the pre-check answers 1 (agent company) at step 3 (shown differs from ordered; asked and shown agree), nobody contests, and the claim closes after the contest window: the shop is paid from Wren Errands' deposit and withdraws its credit."
     },
     {
       "id": "wren-kestrel-neither",
