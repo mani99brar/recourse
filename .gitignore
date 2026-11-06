@@ -21,3 +21,4 @@ contracts/lib/
 contracts/broadcast/*/dry-run/
 contracts/broadcast/*/*/dry-run/
 contracts/cache/
+ops/e2e/results/*/raw/
