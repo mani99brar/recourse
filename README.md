@@ -14,11 +14,13 @@ Built at ETHGlobal Mumbai, 5-7 Nov 2026. Testnets only. All shop and agent-compa
 2. [One claim, end to end](#one-claim-end-to-end)
 3. [How each technology is used](#how-each-technology-is-used)
 4. [Repository layout](#repository-layout)
-5. [Run the tests](#run-the-tests)
-6. [Owner powers and spend paths](#owner-powers-and-spend-paths)
-7. [What is live and what is not](#what-is-live-and-what-is-not)
-8. [Deployed addresses and transactions](#deployed-addresses-and-transactions)
-9. [Disclosures](#disclosures)
+5. [Setup and tests](#setup-and-tests) (full guide: [docs/setup.md](docs/setup.md))
+6. [Open-source libraries](#open-source-libraries)
+7. [Owner powers and spend paths](#owner-powers-and-spend-paths)
+8. [What is live and what is not](#what-is-live-and-what-is-not)
+9. [Deployed addresses and transactions](#deployed-addresses-and-transactions)
+10. [Known limits](#known-limits)
+11. [Disclosures](#disclosures)
 
 ## Architecture
 
@@ -127,29 +129,67 @@ Other parts: a status API and web app (case status, filing, docket), and an inta
 | `arkiv/` | Arkiv usage notes: schema, query, friction, reach |
 | `deployments/` | Addresses, ABIs and the wiring record per chain |
 | `ops/` | Funding, wiring, service units, checks and the secret scan; `ops/workflows/` holds each area's AI-use notes |
-| `docs/` | `spec/interfaces.md` (the contract between the parts), `decisions.md`, `checks.md`, `keys.md`, `ai-use.md` |
+| `docs/` | `spec/interfaces.md` (the contract between the parts), `setup.md`, `runbook.md`, `decisions.md`, `checks.md`, `keys.md`, `ai-use.md` |
 
-## Run the tests
+## Setup and tests
 
-Needs Node 22 or newer, pnpm, and Foundry. Close other heavy processes first; the full suite uses a few hundred MB.
+The full instructions, every settings name and the testnet procedure are in [docs/setup.md](docs/setup.md).
+
+Needs Node.js 22.12 or newer (`engines` in `package.json`), pnpm 12.8.1 (`packageManager` in `package.json`; `corepack enable` provides it), Foundry (`forge`, `cast`, `anvil`; the contracts pin solc 0.8.37 in `contracts/foundry.toml`), and bash, `jq`, `python3` and `flock` for the scripts. Close other heavy processes first; the tests run one package at a time and use a few hundred MB.
 
 ```
+corepack enable
 pnpm install --frozen-lockfile
-pnpm typecheck                       # every package, one at a time
-pnpm test                            # TypeScript tests, one package at a time
-cd contracts && forge test --jobs 1  # Solidity unit, fuzz and invariant tests
+pnpm typecheck                              # every package, one at a time
+pnpm test                                   # TypeScript tests, one package at a time
+pnpm --filter @recourse/keeper test         # or a single package
+pnpm --filter @recourse/web build           # the web app; the services run through tsx and have no build step
+cd contracts && forge build && forge test --jobs 1   # Solidity unit, fuzz and invariant tests
 ```
 
-Local runs against throwaway anvil nodes (no testnet is touched):
+Local runs, with nothing on a public network:
 
 ```
-pnpm --filter ./services/keeper test:anvil          # the keeper on two anvils with a local CCIP relay
+pnpm --filter @recourse/agent local-demo                 # one whole order on this machine, from the records to a filed claim
+pnpm --filter ./services/keeper test:anvil               # the keeper on two anvils with a local CCIP relay
 bash contracts/script/hedera/hedera.sh rehearse <port>   # Hedera deploy-to-lock on one anvil
-bash ops/wire/rehearse.sh                           # both deploys and every wiring step on two anvils
-bash ops/units/install.sh --verify                  # validates the service unit files
+bash ops/wire/rehearse.sh                                # both deploys and every wiring step on two anvils
+bash ops/units/install.sh --verify                       # validates the service unit files
 ```
 
-The local runs use mock HTS, a mock arbitrator and the CCIP local simulator. They write only `*.local.json` files, which are git-ignored.
+The local runs use a mock USDC, a mock arbitrator and the CCIP local simulator; `local-demo` also uses an in-memory HCS topic and a simulated facilitator, so no money moves. They write only `*.local.json` files, which are git-ignored.
+
+On the testnets: settings go in `~/.config/recourse/recourse.env` (names in [.env.example](.env.example); values never in git) and each role's key in its own Foundry keystore ([docs/keys.md](docs/keys.md)). The contracts are deployed and wired by `contracts/script/hedera/hedera.sh`, `contracts/script/arbitrum/deploy.sh` and the steps in `ops/wire/`, each a dry run until given `--broadcast` or `--send`, and the services run as systemd user units (`bash ops/units/install.sh --install`, then `bash ops/units/ctl.sh start`; see [docs/runbook.md](docs/runbook.md)). Every service reads the contract addresses from `deployments/hedera.json` and `deployments/arbitrum.json`.
+
+## Open-source libraries
+
+Read from the `package.json` files and `contracts/remappings.txt`; the versions are the pinned ones.
+
+| Library | Version | Licence | Used for |
+|---|---|---|---|
+| viem | 2.57.8 | MIT | every contract read and write from TypeScript, on both chains |
+| @hiero-ledger/sdk (the Hedera SDK) | 2.85.0 | Apache-2.0 | HCS record messages, Hedera transaction signing, the shop's self-hosted facilitator |
+| @x402/core, @x402/hedera, @x402/express, @x402/fetch | 2.28.0 | Apache-2.0 | x402 `exact` payments on `hedera:testnet`: the shop's paid endpoint and the agent's paying client |
+| @kleros/kleros-sdk | 2.4.0 | MIT | checking the Kleros dispute template (`packages/court`) |
+| @kleros/kleros-v2-contracts | 0.12.0 | MIT | the arbitrator, arbitrable and evidence interfaces `RecourseCase` uses |
+| @chainlink/contracts-ccip | 2.0.0 | BUSL-1.1 for the package; the three files imported (`Client.sol`, `IRouterClient.sol`, `CCIPReceiver.sol`) are MIT | CCIP send and receive in `RecourseClaims` and `RecourseCase` |
+| @chainlink/local | 0.3.1 | MIT for the package; its `CCIPLocalSimulator.sol` is BUSL-1.1 and `LinkToken.sol` is UNLICENSED | the CCIP local simulator, in Solidity tests only |
+| @chainlink/contracts | 1.5.0 | BUSL-1.1 | only through @chainlink/local, in tests |
+| @chainlink/ccip-cli | 1.16.1 | MIT | declared as a dev tool; no script uses it |
+| @openzeppelin/contracts | 5.6.1, plus 5.3.0 and 4.8.3 for the Chainlink packages | MIT | ownership, safe ERC-20 calls, reentrancy guards, the mock token |
+| forge-std | 1.17.0 | MIT OR Apache-2.0 | Solidity tests and scripts |
+| @arkiv-network/sdk | 1.0.1 | MIT (its `LICENSE.md`; its `package.json` names none) | the docket's Arkiv store and the web app's Arkiv reads |
+| @aws-sdk/client-s3 | 3.1155.0 | Apache-2.0 | Filebase pinning through its S3-compatible API (not configured on the demo) |
+| @ipld/car, multiformats | 5.4.7, 14.0.5 | Apache-2.0 OR MIT | CIDs and CAR packing for record documents |
+| express | 5.3.0 | MIT | the services' HTTP servers |
+| zod | 3.25.76 | MIT | the shop's order validation |
+| react, react-dom | 19.3.1 | MIT | the web app |
+| vite, @vitejs/plugin-react | 8.3.5, 6.1.2 | MIT | the web app's build and dev server |
+| vitest | 5.0.5 | MIT | TypeScript tests |
+| typescript | 7.0.2 | Apache-2.0 | type checking |
+| tsx | 4.23.15 | MIT | runs the TypeScript services and scripts without a build step |
+
+The `@types/*` packages (MIT) supply type definitions only.
 
 ## Owner powers and spend paths
 
@@ -245,6 +285,201 @@ Taken from `deployments/`, `deployments/wiring.json`, `packages/records/h0-ids.j
 <!-- BUILD: payout case: add its rows inside the table above (x402 payment, the six records, fileClaim, recordPreCheck, closeUncontested or settle, withdrawCredit), each with its hash and explorer link. -->
 <!-- BUILD: redeployed contracts: add the new DepositVault, RecourseClaims, MockUsdc and RecourseCase rows inside the table above (address, deploy tx, explorer), keep the old rows marked retired, and fill the "Source verification" column with the HashScan and Arbiscan verification links. -->
 <!-- BUILD: the two test runs side by side: add a "### Test runs on testnet" heading here and one table with a column per run (the same command against the old and the redeployed contracts: command, order id, claim id, each step's tx hash, result). -->
+
+## Known limits
+
+A code review of commit `f05649d` (6 Nov 2026, by four AI models, with every finding then checked against the code) confirmed 157 findings. Each has a review finding id, R01 to R157, and a severity: P0 loses or locks funds or forges a ruling, P1 gives a wrong outcome or breaks a flow, P2 is a robustness gap, P3 is minor. There was no P0. The tables below list every P2 and P3 finding that was still present, or only partly fixed, when the findings were checked against the code at about 15:00 UTC that day: 112 of them (38 P2, 74 P3), grouped by part of the system, each with what can go wrong and the planned fix. Fixes made after that check are not reflected here yet.
+
+Terms used below: the *mirror node* is Hedera's public REST read API; a service's *journal* is its append-only state file, and its *cursors* record how far it has read each source; the *party map* (`deployments/parties.json`) names each party's accounts and which records each may write; the *read-back* (`ops/wire/00-readback.sh`) reads every deployed setting and compares it with the deployment files; the *lock* is each contract's one-way `lockConfig`; a *facilitator* is the x402 service that verifies and settles a payment.
+
+<!-- BUILD: drop the rows fixed by later commits, and add any P1 finding still open after the redeploy. -->
+
+<details>
+<summary><strong>Contracts and their deploy scripts</strong> (9)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R31 | P2 | The Hedera lock script does not check that the peer and the pre-check signer are the recorded ones; a stale address locked in by mistake needs a full redeploy, unless the read-back (`ops/wire/00-readback.sh`) is run first. | Make the lock script compare the peer and the signer with the deployment files and refuse on a mismatch. |
+| R47 | P2 | If a platform posts a partial deposit before its required amount is first set, it reads as in good standing for the whole top-up window. | Start the top-up clock only for a platform that was in good standing before (needs a contract redeploy). |
+| R48 | P2 | If the pre-check signer is down for the claim timeout (18 h), a filed claim can be expired with its fee refunded, and that order can never be claimed again. | Let a claim that expired before its pre-check be filed again, or let only the shop expire it (needs a contract redeploy). |
+| R69 | P3 | Partly fixed. `hedera.sh check` passes a deployment whose signer, relayer, pool or peer is a wrong but non-zero address, for example a claims contract still pointed at the retired case contract. | Compare the signer, relayer, pool and peer with the party map and the Arbitrum deployment file. |
+| R70 | P3 | With a wrong RPC URL, the CCIP ping scripts can deploy or fund a ping on the wrong network and record it as the expected chain. | Check the RPC's chain id before a ping is deployed or funded. |
+| R138 | P3 | A mistyped pool, signer or relayer address is deployed as given; the pool is fixed in the vault, so a typo there needs a redeploy (the read-back catches it only after the deploy). | Compare the three addresses with the party map before deploying. |
+| R139 | P3 | If the locked `gasClaimToCourt` value in the deploy parameters is ever changed from the pre-lock value, the lock will not apply it and the check script will still expect the old one. | Have the lock apply the locked value and the check read it, or drop the unused value. |
+| R140 | P3 | In circle mode (Circle's USDC instead of the mock) the preflight can pass with 12-22 HBAR and the deploy is then refused by forge's own balance check (the current deployment uses mock mode). | Use the mock path's HBAR floor in circle mode too, or raise the minimum to 30 HBAR. |
+| R141 | P3 | If PING_OWNER is set at deploy, ping.json records the wrong owner for the ping contract. | Record the owner read back from the deployed ping contract. |
+
+</details>
+
+<details>
+<summary><strong>Keeper (the service that moves a claim between the two chains)</strong> (6)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R34 | P2 | If a Kleros nudge (a public call that moves a dispute along: passPeriod, executeRuling, draw, passPhase) goes pending and later fails, the keeper never retries it. An executeRuling stuck this way holds the claim until the operator steps in. | Keep a nudge open until its transaction succeeds, and retry it when it reverts or is dropped. |
+| R49 | P2 | A call that is accepted, then mines reverted, is retried forever and never counts toward the failure limits that hold the claim and alert the operator. | Count a mined revert like any other failure, so the hold and the alert apply. |
+| R51 | P2 | A `--dry-run` writes to the live keeper's journal and cursors and can settle its open transactions, so run it only with a copy of the state folder (`KEEPER_STATE_DIR` pointed elsewhere). | Point a dry run's journal and cursors at a copy, so it never writes to the live state. |
+| R53 | P2 | A mirror node (Hedera's public REST read API) or pre-check endpoint that sends headers and then stalls mid-body blocks the keeper's tick until the runtime's own body timeout ends it. | Keep the request timeout running until the whole body is read. |
+| R87 | P3 | If the keeper crashes between reading a bridge-wide event (a rejected CCIP message or an appeal contribution) and handling it, that event's alert is never raised. | Journal a marker after each such event is handled, and raise any unhandled alert on replay. |
+| R88 | P3 | While the parameter read fails, the keeper keeps using the last bridge mode it read. If the mode changed before the lock during such an outage, its relay calls revert and count as failures. | Forget the mode when the read fails, and send no relay call until it is read again. |
+
+</details>
+
+<details>
+<summary><strong>Pre-check, intake and docket services</strong> (12)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R13 | P2 | After a crash mid-write, or during an RPC error or indexer lag, the docket can create a second Arkiv entity for the same case or count. | Keep a write's intent until its transaction is known to have failed or is found. |
+| R21 | P2 | If pinning the reason document fails once, the case is published with no reason CID and its reviews carry an empty feedback link, permanently. | Retry the pin, and hold the case's reviews until the reason document is pinned. |
+| R22 | P2 | Once the shared ERC-8004 registry has more than 5,000 logs, a retry or restart can send a duplicate review. | Search the registry from the review's own time, and retry rather than resend when the search is cut short. |
+| R38 | P2 | A single RPC timeout during the agent-id check can skip a review permanently or turn reviews off until restart. | Treat only a contract revert as "not registered", and check again on the next pass after any other error. |
+| R56 | P2 | If the receipt wait times out after a review is broadcast, the tx hash is not recorded and a retry may send the review again. | Journal the transaction hash before waiting for its receipt, and check that receipt before sending again. |
+| R57 | P2 | If the "did it land?" lookup fails after a create whose reply was lost, the docket can create the entity a second time. | Skip that write for the pass when the lookup fails, and try again on the next. |
+| R58 | P2 | If a shop's claim names a record sequence number that does not exist yet, its pre-check retries until the claim expires, even when the record is in the index. | Reject a reference to a record written after the filing, and fall back to the indexed records. |
+| R65 | P3 | Batch draws (a Kleros option where jurors are drawn later) are not built, so the docket's handling of a case closed before any juror was drawn is unused code. | Remove it, or wire it in when batch draws are built. No effect today. |
+| R66 | P3 | Intake (the feedback tagger) answers 500 for a non-text order id, and records sent only by CID are not used unless an order id is given. | Answer 400 for a bad order id, and take the order id from a fetched document when none is given. |
+| R99 | P3 | Arkiv entities expire 182 days after creation even if they were updated later, and extension is not built. | Correct `arkiv/schema.md`, or extend an entity's life when it is updated. |
+| R100 | P3 | If two docket processes start at the same moment after a crash, both can run on one state directory. | Take over a stale lock through a separate exclusive file, so only one process wins. |
+| R102 | P3 | Intake passes a user-supplied CID string unchecked into the gateway request and the intake pack, though the document's bytes are still verified against its hash. | Accept a reference only when its CID is the one its hash gives. |
+
+</details>
+
+<details>
+<summary><strong>Shop and buying agent</strong> (13)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R24 | P2 | A shop started without its party map (`deployments/parties.json`, which names each party's accounts) accepts orders from any platform address and any payer. | Refuse to start without a party map unless a local-only setting allows it. |
+| R25 | P2 | A shop running with no records topic set takes any caller's complaint pointer for a paid order, and the real complaint is then treated as a duplicate. | Refuse complaints, or refuse to start, when no records topic is set, except in local runs. |
+| R39 | P2 | If a facilitator's (the x402 service that verifies and settles a payment) settle reply leaves out the payer, every paid order is marked payer_mismatch and refused after the buyer has already paid. | Read the payer from the signed payment when the reply leaves it out. |
+| R42 | P2 | Partly fixed. Two paid requests racing for one order can both settle; the second payment is recorded as owed back, not refused. | Check the order again just before a payment is booked, and refuse the second one. |
+| R61 | P2 | A facilitator outage that fails at verify never moves the shop to the backup facilitator, so orders fail until an operator steps in. | Count a facilitator failure at verify as well as at settle, so the shop moves to the backup. |
+| R76 | P3 | An order in flight during a facilitator switch can fail at settle and must be paid again. | Settle on the same facilitator that verified the payment. |
+| R103 | P3 | An order approved just before midnight UTC and paid after it counts toward the previous day's cap, not the new day's. | Count a payment toward the day it was signed, checked against the current day. |
+| R104 | P3 | After one payment that is never confirmed, the agent gives up on the order (pay_failed) instead of paying again once that payment is dead. | Count payments actually signed rather than wait rounds, so waiting does not use up attempts. |
+| R105 | P3 | When the shop refuses a payment the agent already signed, the order waits about 4 minutes before it is marked failed. | Check the payment once and end the order as soon as the signed transfer is dead. |
+| R106 | P3 | If the mirror node is down while `pay-once` (a script that makes one small connectivity payment) waits on a signed payment, the script can pay the connectivity check a second time on the next facilitator. | Stop with "outcome unknown" and the transaction id instead of trying the next facilitator. |
+| R107 | P3 | Re-running `pay-once` after a crash can pay the connectivity check twice. | Resolve the last signed payment in the journal before signing a new one. |
+| R108 | P3 | `live-order --send` can pay for an order and write its records, then fail at filing because the shop cannot pay the court fee. | Check the shop's balance against the court fee before the order starts. |
+| R109 | P3 | A rerun after the approval has expired can still post the asked, shown and approval records for an order that is then never paid. | Stop, writing nothing more, when the approval has expired and nothing was paid. |
+
+</details>
+
+<details>
+<summary><strong>Shared packages (records, court evidence, canonical encoding)</strong> (17)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R14 | P2 | If evidence posting fails after a test dispute is created, a rerun will not post it; it must be posted by hand. | On a rerun, post the missing evidence for the stored dispute. |
+| R26 | P2 | For a court case that can no longer proceed, the status API and Case page can offer 'end the claim' up to about 16 h before Hedera accepts it, and that transaction reverts. | Use the contract's own cut-off for a dead case, and offer "end the claim" only once Hedera accepts it. |
+| R27 | P2 | A buyer's approval does not pin offer values longer than 120 characters or ones that differ only in hidden whitespace or control characters. | Refuse offer values that are too long or that differ from their cleaned form. |
+| R28 | P2 | Two concurrent commits of different documents for the same order record in one process: the second gets the first one's commit instead of a conflict error. | Compare the document hash before reusing a commit in flight, and fail with a conflict on a mismatch. |
+| R67 | P3 | Two commands started within a few microseconds of each other can both take the journal lock on one host. | Treat an empty or invalid process id in the lock as "not written yet" and retry. |
+| R77 | P3 | Handling amounts use testnet demo values (1 USDC base, 4 USDC cap) instead of the design's 15 and 40; they are recorded only in the interfaces spec changelog. | Add a row for them to `docs/decisions.md`. |
+| R78 | P3 | The local test relay can deliver a CCIP message whose sending transaction reverted at a higher level (local runs only). | Stop the local relay from delivering a message whose sending call failed. |
+| R110 | P3 | A claim message the Arbitrum case rejected shows as 'At court' until the claim times out, hiding that no court case will open. | Show such a claim as stuck, with "expire the claim" once it can be expired. |
+| R111 | P3 | On another host or user, the default suite lock path (`SUITE_LOCK_FILE`) points at the operator's home folder, and local deploys fail with a missing-directory error. | Build the default from the current user's home and create its folder. |
+| R112 | P3 | A caller passing a sparse array would hash and pin bytes that are not JSON and that the parser rejects. | Refuse sparse arrays in the canonical encoder. |
+| R113 | P3 | Without a readable party map, a service starts writing records without checking that its account is an allowed writer, so readers may ignore every record it writes. | Warn when the writer check cannot run, and fail when the named party map is missing. |
+| R114 | P3 | If a party ever uses two writer accounts, a writer can commit a record whose slot readers already fill with the other account's message. | Check conflicts against the party's whole writer set from the party map. |
+| R115 | P3 | A lagging or failing mirror can cause a duplicate record message with the same document; readers still use the first. | Keep polling on a mirror error, and treat only a definite miss as "never landed". |
+| R117 | P3 | A party's own writer can post a zero-hash record message and then replace it with a later one, breaking first-message-wins for that slot. | Reject an all-zero hash when a record message is decoded. |
+| R118 | P3 | Gateway timeouts and network errors reach callers as raw JavaScript errors, not as the module's own "fetch failed" error. | Wrap them in the module's own error. |
+| R119 | P3 | `pin --verify` exits 0 even when a gateway does not serve the pinned document or serves different bytes; read the output line. | Exit non-zero when any gateway check fails. |
+| R121 | P3 | A registration URL from the open ERC-8004 registry can make the service download a large body (up to the 15 s timeout) before the 64 KiB limit applies. | Refuse a large declared size up front and stop reading past 64 KiB. |
+
+</details>
+
+<details>
+<summary><strong>Status API (the read API behind the web app)</strong> (20)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R11 | P2 | Partly fixed. If a live court or bridge read fails, the page keeps showing the last value it read and does not say it may be out of date. | Mark the claim as possibly out of date while the last live read failed or is too old. |
+| R12 | P2 | On an RPC that caps log ranges, court evidence for an older case may never show, and no error says why. | Read evidence logs in chunks and report a failed read as an error. |
+| R18 | P2 | The escrow figure is taken from the index and current parameters, not the vault, and a platform's page counts its shops' court fees as its own escrow. | Take the escrow from the claim's own fee and the vault, and count only a party's own claims. |
+| R19 | P2 | An Arbitrum reorg deeper than 20 blocks would leave events from the dropped blocks in the index for good. | Keep recent block hashes, detect a fork, and drop the events of dropped blocks. |
+| R20 | P2 | Switching to a new deployment or records topic on the same state directory keeps the old deployment's data and starts the new topic part-way through. | Store the deployment's identity with the index and rebuild when it changes. |
+| R35 | P2 | Partly fixed. If the case read fails after a ruling, the page can keep showing the case as open even though the ruling event is indexed. | Use the indexed events when they are further along than the live case read. |
+| R36 | P2 | Right after a resend, until the new message is read, a claim can show as stuck because of the old failed message. | Let only the newest message in each direction decide the status. |
+| R37 | P2 | Partly fixed. Unreachable record documents are retried every minute, and each retry can hold up indexing for a while. | Back off each missing document's retries and give document fetching its own time budget. |
+| R54 | P2 | A restart during the first full read of the chain serves incomplete data instead of answering 'rebuilding'. | Save the "rebuilding" state with the index and restore it on restart. |
+| R73 | P3 | Before the contracts are locked, a failing parameter read keeps the last values it got without saying so. | Flag the parameters as possibly out of date while their latest read failed. |
+| R74 | P3 | For a few seconds (about 20 Arbitrum blocks) the bridge can show a message as delivered while the case still reads as not received. | Read the message state at the same confirmed block as the other Arbitrum reads. |
+| R75 | P3 | On a fresh local chain with fewer than 20 blocks, every Arbitrum contract read fails. | Clamp the confirmed block number at zero. |
+| R89 | P3 | With no Hedera RPC set, deadlines and amounts come from built-in pre-lock defaults and only the /params page says so. | Flag the parameters whenever they come from the built-in defaults. |
+| R90 | P3 | While a ruling is on its way back to Hedera, the court shows as ruled but the ruling and the amount owed stay blank. | Show the Arbitrum ruling in its own field until Hedera records it. |
+| R91 | P3 | A finished claim whose Arbitrum case is later marked stale keeps showing the case's earlier state. | Re-read a finished claim's case at a slow pace until the case can no longer change. |
+| R92 | P3 | A finished claim with an old failed send keeps getting re-read every poll, which costs RPC calls but changes nothing shown. | Treat a finished claim as done once a message in each direction has succeeded. |
+| R94 | P3 | After a long Arbitrum outage, catching up runs as one long poll that delays the other sources, and a restart midway starts the catch-up over. | Cap the catch-up per poll and keep the cursor at the last block range read. |
+| R95 | P3 | If the mirror's blocks endpoint is down, a lagging mirror can look up to date. | Leave the mirror's position unchanged when its head cannot be read. |
+| R97 | P3 | While a shop has any credit to withdraw, every finished claim shows as waiting on it, even ones that paid nothing. | Show a claim as waiting on a withdrawal only if it credited the shop. |
+| R98 | P3 | A bridge message the other chain rejected or ignored does not appear on its claim's timeline. | Map rejected and ignored messages to their claim and show them on its timeline. |
+
+</details>
+
+<details>
+<summary><strong>Web app</strong> (17)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R32 | P2 | After moving from one claim or party to another, the page can show the previous one's figures until the new read arrives, or for good if it fails. | Clear the old figures when the page moves to another claim or party. |
+| R64 | P2 | There is no approval page: the buyer approves with the agent CLI and cannot check the rendered offer and its hash in the browser. | Add an approval page that re-renders the offer and checks its hash in the browser. |
+| R71 | P3 | If the status API is down or rebuilding, a search for a real claim says nothing matches. | Say the search could not run, instead of showing no matches. |
+| R85 | P3 | A status the web bundle does not know (API newer than the page) or a malformed reply blanks the whole site. | Show an unknown status by its raw name, and catch page errors in an error card. |
+| R142 | P3 | When the vault cannot be read, the party page says no top-up is due instead of saying it is unknown. | Say "not read" when the vault could not be read. |
+| R143 | P3 | An unresolved claim still waiting for settle shows its money step as 'did not happen'. | Treat the status as final only when no next call is due. |
+| R144 | P3 | Between sending a claim to court and the court case opening, the court card says 'Not at court.' | Say "sent to court; the court case is not opened yet". |
+| R145 | P3 | A docket entry that has given up publishing still reads 'it will be retried'. | Pass the docket's retry state through and say when it will not retry. |
+| R146 | P3 | A record found by order id is flagged 'not the one the shop referenced' even when the shop referenced no record of that kind. | Warn only when the shop referenced a record of that kind. |
+| R147 | P3 | The docket page can show 'not published yet' where the docket service itself shows a sample rate, because it ignores sample mode and z. | Read the docket's sample mode and z from its settings. |
+| R148 | P3 | The docket page reads Arkiv once when it opens; it does not refresh or retry, though it says it read 'just now'. | Re-read on an interval and show the read time. |
+| R151 | P3 | After editing the order id, the File page keeps showing the previous order's records, finding and filing form until Load is pressed again. | Clear the loaded order when its id changes, and drop replies for an old id. |
+| R153 | P3 | A web build with an empty or non-numeric `VITE_POLL_MS` polls the API back to back from every open tab. | Fall back to a 5 s interval unless the value is a number of at least 1 s. |
+| R154 | P3 | An Arkiv endpoint that keeps returning full pages makes the docket page read without end. | Cap the pages read and stop when a page repeats. |
+| R155 | P3 | Run before a build, the web secret check (which looks for secret names in the built bundle) reports clean without scanning anything. | Fail, or say the bundle was not scanned, when there is no build. |
+| R156 | P3 | The source `index.html` is checked only for five fixed names, not the secret-name patterns. | Apply the same name and pattern checks to `index.html`. |
+| R157 | P3 | Env names with a suffix after KEY or SECRET (e.g. *_KEY_ID, *_SECRET_TOKEN) pass the web secret check. | Widen the pattern to names with a suffix after KEY or SECRET. |
+
+</details>
+
+<details>
+<summary><strong>Operations scripts (funding, wiring, checks, secret scan)</strong> (18)</summary>
+
+| Id | Sev. | Limit | Plan |
+|---|---|---|---|
+| R15 | P2 | Partly fixed. Until the next read-back with `--record`, `deployments/wiring.json` still names the retired claims contract as the case contract's peer (with a note); the chain itself is correct. | Run the read-back with `--record` once; the redeploy rewrites the file anyway. |
+| R29 | P2 | The funding scripts trust the RPC env vars: a swapped or mistyped endpoint would send the deployer's HBAR/ETH on another chain where the same keys hold funds. | Check each RPC's chain id before any funding send. |
+| R30 | P2 | Partly fixed. A short (12-19 character) or punctuated secret caught by the env-assignment rule is still printed in the secret scan's output. | Redact the whole value on a matching line, and add a test for short secrets. |
+| R43 | P2 | If an RPC URL with an API key in it is set and a call fails, the check table (and `docs/checks.md`) can show the key from cast's error text. | Cut every URL in error text to its host. |
+| R80 | P3 | `02-fund-hedera-roles.sh --send` stops with a cast error if the buyer or the facilitator has no Hedera account yet. | Skip a role with no account, with a note, instead of sending. |
+| R81 | P3 | Each re-run of `03-fund-arbitrum.sh --send` moves another 0.035 ETH from the deployer to ops-arb. | Send only the shortfall up to the target balance. |
+| R83 | P3 | While a wiring, funding or check script runs, any local user can read a keyed RPC URL from the process list. | Pass the RPC URL in the environment instead of on the command line. |
+| R123 | P3 | A private key pasted as a bare 64-hex string, with no key/secret/seed word on its line, passes the secret scan. | Add a scan rule for any 64-hex value assigned to a name outside the deployment and docs files. |
+| R124 | P3 | A keyed thirdweb, tenderly, pocket or drpc RPC URL committed to the repo is not caught by the secret scan. | Add those providers' keyed URL forms and a general rule for key or token query values. |
+| R126 | P3 | With the default file permissions (umask 022), the copy of the env file (keyed URLs, key paths) is world-readable for a moment, and stays that way if the script is interrupted. | Create the copy with private permissions before writing to it. |
+| R127 | P3 | If the agent's Hedera account is missing, `--write` saves the party map with no platform writer, and the platform's records are then ignored. | Refuse to write the party map when the agent or the shop has no account, unless asked to. |
+| R130 | P3 | A deploy with a wrong CCIP chain selector, router or arbitrator passes every read-back and can be locked. | Compare the selectors, routers and arbitrator with the known testnet values in the read-back. |
+| R131 | P3 | If the lock's receipt times out after broadcast, the lock transaction is never written to `wiring.json`, and re-running the step refuses. | Take the hash before waiting for the receipt, and recover a missing lock hash from its event. |
+| R132 | P3 | A deployments file from another chain passes if a contract happens to sit at the same address on the checked chain. | Check the file's chain id against the chain being checked. |
+| R133 | P3 | Two wiring steps run at the same time can lose one step's row in wiring.json. | Take a file lock around each update of `wiring.json`. |
+| R134 | P3 | Partly fixed. Wiring step 06 can write a claims-contract gas limit below the measured Arbitrum receive cost; the next read-back catches it, and it can be reset because `setExtraArgs` stays callable. | Refuse a gas limit below the measured receive cost before sending. |
+| R135 | P3 | A required-deposit amount typed above the platform's deposit is written and then fails the standing check; `setRequired` stays callable to correct it. | Refuse an amount above the platform's deposit before sending. |
+| R136 | P3 | The wiring rehearsal uses ports 8610-8619, not the range the port plan gave it, so it could collide with other local runs. | Move it to its planned range (18730-18734) if that plan holds. |
+
+</details>
+
+### Disputed findings
+
+Four findings were checked and are disputed: the code does not do what the finding says, or the behaviour is intended and documented.
+
+| Id | Finding | Why it is disputed |
+|---|---|---|
+| R86 | `RecourseClaims` takes and holds HBAR to pay CCIP fees when LINK is short (against an early planning note that said LINK only); after the lock that HBAR can leave only as CCIP fees. | Intended and documented: `docs/decisions.md` ("CCIP fees") and the owner-powers tables above describe the HBAR path. |
+| R120 | The Kleros template check could throw on a template missing its arbitrator address or answers, instead of returning a failure. | Cannot happen: the pinned Kleros SDK (2.4.0) validates the template and throws, and `packages/court/src/validate.ts` catches that and returns a failure. |
+| R129 | The read-back unlocks five role keystores on one host to derive their addresses. | Accepted under the decision to run everything, keys included, on one host (`docs/decisions.md`, "Where code runs"); reading the keystores also catches a wrong key file. |
+| R137 | The intake and docket services listen on all network interfaces. | They do not: both bind 127.0.0.1 (`services/intake/src/main.ts`, `services/docket/src/boot.ts`); only a line in `ops/units/README.md` was stale, and it has been corrected. |
 
 ## Disclosures
 
