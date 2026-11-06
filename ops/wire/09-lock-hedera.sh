@@ -10,6 +10,13 @@
 # a pre-checked claim (finding_made, no_finding, window_lapsed), or cannot be read. Stop the shop and the agent,
 # wait for those claims to close, then lock. LOCK_IGNORE_OPEN_CLAIMS=1 skips the check (say why in the commit).
 #
+# Relay budget: after the lock neither Claims' claimTimeout nor its peer can change, so the gap between them and
+# RecourseCase's claimTimeout is permanent. The step refuses unless the case's claimTimeout is at least the relay
+# budget (CASE_RELAY_BUDGET, default 7200 s) below the locked claimTimeout (lib.sh timeout_gap): with less, a ruling
+# given just before the case's cut-off can still be in flight when anyone may expire the claim on Hedera. Redeploy
+# RecourseCase first (order.md, "Replacing a deployment"). LOCK_IGNORE_RELAY_BUDGET=1 locks anyway, with a warning.
+# A case whose claimTimeout is above the locked one is always refused. On a half lock it only warns.
+#
 # A half lock: the Lock script sends claims.setParams, vault.setParams, claims.lockConfig, vault.lockConfig in
 # that order. If the last one failed, Claims is locked and the vault is not, and the Lock script refuses to run
 # again. This step then finishes the vault alone: it checks Claims' parameters are the locked set, sets the
@@ -39,6 +46,16 @@ quiesced() { # dies unless no claim is pre-checked
   log "ok   no pre-checked claim is open (status API)"
 }
 
+relay_budget_kept() { # dies unless RecourseCase's claimTimeout leaves the relay budget below the locked one
+  local kt; kt=$(acall "$CASE" 'claimTimeout()(uint64)' | first)
+  if timeout_gap "$kt" "$(locked claimTimeout)" "the claimTimeout the lock writes (params.json locked)"; then return 0; fi
+  if [ "${LOCK_IGNORE_RELAY_BUDGET:-0}" = 1 ]; then
+    log "WARN LOCK_IGNORE_RELAY_BUDGET=1: locking with the gap above; after the lock only a new Claims, vault and case can widen it"
+    return 0
+  fi
+  die "refusing to lock: after the lock Claims' claimTimeout and peer are fixed, so the gap above would be permanent. Redeploy RecourseCase with the relay budget and repoint both peers first (order.md, Replacing a deployment), or set LOCK_IGNORE_RELAY_BUDGET=1 to lock anyway"
+}
+
 hl=$(hcall "$CLAIMS" 'configLocked()(bool)'); vl=$(hcall "$VAULT" 'configLocked()(bool)')
 log "     locked now: claims $hl, vault $vl"
 
@@ -53,6 +70,9 @@ if [ "$hl" = true ]; then
   # Half lock: Claims locked, vault not. Finish the vault.
   log "half lock: Claims is locked, the vault is not; finishing the vault"
   expect "Claims.params() is the locked set" "$(claims_params)" "$(claims_locked_set)"
+  # Claims is locked already, so this cannot change here; a short or reversed gap does not stop the vault's lock.
+  (timeout_gap "$(acall "$CASE" 'claimTimeout()(uint64)' | first)" "$(locked claimTimeout)" "Claims' locked claimTimeout") \
+    || log "WARN finishing the vault lock anyway: Claims is locked, so only new contracts can change the gap above"
   if [ "$(vault_params)" != "$(vault_locked_set)" ]; then
     log "Vault.params() is $(vault_params); setting the locked set $(vault_locked_set)"
     tx hedera deployer "$VAULT" 'setParams(uint64,uint64,uint256)' "$(locked topUpWindow)" "$(locked exitDelay)" "$(locked minDeposit)"
@@ -69,6 +89,7 @@ if [ "$hl" = true ]; then
 fi
 
 # Neither is locked: the normal path.
+relay_budget_kept
 quiesced
 if [ "$SEND" = 0 ]; then "$HSH" lock; exit 0; fi
 "$HSH" lock --broadcast

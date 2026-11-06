@@ -19,6 +19,7 @@
 #   WIRE_LOCAL=1            local rehearsal: both chains must be local, and the three file names above must
 #                           be their own *.local.json names (never hedera.local.json or arbitrum.local.json)
 #   HEDERA_LINK, ARB_LINK   LINK token addresses (default: the testnet ones; a local run reads them from the files)
+#   CASE_RELAY_BUDGET       seconds RecourseCase's claimTimeout must stay below Hedera's (default 7200, as the deploy)
 #
 # The vault's USDC is the token the Hedera file records (load_deployed sets VAULT_USDC_MODE, VAULT_USDC and
 # the rest, see ops/lib/vault-token.sh): Circle's 0.0.429274, or the testnet mock mUSDC, which has no HTS id.
@@ -132,6 +133,31 @@ lower() { tr 'A-F' 'a-f' <<<"$1"; }
 expect() { # expect <label> <got> <want>
   [ "$(lower "$2")" = "$(lower "$3")" ] || die "read-back mismatch: $1 is $2, wanted $3"
   log "ok   $1 = $2"
+}
+
+# --- claim timeouts ----------------------------------------------------------------------------------------------
+# RecourseCase stops taking rulings at filedAt + its claimTimeout; on Hedera anyone may expire the claim (and so
+# void a ruling still on its way) after preCheckedAt (filedAt if never pre-checked) + Claims' claimTimeout. So the
+# case's value must be Hedera's less at least the relay budget, the longest a final ruling takes to land
+# (contracts/script/arbitrum/CaseTimeouts.sol; the deploy's CASE_RELAY_BUDGET, default 7200 s). Equal values are
+# a race, not a match.
+RELAY_BUDGET=${CASE_RELAY_BUDGET:-7200}
+# timeout_gap <RecourseCase claimTimeout> <Hedera claimTimeout> <what the Hedera value is>
+# Prints ok and returns 0 when the gap covers the relay budget; prints WARN and returns 1 when it is short (equal
+# included); dies when the case's value is the larger.
+timeout_gap() {
+  local kt=$1 ht=$2 what=$3 gap
+  [[ $kt =~ ^[0-9]+$ ]] && [[ $ht =~ ^[0-9]+$ ]] && [[ $RELAY_BUDGET =~ ^[0-9]+$ ]] \
+    || die "claimTimeout: not a number (case '$kt', $what '$ht', relay budget '$RELAY_BUDGET')"
+  gap=$((ht - kt))
+  if [ "$gap" -lt 0 ]; then
+    die "claimTimeout: RecourseCase.claimTimeout() $kt is above $what $ht, so the case takes rulings after Hedera can already expire the claim. Redeploy RecourseCase with at most $((ht - RELAY_BUDGET)) (contracts/script/arbitrum/deploy.sh gives it Hedera's locked claimTimeout less CASE_RELAY_BUDGET); never lower the Hedera value to meet the case"
+  elif [ "$gap" -lt "$RELAY_BUDGET" ]; then
+    log "WARN claimTimeout: RecourseCase.claimTimeout() $kt is only $gap s below $what $ht, short of the relay budget $RELAY_BUDGET s: a final ruling given just before the case's cut-off can still be in flight when anyone may call expireClaim on Hedera, which voids it. To close it, redeploy RecourseCase with at most $((ht - RELAY_BUDGET)) (contracts/script/arbitrum/deploy.sh), or before the Hedera lock raise the Hedera value to at least $((kt + RELAY_BUDGET)); never lower the Hedera value to meet the case"
+    return 1
+  else
+    log "ok   claimTimeout: RecourseCase $kt is $gap s below $what $ht (relay budget $RELAY_BUDGET s)"
+  fi
 }
 
 # --- sending -----------------------------------------------------------------------------------------------------

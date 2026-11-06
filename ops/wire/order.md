@@ -56,7 +56,7 @@ Each script is run as `ops/wire/NN-name.sh` first without a flag, then with `--s
 
 | Step | Script | Signs as | What it does | Read-back |
 |---|---|---|---|---|
-| 3.0 | `00-readback.sh` with `EXPECT_PEERS=0` | none | checks the roles, owners, binding, the parameters both chains share (`claimTimeout`, `resendGap`, `maxSends`), Claims' extra args gas against the measured Arbitrum receive, the association: `Vault.usdc()` is the recorded token, `usdcAssociated()` is true and, in circle mode, the mirror lists the vault's USDC row (mock mode: no row, and none is asked for) | all `ok` |
+| 3.0 | `00-readback.sh` with `EXPECT_PEERS=0` | none | checks the roles, owners, binding, the parameters both chains share (`resendGap` and `maxSends` equal; `RecourseCase.claimTimeout()` the one `arbitrum.json` records and at least the relay budget, `CASE_RELAY_BUDGET` default 7,200 s, below both Claims' live `claimTimeout` and the `params.json` locked one; see the note under this table), Claims' extra args gas against the measured Arbitrum receive, the association: `Vault.usdc()` is the recorded token, `usdcAssociated()` is true and, in circle mode, the mirror lists the vault's USDC row (mock mode: no row, and none is asked for) | all `ok`; a `WARN claimTimeout` line is the relay-budget shortfall below |
 | 3.1 | `01-peer-hedera.sh` | deployer (owner) | `Claims.setPeer(RecourseCase)` | `Claims.peer()` equals the case address |
 | 3.2 | `02-peer-arbitrum.sh` | deployer (owner) | `RecourseCase.setPeer(Claims)` | `RecourseCase.peer()` equals the claims address |
 | 3.3 | `03-fund-claims.sh` | ops-hedera | LINK to Claims (or `fundNative()` if `feeToken()` is zero), up to `CLAIMS_LINK_TARGET` (1 LINK before the lock) | balance at or above the target |
@@ -64,6 +64,8 @@ Each script is run as `ops/wire/NN-name.sh` first without a flag, then with `--s
 | 3.5 | `05-fund-fee-pool.sh` | ops-arb | `fundFeePool()` up to `FEE_POOL_TARGET_ETH` (0.01 ETH before the lock) | `feePool()` at or above the target; contract balance covers it |
 | 3.6 | `06-set-extra-args.sh` | deployer | only if the deploy did not set the intended `extraArgs` (`EXTRA_ARGS_HEDERA`, `EXTRA_ARGS_ARBITRUM`) | `extraArgs()` equals the intended bytes on both |
 | 3.7 | `00-readback.sh --record` | none | full check, then records contracts, peers (read from both chains), extra args, LINK, fee pool and the association in `wiring.json`; rows of a replaced deployment are kept and marked `retired` | `read-back OK` |
+
+The two `claimTimeout`s are not equal by design. RecourseCase stops taking rulings at `filedAt` + its `claimTimeout`; on Hedera anyone may call `expireClaim`, which voids a ruling still on its way, after `preCheckedAt` (or `filedAt`) + Claims' `claimTimeout`. The testnet deploy (`contracts/script/arbitrum/deploy.sh`) therefore gives the case Hedera's locked `claimTimeout` less the relay budget, the longest a final ruling takes to land (64,800 − 7,200 = 57,600 s). The read-back stops when the case's value is the larger, and warns when the gap is short of the budget, equal values included: that is the case deployed now (0xd7f1…, 64,800 s, deployed before the budget existed). A RecourseCase redeploy closes it (see Replacing a deployment), or, before the Hedera lock only, a locked `claimTimeout` raised to at least the case's plus the budget (72,000 s) in `packages/shared/vectors/params.json`; never lower Claims' `claimTimeout` to meet the case. Step 6.4 refuses to lock while the gap is short.
 
 Optional, only if the trusted-relay path is taken: `11-trusted-relay.sh` (deployer, before the lock).
 
@@ -94,9 +96,9 @@ Top the balances to the lock targets first, quiesce, then lock, then read back. 
 | 6.2 | `CASE_LINK_TARGET=5 04-fund-case-link.sh` | ops-arb | | at target |
 | 6.3 | `FEE_POOL_TARGET_ETH=0.02 05-fund-fee-pool.sh` | ops-arb | | at target |
 | 6.3a | quiesce | none | stop the shop and the agent (`ctl.sh stop shop`; no agent orders) so nothing new is filed, then wait until the status API (`GET /claims`) lists no claim as `finding_made`, `no_finding` or `window_lapsed`. The lock raises `contestWindow` from 600 s to 1,800 s, and `contest` and `closeUncontested` read it live, so a claim pre-checked before the lock would get a longer window than the one everyone was shown | no pre-checked claim open |
-| 6.4 | `09-lock-hedera.sh` | deployer | refuses while the status API lists a pre-checked claim (or cannot be read; `LOCK_IGNORE_OPEN_CLAIMS=1` overrides), then `hedera.sh lock`: locked parameters, then `lockConfig` on Claims and the vault | both `configLocked()` true |
+| 6.4 | `09-lock-hedera.sh` | deployer | refuses unless `RecourseCase.claimTimeout()` is at least the relay budget below the locked `claimTimeout`, because after the lock Claims' `claimTimeout` and peer are fixed (`LOCK_IGNORE_RELAY_BUDGET=1` locks anyway, with a warning; a case value above the locked one is always refused); refuses while the status API lists a pre-checked claim (or cannot be read; `LOCK_IGNORE_OPEN_CLAIMS=1` overrides), then `hedera.sh lock`: locked parameters, then `lockConfig` on Claims and the vault | both `configLocked()` true |
 | 6.5 | `10-lock-arbitrum.sh` | deployer | `setParams` if they differ, then `RecourseCase.lockConfig()` | `locked()` true, `params()` as intended |
-| 6.6 | `EXPECT_LOCKED=1 00-readback.sh --record` | none | final check and record | `read-back OK`, all three locked |
+| 6.6 | `EXPECT_LOCKED=1 00-readback.sh --record` | none | final check and record; Claims' `claimTimeout` must now be the `params.json` locked one | `read-back OK`, all three locked |
 
 If 6.4 stops after Claims is locked and before the vault is (the Lock script sends `lockConfig` to Claims, then to the vault, and refuses to run again once either is locked), run `09-lock-hedera.sh` again: it sees the half lock, checks Claims holds the locked parameters, sets the vault's if they differ, and sends only `Vault.lockConfig()`. Run with both locked, it does nothing. Restart the shop after 6.6.
 
@@ -105,6 +107,8 @@ After the lock, `sweepLink` and the pre-lock setters are gone. `setExtraArgs`, `
 ## Replacing a deployment
 
 Before redeploying, empty the old contracts: `sweepLink` and `sweepNative` work only before the lock, `withdrawFeePool` on RecourseCase at any time, and every open claim must be settled or expired first. Then record the old addresses in `deployments/retired.json` and run this whole order again. A platform takes its deposit out of a retired vault itself, with `requestExit` and, after `exitDelay` with no open claims, `exit`; the replacement vault needs its own deposit (step 4.1).
+
+To replace RecourseCase alone (for example to give it the relay budget), before the Hedera lock: wait until no claim is `Contested` or `AtCourt`, because Claims takes rulings only from its peer and ignores one from the old case once it is repointed. Then `withdrawFeePool` and `sweepLink` the old case, deploy the new one with `contracts/script/arbitrum/deploy.sh`, record the old address in `deployments/retired.json`, and run 3.0 to 3.7 again: 01 repoints Claims, 02 sets the new case's peer, 04 and 05 fund it, and `00-readback.sh --record` marks the old case's rows `retired`. The keeper and the docket read the case address from `deployments/arbitrum.json`, so restart them after the record.
 
 ## Local rehearsal
 

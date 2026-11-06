@@ -12,7 +12,9 @@
 #   Wiring:    steps 00 to 10, dry run first and then --send, each with its read-back.
 # Own file names are used everywhere: deployments/{hedera,arbitrum,wiring}.wire-rehearsal.local.json.
 # They are deleted on exit unless KEEP=1. REHEARSE_HALF_LOCK=1 locks Claims alone before step 09, so 09 has to
-# finish a half lock (the vault) instead of running the Lock script.
+# finish a half lock (the vault) instead of running the Lock script. The local case's claimTimeout is Hedera's
+# unreduced, so the run also checks that the read-back warns about the relay budget and that 09 refuses to lock it
+# until LOCK_IGNORE_RELAY_BUDGET=1.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 ROOT=$PWD
@@ -117,7 +119,17 @@ $W/01-peer-hedera.sh --send; $W/03-fund-claims.sh --send
 $W/07-deposit.sh 5000000000 --send | tee "$TMP/07-rerun.log"
 grep -q 'nothing to deposit' "$TMP/07-rerun.log" || { echo "rehearse: a re-run of 07 deposited again" >&2; exit 1; }
 step "read-back and record before the lock"
-$W/00-readback.sh --record
+$W/00-readback.sh --record | tee "$TMP/00-record.log"
+# The local case gets Hedera's locked claimTimeout as it is (contracts/script/arbitrum/DeployLocal.s.sol), not less
+# the relay budget as the testnet deploy gives it; the read-back must say so, and 09 must refuse to lock it as it is.
+KT=$(cast call "$CASE" 'claimTimeout()(uint64)' --rpc-url "$AR" | awk '{print $1}')
+LT=$(jq -r .locked.claimTimeout packages/shared/vectors/params.json)
+SHORT=0; [ $((LT - KT)) -lt "${CASE_RELAY_BUDGET:-7200}" ] && SHORT=1
+if [ "$SHORT" = 1 ]; then
+  grep -q 'WARN claimTimeout' "$TMP/00-record.log" || { echo "rehearse: the read-back did not warn about the relay budget" >&2; exit 1; }
+else
+  grep -q 'ok   claimTimeout: RecourseCase' "$TMP/00-record.log" || { echo "rehearse: the read-back did not pass the relay budget" >&2; exit 1; }
+fi
 step "09 lock Hedera, 10 lock Arbitrum"
 if [ "${REHEARSE_HALF_LOCK:-0}" = 1 ]; then
   # A lock that died after Claims locked: set Claims' locked parameters and lock it alone, then let 09 finish.
@@ -128,12 +140,19 @@ if [ "${REHEARSE_HALF_LOCK:-0}" = 1 ]; then
     --rpc-url "$HR" --keystore "$TMP/deployer.json" --password-file "$TMP/deployer.json.pass" >/dev/null
   cast send "$HCL" 'lockConfig()' --rpc-url "$HR" --keystore "$TMP/deployer.json" --password-file "$TMP/deployer.json.pass" >/dev/null
   echo "half lock made: Claims locked, vault not"
+elif [ "$SHORT" = 1 ]; then
+  if $W/09-lock-hedera.sh > "$TMP/09-refuse.log" 2>&1 || ! grep -q 'refusing to lock' "$TMP/09-refuse.log"; then
+    cat "$TMP/09-refuse.log" >&2; echo "rehearse: 09 did not refuse a case short of the relay budget" >&2; exit 1
+  fi
+  echo "09 refused the case's claimTimeout (relay budget), as it should; locking with LOCK_IGNORE_RELAY_BUDGET=1"
+  export LOCK_IGNORE_RELAY_BUDGET=1
 fi
 $W/09-lock-hedera.sh; $W/09-lock-hedera.sh --send
 $W/09-lock-hedera.sh --send | tee "$TMP/09-rerun.log"
 grep -q 'nothing to do' "$TMP/09-rerun.log" || { echo "rehearse: a re-run of 09 did not see the lock" >&2; exit 1; }
 $W/10-lock-arbitrum.sh; $W/10-lock-arbitrum.sh --send
 step "final read-back (all locked)"
+unset LOCK_IGNORE_RELAY_BUDGET
 EXPECT_LOCKED=1 $W/00-readback.sh --record
 step "wiring file"
 jq -c '{version, contracts, peers, link, feePoolWei, lock: (.lock|keys), steps: [.steps[] | {id, chain, tx: (.tx[0:12])}]}' "$D/$WF"

@@ -2,9 +2,13 @@
 # Read-only check of the whole wiring, on both chains. Run it before the first step, after each step, and at the
 # end. It sends nothing. With --record it also writes the values it read into deployments/wiring.json
 # (contracts, peers, extraArgs, link, feePoolWei, association); it stops on the first mismatch. It also checks the
-# parameters both chains must share: Claims.params() claimTimeout, resendGap and maxSends against RecourseCase's
-# (its claimTimeout is fixed at deploy, Claims' can change until the lock), and that Claims' extra args give the
-# Arbitrum receive at least the gas measured in $ARBITRUM_FILE (gas.ccipReceive.limit). The vault's token
+# parameters the two chains share: resendGap and maxSends must be equal in Claims.params() and RecourseCase.params(),
+# and that Claims' extra args give the Arbitrum receive at least the gas measured in $ARBITRUM_FILE
+# (gas.ccipReceive.limit). claimTimeout must NOT be equal: RecourseCase's (fixed at deploy, and the one in
+# $ARBITRUM_FILE constructorArgs) must be at least the relay budget (CASE_RELAY_BUDGET, default 7200 s) below both
+# Claims' live value and the params.json locked value Claims takes at the lock. Above either it stops; short of the
+# budget (equal included) it warns, since only a RecourseCase redeploy can widen it. Once Claims is locked its
+# claimTimeout must be the params.json locked value. The vault's token
 # must be the one $HEDERA_FILE records; Circle's USDC is also checked on the mirror node, the testnet mock (no
 # HTS token, no mirror rows) by Vault.usdcAssociated() alone.
 #   EXPECT_LOCKED=1   also require configLocked()/locked() true on all three contracts (default: only print)
@@ -51,14 +55,24 @@ else
 fi
 log "     RecourseCase's extra args gas $ga (no measured Hedera receive cost on record to compare)"
 
-# Parameters the two chains must agree on. Claims.params() is (contestWindow, claimTimeout, courtFeeUsdc,
+# Parameters the two chains share. Claims.params() is (contestWindow, claimTimeout, courtFeeUsdc,
 # handlingBase, handlingBps, handlingCap, resendGap, maxSends); RecourseCase.params() is (caseDeadline,
-# maxOpenCases, resendGap, maxSends) and its claimTimeout() is immutable.
+# maxOpenCases, resendGap, maxSends) and its claimTimeout() is immutable. resendGap and maxSends are equal;
+# claimTimeout is not (see the header).
 hp=$(hcall "$CLAIMS" 'params()((uint64,uint64,uint256,uint256,uint16,uint256,uint64,uint8))' | sed -E 's/\[[^]]*\]//g; s/[() ]//g')
 [ "$(awk -F, '{print NF}' <<<"$hp")" = 8 ] || die "Claims.params() did not decode to 8 fields: $hp"
 ap=$(acall "$CASE" 'params()(uint64,uint16,uint64,uint8)' | first | paste -sd, -)
 [ "$(awk -F, '{print NF}' <<<"$ap")" = 4 ] || die "RecourseCase.params() did not decode to 4 fields: $ap"
-expect "claimTimeout: Claims.params() equals RecourseCase.claimTimeout()" "$(cut -d, -f2 <<<"$hp")" "$(acall "$CASE" 'claimTimeout()(uint64)' | first)"
+hl=$(hcall "$CLAIMS" 'configLocked()(bool)'); vl=$(hcall "$VAULT" 'configLocked()(bool)'); kl2=$(acall "$CASE" 'locked()(bool)')
+# claimTimeout: the case's is the shorter, by at least the relay budget (lib.sh timeout_gap).
+kt=$(acall "$CASE" 'claimTimeout()(uint64)' | first); ht=$(cut -d, -f2 <<<"$hp")
+lt=$(jq -er '.locked.claimTimeout' "$PARAMS_JSON") || die "no locked.claimTimeout in $PARAMS_JSON"
+rt=$(jq -r '.constructorArgs.claimTimeout // empty' "$DEPLOY_DIR/$ARBITRUM_FILE")
+if [ -n "$rt" ]; then expect "RecourseCase.claimTimeout() is $ARBITRUM_FILE constructorArgs.claimTimeout" "$kt" "$rt"
+else log "     RecourseCase.claimTimeout() $kt ($ARBITRUM_FILE records no constructorArgs.claimTimeout to compare)"; fi
+if [ "$hl" = true ]; then expect "Claims is locked: Claims.params() claimTimeout is params.json locked.claimTimeout" "$ht" "$lt"; fi
+timeout_gap "$kt" "$ht" "Claims.params() claimTimeout" || true
+if [ "$ht" != "$lt" ]; then timeout_gap "$kt" "$lt" "params.json locked.claimTimeout (Claims' value after the lock)" || true; fi
 expect "resendGap: Claims.params() equals RecourseCase.params()" "$(cut -d, -f7 <<<"$hp")" "$(cut -d, -f3 <<<"$ap")"
 expect "maxSends: Claims.params() equals RecourseCase.params()" "$(cut -d, -f8 <<<"$hp")" "$(cut -d, -f4 <<<"$ap")"
 
@@ -85,7 +99,6 @@ else
   [ "$rows" = 1 ] || die "mirror shows $rows USDC rows for the vault, wanted 1"
   log "ok   mirror lists the vault's USDC association"
 fi
-hl=$(hcall "$CLAIMS" 'configLocked()(bool)'); vl=$(hcall "$VAULT" 'configLocked()(bool)'); kl2=$(acall "$CASE" 'locked()(bool)')
 log "     locked: claims $hl, vault $vl, case $kl2"
 if [ "${EXPECT_LOCKED:-0}" = 1 ]; then
   [ "$hl" = true ] && [ "$vl" = true ] && [ "$kl2" = true ] || die "EXPECT_LOCKED=1 but not all three are locked"
