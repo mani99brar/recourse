@@ -2,8 +2,13 @@
 // two signers from their keystore paths. Numbers are checked, and nothing a value holds is echoed
 // in an error.
 
+import { cpSync, existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseSendPauseWindows, readEnv, type SendPauseWindow } from '@recourse/shared';
 import { parseUnits } from 'viem';
+import { CONTROL_FILE } from './control.js';
+import { JOURNAL_FILE } from './journal.js';
 import type { FundingFloors } from './machine.js';
 
 export interface KeeperConfig {
@@ -121,4 +126,21 @@ export function loadKeeperConfig(env: Env = process.env): KeeperConfig {
       claimsFeeLink: amount('KEEPER_FLOOR_CLAIMS_FEE_LINK', local(env, 'KEEPER_FLOOR_CLAIMS_FEE_LINK', FLOOR_DEFAULTS.KEEPER_FLOOR_CLAIMS_FEE_LINK), 1_000_000),
     },
   };
+}
+
+/**
+ * The state directory a --dry-run works in: a new directory under `root` holding a copy of the live
+ * keeper's journal, cursors and control file. The dry run starts where the live keeper is, and its
+ * events, snapshots, alerts, cursors and any open transaction it settles stay in the copy, so the
+ * live keeper never reads them. A journal copied in the middle of an append can end in a partial
+ * line; openJournal drops it, as after a crash.
+ */
+export function stageDryRunState(liveDir: string, root: string = tmpdir()): string {
+  const dir = mkdtempSync(join(root, 'keeper-dry-run-'));
+  // cursors/ is where cursor.ts keeps each reader's position.
+  for (const name of [JOURNAL_FILE, 'cursors', CONTROL_FILE]) {
+    const from = join(liveDir, name);
+    if (existsSync(from)) cpSync(from, join(dir, name), { recursive: true });
+  }
+  return dir;
 }

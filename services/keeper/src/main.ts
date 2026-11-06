@@ -5,7 +5,8 @@
 // --dry-run        loads no key. Reads both chains, steps every claim and logs each call it would
 //                  make; nothing is signed or sent. Simulation runs from the ops addresses
 //                  (RULING_RELAYER_ADDRESS for Hedera; --ops-arb-address or the case contract's
-//                  trustedRelay() for Arbitrum).
+//                  trustedRelay() for Arbitrum). It works on a copy of KEEPER_STATE_DIR in the
+//                  system temp dir and writes nothing in the live one.
 // --once           one tick, print health, exit.
 // --hedera-file    a bare *.local.json name in DEPLOYMENTS_DIR instead of hedera.json; same for
 //  --arbitrum-file  arbitrum. Local files are refused unless every RPC URL is loopback.
@@ -17,7 +18,7 @@ import { loadSigner } from '@recourse/shared/node';
 import { caseAbi, claimsAbi } from './abi.js';
 import { DEFAULT_GAS_FLOORS, LiveChains } from './adapter.js';
 import { Alerter } from './alerts.js';
-import { loadKeeperConfig, type KeeperConfig } from './config.js';
+import { loadKeeperConfig, stageDryRunState, type KeeperConfig } from './config.js';
 import { readArbitrumDeployment, readHederaDeployment } from './deployments.js';
 import { evidenceAssembler, type BuildEvidence } from './evidence.js';
 import { createKeeperApp, jsonSafe, listenKeeper } from './http.js';
@@ -95,7 +96,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const journal = openJournal(cfg.stateDir);
+  const stateDir = dryRun ? stageDryRunState(cfg.stateDir) : cfg.stateDir;
+  if (dryRun) log(`dry run: state copied from ${cfg.stateDir} to ${stateDir}; the live state is not written`);
+  const journal = openJournal(stateDir);
   const append = (r: Parameters<typeof journal.append>[0]) => journal.append(r);
   // A transaction the node refuses 4 times in a row (one per tick) and that is 2 min old is
   // dropped so the key is free again; after a drop for lack of funds nothing new is signed on
@@ -126,7 +129,7 @@ async function main(): Promise<void> {
   let hReader: { position: unknown };
   if (hed.claimsId !== null && !hed.local) {
     const mirror = new MirrorClient({ baseUrl: cfg.mirrorUrl });
-    const reader = new HederaLogReader({ mirror, contract: hed.claimsId, dir: cfg.stateDir, source: 'hedera-claims', startTimestamp: hed.startTimestamp });
+    const reader = new HederaLogReader({ mirror, contract: hed.claimsId, dir: stateDir, source: 'hedera-claims', startTimestamp: hed.startTimestamp });
     hReader = reader;
     hEvents = new MirrorEventSource(reader, claimsAbi, 'claims', async () => {
       const newest = Number(tsSeconds(await mirror.newestBlockTimestamp()));
@@ -136,7 +139,7 @@ async function main(): Promise<void> {
     const reader = new BlockLogReader({
       chain: 'hedera',
       client: hClient,
-      dir: cfg.stateDir,
+      dir: stateDir,
       source: 'hedera-claims',
       startBlock: hed.startBlock,
       confirmations: 0,
@@ -150,7 +153,7 @@ async function main(): Promise<void> {
   const aReader = new BlockLogReader({
     chain: 'arbitrum',
     client: aClient,
-    dir: cfg.stateDir,
+    dir: stateDir,
     source: 'arbitrum',
     startBlock: arb.startBlock,
     confirmations: cfg.arbConfirmations,
@@ -206,7 +209,7 @@ async function main(): Promise<void> {
     chains,
     journal,
     alerter,
-    stateDir: cfg.stateDir,
+    stateDir,
     evidence,
     windows: cfg.windows,
     timing: { refileHoldS: cfg.refileHoldS },
