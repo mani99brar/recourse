@@ -735,6 +735,9 @@ export class PrecheckService {
           seq: this.index.lastSeq.toString(),
           consensusAt: this.index.lastConsensus ?? null,
           probe: probe === undefined ? null : { atMs: probe.atMs, newestSeq: probe.newestSeq.toString(), newestConsensus: probe.newestConsensus ?? null },
+          held: this.index.size,
+          // Writer accounts that posted past the index's caps, with what was let go.
+          capped: this.index.capped(),
         },
       },
       lag: { mirrorS: this.mirrorLagS ?? null },

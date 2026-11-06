@@ -1,12 +1,13 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildEvidence } from '../../../packages/court/src/evidence.js';
-import { recordHash, type ClaimToCourt, type RecordKind } from '@recourse/shared';
-import { bytesToHex } from 'viem';
+import { encodeRecordMsg, rawCidOfHash, recordHash, type ClaimToCourt, type RecordKind } from '@recourse/shared';
+import { bytesToHex, keccak256, toHex } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TOPIC_INDEX_FILE, TopicIndex } from '../src/topicIndex.js';
 import {
   AGENT_ACCOUNT,
+  ATTRS,
   SHOP_ACCOUNT,
   STRANGER_ACCOUNT,
   cleanupRigs,
@@ -227,6 +228,94 @@ describe('topic index under spam: the topic has no submit key', () => {
     expect(last.size).toBe(2);
     last.close();
   });
+});
+
+describe('topic index under a party writer that floods: what one writer has held is capped', () => {
+  /** Journal lines of valid record messages paid by `payer`, in the shape the index writes. */
+  function floodLines(n: number, payer: string, orderOf: (i: number) => `0x${string}`, kind: RecordKind = 1, firstSeq = 1): string {
+    const rows: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const hash = keccak256(toHex(i + 1));
+      const bytes = encodeRecordMsg({ cid: rawCidOfHash(hash), hash, kind, orderId: orderOf(i) });
+      rows.push(JSON.stringify({ t: 'msg', seq: String(firstSeq + i), ts: `${1_699_990_000 + i}.000000001`, payer, tx: payer, chunks: 1, size: bytes.length, hex: bytesToHex(bytes), at: 1 }));
+    }
+    return rows.join('\n') + '\n';
+  }
+
+  it('holds the first eight messages of one writer for one order and kind; later ones only move the cursor', async () => {
+    const rig = makeRig();
+    const orderId = orderIdOf(1);
+    for (let i = 0; i < 20; i++) rig.world.addRecord({ kind: 1, orderId, doc: recordDoc(1, orderId, { ...ATTRS, size: `s${i}` }) });
+    const packed = rig.world.addRecord({ kind: 4, orderId }); // the shop's own record of the same order
+    const lines: string[] = [];
+    const idx = TopicIndex.open({ mirror: rig.world.mirror(), topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock, parties: PARTIES, log: (l) => lines.push(l) });
+    expect(await idx.advance()).toBe(21);
+    expect(idx.candidates(orderId, 1).map((m) => m.seq)).toEqual([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n]);
+    expect(idx.candidates(orderId, 4).map((m) => m.seq)).toEqual([BigInt(packed.seq)]);
+    expect(idx.lastSeq).toBe(21n);
+    expect(idx.capped()).toEqual({ [AGENT_ACCOUNT]: { slotDropped: 12, evicted: 0 } });
+    expect(lines.filter((l) => l.includes('later ones are not held'))).toHaveLength(1);
+    idx.close();
+    // Only what is held is journaled, so a restart holds the same.
+    const kinds = readFileSync(join(rig.dir, TOPIC_INDEX_FILE), 'utf8').trim().split('\n').map((l) => (JSON.parse(l) as { t: string }).t);
+    expect(kinds.filter((t) => t === 'msg')).toHaveLength(9);
+    const again = open(rig);
+    expect(again.candidates(orderId, 1)).toHaveLength(8);
+    expect(again.lastSeq).toBe(21n);
+    again.close();
+  });
+
+  it('thirty thousand messages for one order and kind load fast and hold eight', () => {
+    const rig = makeRig();
+    const orderId = orderIdOf(1);
+    writeFileSync(join(rig.dir, TOPIC_INDEX_FILE), floodLines(30_000, AGENT_ACCOUNT, () => orderId));
+    const started = Date.now();
+    const idx = open(rig);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(idx.size).toBe(8);
+    expect(idx.lastSeq).toBe(30_000n);
+    idx.close();
+    // The lines it no longer holds were rewritten away.
+    expect(readFileSync(join(rig.dir, TOPIC_INDEX_FILE), 'utf8').trim().split('\n')).toHaveLength(9);
+  }, 60_000);
+
+  it('a writer over its total lets its own oldest go, never another writer\'s, and a restart holds the same', async () => {
+    const rig = makeRig();
+    const opts = { mirror: rig.world.mirror(), topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock, parties: PARTIES, heldPerWriter: 20, compactAfter: 10 };
+    const shopOrder = orderIdOf(200);
+    const packed = rig.world.addRecord({ kind: 4, orderId: shopOrder });
+    for (let i = 0; i < 80; i++) rig.world.addRecord({ kind: 0, orderId: orderIdOf(i) });
+    const idx = TopicIndex.open(opts);
+    expect(await idx.advance()).toBe(81);
+    expect(idx.size).toBe(21);
+    expect(idx.candidates(shopOrder, 4).map((m) => m.seq)).toEqual([BigInt(packed.seq)]);
+    expect(idx.candidates(orderIdOf(0), 0)).toEqual([]); // the agent's oldest are let go
+    expect(idx.candidates(orderIdOf(59), 0)).toEqual([]);
+    expect(idx.candidates(orderIdOf(60), 0)).toHaveLength(1);
+    expect(idx.capped()).toEqual({ [AGENT_ACCOUNT]: { slotDropped: 0, evicted: 60 } });
+    idx.close();
+    // The journal was rewritten once the lines let go outnumbered what is held.
+    const msgLines = readFileSync(join(rig.dir, TOPIC_INDEX_FILE), 'utf8').trim().split('\n').filter((l) => l.includes('"t":"msg"'));
+    expect(msgLines).toHaveLength(21);
+    const again = TopicIndex.open(opts);
+    expect(again.size).toBe(21);
+    expect(again.candidates(orderIdOf(0), 0)).toEqual([]);
+    expect(again.candidates(shopOrder, 4)).toHaveLength(1);
+    expect(again.lastSeq).toBe(81n);
+    again.close();
+  });
+
+  it('an old journal far over the cap replays in bounded memory and is rewritten to what is held', () => {
+    const rig = makeRig();
+    writeFileSync(join(rig.dir, TOPIC_INDEX_FILE), floodLines(10_000, AGENT_ACCOUNT, (i) => keccak256(toHex(1_000_000 + i))));
+    const idx = TopicIndex.open({ mirror: rig.world.mirror(), topicId: TOPIC_ID, dir: rig.dir, clock: rig.clock, parties: PARTIES, heldPerWriter: 2000 });
+    expect(idx.size).toBe(2000);
+    expect(idx.lastSeq).toBe(10_000n);
+    expect(idx.get(8001n)).toBeDefined();
+    expect(idx.get(8000n)).toBeUndefined();
+    idx.close();
+    expect(readFileSync(join(rig.dir, TOPIC_INDEX_FILE), 'utf8').trim().split('\n')).toHaveLength(2001);
+  }, 60_000);
 });
 
 describe('refs that omit a valid record the index holds', () => {

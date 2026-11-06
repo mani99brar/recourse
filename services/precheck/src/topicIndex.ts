@@ -9,6 +9,14 @@
 // only moves the cursor, which is journaled as a small `cursor` line. What the index holds
 // therefore grows with what the parties write, never with what strangers post. The journal is
 // replayed line by line, so even an old journal full of junk loads in bounded memory.
+//
+// A party writer can post as much as it likes too, so what one writer account has held is capped
+// twice: the first `heldPerSlot` messages for each order and kind (only the earliest that passes is
+// ever used; the rest only move the cursor and are not journaled), and `heldPerWriter` messages in
+// all (past it the account's oldest are let go). Both caps count per writer account, so a writer
+// that floods only crowds out its own records, never another party's. A record the claim's refs
+// name is read from the mirror when the index does not hold it. The same caps apply on replay, and
+// a journal holding many lines the index no longer keeps is rewritten compactly.
 
 import { closeSync, existsSync, fsyncSync, openSync, readSync, renameSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,6 +26,15 @@ import { bytesToHex, hexToBytes, type Hex } from 'viem';
 import type { Clock } from './clock.js';
 
 export const TOPIC_INDEX_FILE = 'topic-index.jsonl';
+/** Messages held per order, kind and writer account. An honest writer posts one. */
+export const HELD_PER_SLOT = 8;
+/**
+ * Messages held per writer account; past it the account's oldest are let go. About 1.5 KB of heap
+ * each: two writers at the cap add about 15 MB, which the unit's memory limit has room for. An
+ * honest platform posts five per order, so the index keeps its last thousand orders; a record a
+ * claim names is read from the mirror even when the index let it go.
+ */
+export const HELD_PER_WRITER = 5_000;
 
 export interface IndexedMessage {
   seq: bigint;
@@ -64,6 +81,46 @@ export function toIndexed(m: TopicMessage): IndexedMessage {
 
 function keyOf(orderId: Hex, kind: RecordKind): string {
   return `${orderId.toLowerCase()}:${kind}`;
+}
+
+/** The account a held message is counted against: its payer, else its transaction account, else none known (''). */
+function accountOf(m: IndexedMessage): string {
+  return m.payer ?? m.txAccount ?? '';
+}
+
+function cmpSeq(a: bigint, b: bigint): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Inserts into an ascending list: an append when it is the newest (the usual case), else in place. */
+function insertSorted(list: bigint[], seq: bigint): void {
+  const last = list[list.length - 1];
+  if (last === undefined || last < seq) {
+    list.push(seq);
+    return;
+  }
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid]! < seq) lo = mid + 1;
+    else hi = mid;
+  }
+  list.splice(lo, 0, seq);
+}
+
+/** Held sequence numbers of one writer account, oldest first. */
+interface WriterQueue {
+  seqs: bigint[];
+  head: number;
+}
+
+/** What the caps let go, per writer account. */
+export interface CapCounts {
+  /** Messages past `heldPerSlot` for their order and kind: not held. */
+  slotDropped: number;
+  /** Held messages let go because the account passed `heldPerWriter`. */
+  evicted: number;
 }
 
 /** Lines of a journal file, read in chunks; a last line with no newline (a crash mid-write) is left out. */
@@ -113,14 +170,27 @@ export interface TopicIndexOptions {
   maxPages?: number;
   /** Time one `advance` call may spend reading pages, ms by the clock. Default 10 s. */
   budgetMs?: number;
-  /** A journal with more cursor lines than this is rewritten compactly when opened. Default 1000. */
+  /**
+   * A journal with more cursor lines and lines no longer held than this is rewritten compactly when
+   * opened; while running, once the lines no longer held pass this and the number held. Default 1000.
+   */
   compactAfter?: number;
+  /** Messages held per order, kind and writer account. Default HELD_PER_SLOT. */
+  heldPerSlot?: number;
+  /** Messages held per writer account. Default HELD_PER_WRITER. */
+  heldPerWriter?: number;
   log?: (line: string) => void;
 }
 
 export class TopicIndex {
   private readonly bySeq = new Map<bigint, IndexedMessage>();
   private readonly byKey = new Map<string, bigint[]>();
+  /** Held messages per order, kind and writer account. */
+  private readonly perSlot = new Map<string, number>();
+  private readonly perWriter = new Map<string, WriterQueue>();
+  private readonly caps = new Map<string, CapCounts>();
+  /** Message lines in the journal file that the index does not hold (let go, or kept by an older version). */
+  private dead = 0;
   private readonly writers: { platform: Set<string>; shop: Set<string> };
   private journal: Journal;
   private last = 0n;
@@ -133,7 +203,7 @@ export class TopicIndex {
     this.writers = { platform: hcsWritersFor(o.parties, 0), shop: hcsWritersFor(o.parties, 4) };
     const cursorLines = this.replay();
     this.journal = openJournal(o.dir, TOPIC_INDEX_FILE);
-    if (cursorLines > (o.compactAfter ?? 1000)) this.compact();
+    if (cursorLines + this.dead > (o.compactAfter ?? 1000)) this.compact();
   }
 
   static open(o: TopicIndexOptions): TopicIndex {
@@ -167,6 +237,11 @@ export class TopicIndex {
     return this.bySeq.size;
   }
 
+  /** What the caps let go so far, by writer account (only accounts a cap was hit for). */
+  capped(): Record<string, CapCounts> {
+    return Object.fromEntries([...this.caps].map(([account, c]) => [account, { ...c }]));
+  }
+
   get(seq: bigint): IndexedMessage | undefined {
     return this.bySeq.get(seq);
   }
@@ -197,19 +272,92 @@ export class TopicIndex {
     }
   }
 
+  private slotKey(m: IndexedMessage): string {
+    const f = m.decoded.ok ? m.decoded.value : undefined;
+    return `${f?.orderId.toLowerCase()}:${f?.kind}:${accountOf(m)}`;
+  }
+
+  private cap(account: string, which: keyof CapCounts, line: string): void {
+    let c = this.caps.get(account);
+    if (c === undefined) {
+      c = { slotDropped: 0, evicted: 0 };
+      this.caps.set(account, c);
+    }
+    if (c[which] === 0) this.o.log?.(line);
+    c[which] += 1;
+  }
+
+  /**
+   * True when a message the index keeps also fits under the per-slot cap; counts it when not. A
+   * message already held (a replayed line read again) fits.
+   */
+  private admits(m: IndexedMessage): boolean {
+    if (this.bySeq.has(m.seq)) return false;
+    if ((this.perSlot.get(this.slotKey(m)) ?? 0) < (this.o.heldPerSlot ?? HELD_PER_SLOT)) return true;
+    const account = accountOf(m);
+    this.cap(account, 'slotDropped', `topic index: writer ${account || '(unknown)'} posted more than ${this.o.heldPerSlot ?? HELD_PER_SLOT} messages for one order and kind; later ones are not held`);
+    return false;
+  }
+
+  /** Holds a message that `keeps` and `admits`; lets the writer's oldest go when it is over its cap. */
   private add(m: IndexedMessage): void {
     if (this.bySeq.has(m.seq) || !m.decoded.ok) return;
     this.bySeq.set(m.seq, m);
     const k = keyOf(m.decoded.value.orderId, m.decoded.value.kind);
-    const list = this.byKey.get(k) ?? [];
-    list.push(m.seq);
-    list.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    this.byKey.set(k, list);
+    let list = this.byKey.get(k);
+    if (list === undefined) {
+      list = [];
+      this.byKey.set(k, list);
+    }
+    insertSorted(list, m.seq);
+    const sk = this.slotKey(m);
+    this.perSlot.set(sk, (this.perSlot.get(sk) ?? 0) + 1);
+    const account = accountOf(m);
+    let q = this.perWriter.get(account);
+    if (q === undefined) {
+      q = { seqs: [], head: 0 };
+      this.perWriter.set(account, q);
+    }
+    q.seqs.push(m.seq);
+    const limit = this.o.heldPerWriter ?? HELD_PER_WRITER;
+    while (q.seqs.length - q.head > limit) {
+      const oldest = q.seqs[q.head]!;
+      q.head += 1;
+      this.drop(oldest);
+      this.cap(account, 'evicted', `topic index: writer ${account || '(unknown)'} has over ${limit} messages held; its oldest are let go`);
+    }
+    if (q.head > 1024 && q.head * 2 > q.seqs.length) {
+      q.seqs = q.seqs.slice(q.head);
+      q.head = 0;
+    }
+  }
+
+  /** Lets one held message go (its journal line stays until the next rewrite). */
+  private drop(seq: bigint): void {
+    const m = this.bySeq.get(seq);
+    if (m === undefined || !m.decoded.ok) return;
+    this.bySeq.delete(seq);
+    this.dead += 1;
+    const k = keyOf(m.decoded.value.orderId, m.decoded.value.kind);
+    const list = this.byKey.get(k);
+    if (list !== undefined) {
+      const i = list.indexOf(seq);
+      if (i >= 0) list.splice(i, 1);
+      if (list.length === 0) this.byKey.delete(k);
+    }
+    const sk = this.slotKey(m);
+    const n = (this.perSlot.get(sk) ?? 1) - 1;
+    if (n <= 0) this.perSlot.delete(sk);
+    else this.perSlot.set(sk, n);
   }
 
   private reset(): void {
     this.bySeq.clear();
     this.byKey.clear();
+    this.perSlot.clear();
+    this.perWriter.clear();
+    this.caps.clear();
+    this.dead = 0;
     this.last = 0n;
     this.lastTs = undefined;
     this.journaled = 0n;
@@ -236,7 +384,8 @@ export class TopicIndex {
         this.see(m.seq, m.consensusAt);
         if (m.seq > this.journaled) this.journaled = m.seq;
         // An older journal also held messages the index no longer keeps; they only move the cursor.
-        if (this.keeps(m)) this.add(m);
+        if (this.keeps(m) && this.admits(m)) this.add(m);
+        else this.dead += 1;
       } else if (r.t === 'cursor') {
         cursors += 1;
         const seq = BigInt(String(r.seq));
@@ -281,7 +430,7 @@ export class TopicIndex {
     const fd = openSync(tmp, 'w');
     try {
       const at = this.o.clock.now();
-      const seqs = [...this.bySeq.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const seqs = [...this.bySeq.keys()].sort(cmpSeq);
       for (const s of seqs) {
         const m = this.bySeq.get(s)!;
         writeSync(fd, `${JSON.stringify({ ...this.msgRecord(m, m.bytes.length), at })}\n`);
@@ -294,6 +443,7 @@ export class TopicIndex {
     this.journal.close();
     renameSync(tmp, path);
     this.journal = openJournal(this.o.dir, TOPIC_INDEX_FILE);
+    this.dead = 0;
     this.o.log?.(`topic index journal compacted to ${this.bySeq.size} messages and a cursor at ${this.last}`);
   }
 
@@ -311,7 +461,7 @@ export class TopicIndex {
         for (const raw of messages) {
           if (raw.seq <= this.last) continue;
           const m = toIndexed(raw);
-          if (this.keeps(m)) {
+          if (this.keeps(m) && this.admits(m)) {
             this.journal.append(this.msgRecord(m, raw.bytes.length));
             this.journaled = m.seq;
             this.add(m);
@@ -325,6 +475,8 @@ export class TopicIndex {
     } finally {
       this.journalCursor();
     }
+    // Lines of messages let go since the last rewrite: rewrite once they outnumber what is held.
+    if (this.dead > Math.max(this.o.compactAfter ?? 1000, this.bySeq.size)) this.compact();
     return read;
   }
 
