@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Read-only check of the whole wiring, on both chains. Run it before the first step, after each step, and at the
 # end. It sends nothing. With --record it also writes the values it read into deployments/wiring.json
-# (contracts, peers, extraArgs, link, feePoolWei, association); it stops on the first mismatch. The vault's token
+# (contracts, peers, extraArgs, link, feePoolWei, association); it stops on the first mismatch. It also checks the
+# parameters both chains must share: Claims.params() claimTimeout, resendGap and maxSends against RecourseCase's
+# (its claimTimeout is fixed at deploy, Claims' can change until the lock), and that Claims' extra args give the
+# Arbitrum receive at least the gas measured in $ARBITRUM_FILE (gas.ccipReceive.limit). The vault's token
 # must be the one $HEDERA_FILE records; Circle's USDC is also checked on the mirror node, the testnet mock (no
 # HTS token, no mirror rows) by Vault.usdcAssociated() alone.
 #   EXPECT_LOCKED=1   also require configLocked()/locked() true on all three contracts (default: only print)
@@ -34,12 +37,43 @@ ft=$(hcall "$CLAIMS" 'feeToken()(address)'); log "     Claims.feeToken() = $ft (
 xh=$(hcall "$CLAIMS" 'extraArgs()(bytes)'); xa=$(acall "$CASE" 'extraArgs()(bytes)')
 [ "$xh" != 0x ] && [ "$xa" != 0x ] || die "an extraArgs() is empty"
 log "ok   extraArgs: Claims $xh, RecourseCase $xa"
+# The gas limit inside CCIP extra args: a V1 (0x97a657c9) or V2 (0x181dcf10) tag, then a uint256 gasLimit.
+gas_of() { local x=${1#0x}; case "${x:0:8}" in 97a657c9|181dcf10) python3 -c "print(int('${x:8:64}', 16))" ;; *) echo "" ;; esac; }
+gh=$(gas_of "$xh"); ga=$(gas_of "$xa")
+[ -n "$gh" ] || die "Claims.extraArgs() is not CCIP V1 or V2 extra args: $xh"
+[ -n "$ga" ] || die "RecourseCase.extraArgs() is not CCIP V1 or V2 extra args: $xa"
+need_gas=$(jq -r '.gas.ccipReceive.limit // empty' "$DEPLOY_DIR/$ARBITRUM_FILE")
+if [ -n "$need_gas" ]; then
+  [ "$gh" -ge "$need_gas" ] || die "Claims' extra args give the Arbitrum receive $gh gas, below the measured ccipReceive limit $need_gas ($ARBITRUM_FILE gas)"
+  log "ok   Claims' extra args gas $gh >= RecourseCase ccipReceive limit $need_gas"
+else
+  log "     Claims' extra args gas $gh (no measured ccipReceive gas in $ARBITRUM_FILE to compare)"
+fi
+log "     RecourseCase's extra args gas $ga (no measured Hedera receive cost on record to compare)"
+
+# Parameters the two chains must agree on. Claims.params() is (contestWindow, claimTimeout, courtFeeUsdc,
+# handlingBase, handlingBps, handlingCap, resendGap, maxSends); RecourseCase.params() is (caseDeadline,
+# maxOpenCases, resendGap, maxSends) and its claimTimeout() is immutable.
+hp=$(hcall "$CLAIMS" 'params()((uint64,uint64,uint256,uint256,uint16,uint256,uint64,uint8))' | sed -E 's/\[[^]]*\]//g; s/[() ]//g')
+[ "$(awk -F, '{print NF}' <<<"$hp")" = 8 ] || die "Claims.params() did not decode to 8 fields: $hp"
+ap=$(acall "$CASE" 'params()(uint64,uint16,uint64,uint8)' | first | paste -sd, -)
+[ "$(awk -F, '{print NF}' <<<"$ap")" = 4 ] || die "RecourseCase.params() did not decode to 4 fields: $ap"
+expect "claimTimeout: Claims.params() equals RecourseCase.claimTimeout()" "$(cut -d, -f2 <<<"$hp")" "$(acall "$CASE" 'claimTimeout()(uint64)' | first)"
+expect "resendGap: Claims.params() equals RecourseCase.params()" "$(cut -d, -f7 <<<"$hp")" "$(cut -d, -f3 <<<"$ap")"
+expect "maxSends: Claims.params() equals RecourseCase.params()" "$(cut -d, -f8 <<<"$hp")" "$(cut -d, -f4 <<<"$ap")"
 
 cl=0; if [ "$(lower "$ft")" != "$zero" ]; then cl=$(hcall "$ft" 'balanceOf(address)(uint256)' "$CLAIMS" | first); fi
 cn=$(cast balance "$CLAIMS" --rpc-url "$HEDERA_RPC")
 kl=$(acall "$ALINK" 'balanceOf(address)(uint256)' "$CASE" | first)
 fp=$(acall "$CASE" 'feePool()(uint256)' | first)
 log "     Claims LINK $cl, Claims native $cn weibar, Case LINK $kl, Case feePool $fp wei"
+# Warnings only: a short balance does not stop the read-back, but the next send of that kind will fail or fall back.
+if [ "$(lower "$ft")" != "$zero" ] && [ "$(python3 -c "print(int($cl < 10**18))")" = 1 ]; then
+  log "WARN Claims holds less than 1 LINK for CCIP fees; top it up with 03-fund-claims.sh"
+elif [ "$(lower "$ft")" = "$zero" ] && [ "$(python3 -c "print(int($cn < 10**18))")" = 1 ]; then
+  log "WARN Claims holds less than 1 HBAR for native CCIP fees; top it up with 03-fund-claims.sh"
+fi
+if [ "$kl" = 0 ]; then log "WARN RecourseCase holds no LINK: a ruling can only go back by relayRuling paid in ETH (the keeper pays it from ops-arb)"; fi
 
 expect "Vault.usdc() is the recorded $VAULT_USDC_LABEL" "$(hcall "$VAULT" 'usdc()(address)')" "$VAULT_USDC"
 assoc=$(hcall "$VAULT" 'usdcAssociated()(bool)')
@@ -57,11 +91,15 @@ if [ "${EXPECT_LOCKED:-0}" = 1 ]; then
   [ "$hl" = true ] && [ "$vl" = true ] && [ "$kl2" = true ] || die "EXPECT_LOCKED=1 but not all three are locked"
 fi
 log "read-back OK"
+wiring_retire_moved
 wiring_update --arg c "$CLAIMS" --arg v "$VAULT" --arg k "$CASE" --arg xh "$xh" --arg xa "$xa" \
   --arg cl "$cl" --arg kl "$kl" --arg fp "$fp" --arg rows "$rows" --arg at "$(date -u +%FT%TZ)" \
   --arg um "$VAULT_USDC_MODE" --arg ua "$VAULT_USDC" \
   --arg vid "$(jq -r '.contracts.vault.id // empty' "$DEPLOY_DIR/$HEDERA_FILE")" \
+  --arg hpeer "$(hcall "$CLAIMS" 'peer()(address)')" --arg apeer "$(acall "$CASE" 'peer()(address)')" \
+  --arg asel "$(hcall "$CLAIMS" 'arbSelector()(uint64)' | first)" --arg hsel "$(acall "$CASE" 'hederaSelector()(uint64)' | first)" \
   '.contracts = {claims:$c, vault:$v, case:$k}
+   | .peers = {casePeer:$hpeer, arbSelector:$asel, claimsPeer:$apeer, hederaSelector:$hsel, readAt:$at}
    | .extraArgs = {toArbitrum:$xh, toHedera:$xa}
    | .link = {claims:$cl, case:$kl}
    | .feePoolWei = $fp

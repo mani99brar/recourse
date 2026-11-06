@@ -164,8 +164,26 @@ wiring_update() { # wiring_update <jq filter> [jq args...]; only when sending
   local t; t=$(mktemp "$DEPLOY_DIR/.wiring.XXXXXX")
   jq "$@" "$f" > "$t" && chmod 644 "$t" && mv "$t" "$f"
 }
+# When the file's contracts are not the deployed ones (a replacement deployment), its earlier rows describe the
+# old contracts: mark them retired, with the old address, and keep them. Hedera rows go with claims and vault,
+# Arbitrum rows with the case, and an Arbitrum row that names the old claims (the case's setPeer) goes too.
+wiring_retire_moved() {
+  wiring_update --arg c "$CLAIMS" --arg v "$VAULT" --arg k "$CASE" '
+    def lc: ascii_downcase;
+    (.contracts.claims // "") as $oc | (.contracts.vault // "") as $ov | (.contracts.case // "") as $ok
+    | (($oc != "" and ($oc|lc) != ($c|lc)) or ($ov != "" and ($ov|lc) != ($v|lc))) as $hmoved
+    | ($ok != "" and ($ok|lc) != ($k|lc)) as $amoved
+    | .steps = ((.steps // []) | map(
+        if (.retired // false) then .
+        elif $hmoved and (.chain == "hedera" or ($oc != "" and ((.call + " " + .result)|lc|contains($oc|lc)))) then
+          . + {retired: true, retiredNote: ("recorded against the earlier Hedera deployment, claims " + $oc + " and vault " + $ov)}
+        elif $amoved and .chain == "arbitrum" then
+          . + {retired: true, retiredNote: ("recorded against the earlier RecourseCase " + $ok)}
+        else . end))'
+}
 # wiring_step <id> <chain> <call> <fromRole> <tx> <result>
 wiring_step() {
+  wiring_retire_moved
   wiring_update --arg id "$1" --arg chain "$2" --arg call "$3" --arg role "$4" --arg tx "$5" --arg res "$6" \
     --arg at "$(date -u +%FT%TZ)" --arg by "${USER:-ops}" --arg c "$CLAIMS" --arg v "$VAULT" --arg k "$CASE" \
     '.contracts = {claims:$c, vault:$v, case:$k}

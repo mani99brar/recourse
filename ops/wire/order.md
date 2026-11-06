@@ -1,6 +1,6 @@
 # Deploy and wiring order
 
-The exact order for both chains. Nothing here has been run on a testnet. Every script is a dry run unless it gets `--send` (the Hedera and Arbitrum deploy scripts use `--broadcast`), and each one signs only from a role keystore with its password file; no key, password or keyed URL is ever passed on a command line.
+The exact order for both chains. On testnet, sections 1 to 4 have run for the current deployment and section 5's claims are under way (one closed uncontested, one ruled by Kleros); Sourcify verification and the lock (section 6) have not run. Parts of the replacement Hedera deployment were wired outside these scripts: see the notes in `deployments/wiring.json` and `deployments/retired.json`. Every script is a dry run unless it gets `--send` (the Hedera and Arbitrum deploy scripts use `--broadcast`), and each one signs only from a role keystore with its password file; no key, password or keyed URL is ever passed on a command line.
 
 Set up the shell once (this reads the env file; it prints nothing secret):
 
@@ -23,7 +23,7 @@ Rules that apply to every step:
 
 | # | Command | Expect |
 |---|---|---|
-| 0.1 | `bash ops/fund/balances.sh` | each address is faucet-funded directly (at most 10 HBAR per address, so there is no pooled balance). HBAR floors: deployer 12 before the Hedera deploy (the deploy costs about 8.4 HBAR) and at least 2 after it for wiring, `setParams`, `setRequired` and the lock; ops-hedera 10; precheck-signer 3; shop 3; agent 2, or 8 with `PRICE_ASSET=hbar` (it then pays orders in HBAR); platform 1; scheme 1; buyer and facilitator 0. The deployer also holds some Arbitrum Sepolia ETH; ops-hedera and ops-arb hold LINK; platform holds USDC (20 per faucet claim, 18 of it deposited). Mock mode: the USDC column is headed `mUSDC`, read by `balanceOf`; the platform needs its mUSDC only by step 4.1, minted by the deployer (`hedera.sh mint platform <micro-usdc>`) |
+| 0.1 | `bash ops/fund/balances.sh` | each address is faucet-funded directly (at most 10 HBAR per address, so there is no pooled balance). HBAR floors: deployer 12 before the Hedera deploy (the deploy costs about 8.4 HBAR) and at least 2 after it for wiring, `setParams`, `setRequired` and the lock; ops-hedera 10; precheck-signer 3; shop 3; agent 2, or 8 with `PRICE_ASSET=hbar` (it then pays orders in HBAR); platform 1; scheme 1; buyer and facilitator 0. The deployer also holds some Arbitrum Sepolia ETH; ops-hedera holds LINK for step 3.3 (Claims' CCIP fees). ops-arb needs LINK only to run step 3.4; without LINK on RecourseCase the keeper sends a ruling back with `relayRuling` paid in ETH from ops-arb, so ops-arb needs ETH either way (on 6 Nov ops-arb and RecourseCase hold no LINK). Platform holds USDC (20 per faucet claim, 18 of it deposited). Mock mode: the USDC column is headed `mUSDC`, read by `balanceOf`; the platform needs its mUSDC only by step 4.1, minted by the deployer (`hedera.sh mint platform <micro-usdc>`) |
 | 0.2 | `(cd contracts && forge test --jobs 1)` under the suite lock | green on the commit being deployed |
 | 0.3 | `bash ops/wire/rehearse.sh` under the suite lock | `rehearsal complete` (local anvils only) |
 
@@ -56,14 +56,14 @@ Each script is run as `ops/wire/NN-name.sh` first without a flag, then with `--s
 
 | Step | Script | Signs as | What it does | Read-back |
 |---|---|---|---|---|
-| 3.0 | `00-readback.sh` with `EXPECT_PEERS=0` | none | checks the roles, owners, binding, association: `Vault.usdc()` is the recorded token, `usdcAssociated()` is true and, in circle mode, the mirror lists the vault's USDC row (mock mode: no row, and none is asked for) | all `ok` |
+| 3.0 | `00-readback.sh` with `EXPECT_PEERS=0` | none | checks the roles, owners, binding, the parameters both chains share (`claimTimeout`, `resendGap`, `maxSends`), Claims' extra args gas against the measured Arbitrum receive, the association: `Vault.usdc()` is the recorded token, `usdcAssociated()` is true and, in circle mode, the mirror lists the vault's USDC row (mock mode: no row, and none is asked for) | all `ok` |
 | 3.1 | `01-peer-hedera.sh` | deployer (owner) | `Claims.setPeer(RecourseCase)` | `Claims.peer()` equals the case address |
 | 3.2 | `02-peer-arbitrum.sh` | deployer (owner) | `RecourseCase.setPeer(Claims)` | `RecourseCase.peer()` equals the claims address |
 | 3.3 | `03-fund-claims.sh` | ops-hedera | LINK to Claims (or `fundNative()` if `feeToken()` is zero), up to `CLAIMS_LINK_TARGET` (1 LINK before the lock) | balance at or above the target |
 | 3.4 | `04-fund-case-link.sh` | ops-arb | LINK to RecourseCase up to `CASE_LINK_TARGET` (1 LINK before the lock) | balance at or above the target |
 | 3.5 | `05-fund-fee-pool.sh` | ops-arb | `fundFeePool()` up to `FEE_POOL_TARGET_ETH` (0.01 ETH before the lock) | `feePool()` at or above the target; contract balance covers it |
 | 3.6 | `06-set-extra-args.sh` | deployer | only if the deploy did not set the intended `extraArgs` (`EXTRA_ARGS_HEDERA`, `EXTRA_ARGS_ARBITRUM`) | `extraArgs()` equals the intended bytes on both |
-| 3.7 | `00-readback.sh --record` | none | full check, then records contracts, peers, extra args, LINK, fee pool and the association in `wiring.json` | `read-back OK` |
+| 3.7 | `00-readback.sh --record` | none | full check, then records contracts, peers (read from both chains), extra args, LINK, fee pool and the association in `wiring.json`; rows of a replaced deployment are kept and marked `retired` | `read-back OK` |
 
 Optional, only if the trusted-relay path is taken: `11-trusted-relay.sh` (deployer, before the lock).
 
@@ -73,7 +73,7 @@ Commit `deployments/wiring.json`, then pull it where the services run and start 
 
 | Step | Script | Signs as | What it does | Read-back |
 |---|---|---|---|---|
-| 4.1 | `07-deposit.sh <micro-usdc>` | platform | `hedera.sh deposit`: USDC `approve`, then `postDeposit`; it first checks `Vault.usdc()` is the recorded token (mock mode: `mUSDC`) | `depositOf(platform)` rose by the amount |
+| 4.1 | `07-deposit.sh <target-micro-usdc>` | platform | tops the deposit up to the target: `hedera.sh deposit` of only the shortfall (USDC `approve`, then `postDeposit`), nothing if `depositOf(platform)` is already there, so a re-run never deposits twice; it first checks `Vault.usdc()` is the recorded token (mock mode: `mUSDC`) | the receipt's `DepositPosted` carries the shortfall; `depositOf(platform)` at or above the target (below it, after a settlement in between, is a warning) |
 | 4.2 | `08-set-required.sh <micro-usdc>` | deployer (owner) | `hedera.sh required`: `setRequired(platform, amount)`, amounts set from the USDC that actually arrived (mock mode: that the deployer minted) | `inGoodStanding(platform)` is true |
 
 No order may be taken before 4.2 reads true.
@@ -86,22 +86,25 @@ No order may be taken before 4.2 reads true.
 
 ## 6. Lock (one way)
 
-Top the balances to the lock targets first, then lock, then read back. Run these in this order:
+Top the balances to the lock targets first, quiesce, then lock, then read back. Run these in this order:
 
 | Step | Script | Signs as | What it does | Read-back |
 |---|---|---|---|---|
 | 6.1 | `CLAIMS_LINK_TARGET=5 03-fund-claims.sh` | ops-hedera | LINK to 5 per contract | at target |
 | 6.2 | `CASE_LINK_TARGET=5 04-fund-case-link.sh` | ops-arb | | at target |
 | 6.3 | `FEE_POOL_TARGET_ETH=0.02 05-fund-fee-pool.sh` | ops-arb | | at target |
-| 6.4 | `09-lock-hedera.sh` | deployer | `hedera.sh lock`: locked parameters, then `lockConfig` on Claims and the vault | both `configLocked()` true |
+| 6.3a | quiesce | none | stop the shop and the agent (`ctl.sh stop shop`; no agent orders) so nothing new is filed, then wait until the status API (`GET /claims`) lists no claim as `finding_made`, `no_finding` or `window_lapsed`. The lock raises `contestWindow` from 600 s to 1,800 s, and `contest` and `closeUncontested` read it live, so a claim pre-checked before the lock would get a longer window than the one everyone was shown | no pre-checked claim open |
+| 6.4 | `09-lock-hedera.sh` | deployer | refuses while the status API lists a pre-checked claim (or cannot be read; `LOCK_IGNORE_OPEN_CLAIMS=1` overrides), then `hedera.sh lock`: locked parameters, then `lockConfig` on Claims and the vault | both `configLocked()` true |
 | 6.5 | `10-lock-arbitrum.sh` | deployer | `setParams` if they differ, then `RecourseCase.lockConfig()` | `locked()` true, `params()` as intended |
 | 6.6 | `EXPECT_LOCKED=1 00-readback.sh --record` | none | final check and record | `read-back OK`, all three locked |
+
+If 6.4 stops after Claims is locked and before the vault is (the Lock script sends `lockConfig` to Claims, then to the vault, and refuses to run again once either is locked), run `09-lock-hedera.sh` again: it sees the half lock, checks Claims holds the locked parameters, sets the vault's if they differ, and sends only `Vault.lockConfig()`. Run with both locked, it does nothing. Restart the shop after 6.6.
 
 After the lock, `sweepLink` and the pre-lock setters are gone. `setExtraArgs`, `setFeeToken`, `setRequired`, `setPolicyURI`, `setTemplateText` and `withdrawFeePool` remain (see the README).
 
 ## Replacing a deployment
 
-Before redeploying, empty the old contracts (`sweepLink` and `withdrawFeePool` are available only on an unlocked case; settle or expire every open claim), then record the old addresses in `deployments/retired.json` and run this whole order again. The vault's deposit has no exit in the first vault, so a replacement needs a fresh platform deposit.
+Before redeploying, empty the old contracts: `sweepLink` and `sweepNative` work only before the lock, `withdrawFeePool` on RecourseCase at any time, and every open claim must be settled or expired first. Then record the old addresses in `deployments/retired.json` and run this whole order again. A platform takes its deposit out of a retired vault itself, with `requestExit` and, after `exitDelay` with no open claims, `exit`; the replacement vault needs its own deposit (step 4.1).
 
 ## Local rehearsal
 

@@ -11,7 +11,8 @@
 #              ownership by Ownable2Step, because the local script deploys from an unlocked anvil account.
 #   Wiring:    steps 00 to 10, dry run first and then --send, each with its read-back.
 # Own file names are used everywhere: deployments/{hedera,arbitrum,wiring}.wire-rehearsal.local.json.
-# They are deleted on exit unless KEEP=1.
+# They are deleted on exit unless KEEP=1. REHEARSE_HALF_LOCK=1 locks Claims alone before step 09, so 09 has to
+# finish a half lock (the vault) instead of running the Lock script.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 ROOT=$PWD
@@ -105,18 +106,32 @@ step "04 Case LINK (target 12 LINK; the local deploy gave it 10)"
 $W/04-fund-case-link.sh; $W/04-fund-case-link.sh --send
 step "05 fee pool (target 0.06 ETH; the local deploy gave it 0.05)"
 $W/05-fund-fee-pool.sh; $W/05-fund-fee-pool.sh --send
-step "06 extra args (read back; Case set to a V1 value with 200000 gas)"
-EXTRA_ARGS_ARBITRUM=0x97a657c90000000000000000000000000000000000000000000000000000000000030d40 $W/06-set-extra-args.sh --send
+step "06 extra args (read back; Case set to a V2 value with 200000 gas, the only form setExtraArgs takes)"
+EXTRA_ARGS_ARBITRUM=0x181dcf100000000000000000000000000000000000000000000000000000000000030d400000000000000000000000000000000000000000000000000000000000000001 $W/06-set-extra-args.sh --send
 step "07 platform deposit"
 $W/07-deposit.sh 5000000000; $W/07-deposit.sh 5000000000 --send
 step "08 setRequired"
 $W/08-set-required.sh 5000000000; $W/08-set-required.sh 5000000000 --send
-step "re-run of 01 and 03 sends nothing"
+step "re-run of 01, 03 and 07 sends nothing"
 $W/01-peer-hedera.sh --send; $W/03-fund-claims.sh --send
+$W/07-deposit.sh 5000000000 --send | tee "$TMP/07-rerun.log"
+grep -q 'nothing to deposit' "$TMP/07-rerun.log" || { echo "rehearse: a re-run of 07 deposited again" >&2; exit 1; }
 step "read-back and record before the lock"
 $W/00-readback.sh --record
 step "09 lock Hedera, 10 lock Arbitrum"
+if [ "${REHEARSE_HALF_LOCK:-0}" = 1 ]; then
+  # A lock that died after Claims locked: set Claims' locked parameters and lock it alone, then let 09 finish.
+  P=packages/shared/vectors/params.json; L() { jq -r ".locked.$1" "$P"; }
+  HCL=$(jq -r .contracts.claims.address "$D/$HF")
+  cast send "$HCL" 'setParams((uint64,uint64,uint256,uint256,uint16,uint256,uint64,uint8))' \
+    "($(L contestWindow),$(L claimTimeout),$(L courtFeeUsdc),$(L handlingBase),$(L handlingBps),$(L handlingCap),$(L resendGap),$(L maxSends))" \
+    --rpc-url "$HR" --keystore "$TMP/deployer.json" --password-file "$TMP/deployer.json.pass" >/dev/null
+  cast send "$HCL" 'lockConfig()' --rpc-url "$HR" --keystore "$TMP/deployer.json" --password-file "$TMP/deployer.json.pass" >/dev/null
+  echo "half lock made: Claims locked, vault not"
+fi
 $W/09-lock-hedera.sh; $W/09-lock-hedera.sh --send
+$W/09-lock-hedera.sh --send | tee "$TMP/09-rerun.log"
+grep -q 'nothing to do' "$TMP/09-rerun.log" || { echo "rehearse: a re-run of 09 did not see the lock" >&2; exit 1; }
 $W/10-lock-arbitrum.sh; $W/10-lock-arbitrum.sh --send
 step "final read-back (all locked)"
 EXPECT_LOCKED=1 $W/00-readback.sh --record
