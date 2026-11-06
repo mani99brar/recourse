@@ -55,6 +55,14 @@ describe('failure classes', () => {
     expect(isFacilitatorSideFailure(new SettleError(400, { success: false, transaction: '', network: 'hedera:testnet' }))).toBe(false);
     expect(isFacilitatorSideFailure(new Error('Facilitator settle failed (400): bad request'))).toBe(false);
   });
+
+  test('a failed submit is the facilitator whatever the status; a payment refusal is not', () => {
+    const failed = { success: false, errorReason: 'transaction_failed', transaction: '', network: 'hedera:testnet' } as const;
+    expect(isFacilitatorSideFailure(new SettleError(400, failed))).toBe(true);
+    expect(isFacilitatorSideFailure(new SettleError(200, failed))).toBe(true);
+    const refused = { ...failed, errorReason: 'invalid_exact_hedera_payload_signature_invalid' };
+    expect(isFacilitatorSideFailure(new SettleError(400, refused))).toBe(false);
+  });
 });
 
 describe('ladder', () => {
@@ -113,6 +121,20 @@ describe('ladder', () => {
     expect(after.status).toBe(200);
     expect(second.settled).toHaveLength(1);
     expect(shop.log.lines.some((l) => l.event === 'facilitator_switched')).toBe(true);
+  });
+
+  test('a facilitator whose own submit fails (transaction_failed) is left after three tries', async () => {
+    const first = fakeFacilitator('0.0.990011');
+    const second = fakeFacilitator('0.0.990012');
+    const shop = await startTestShop([first, second]);
+    cleanup = shop.close;
+    first.mode = 'submit_failed';
+    const url = `${shop.url}${PING_ROUTE}`;
+    for (let i = 0; i < 3; i++) expect((await payOnce(url)).status).toBe(402);
+    expect(shop.ladder.state()).toMatchObject({ rung: 2, consecutiveFailures: 0 });
+    const after = await payOnce(url);
+    expect(after).toMatchObject({ feePayer: '0.0.990012', status: 200 });
+    expect(second.settled).toHaveLength(1);
   });
 
   test('payment-side refusals do not count toward failover', async () => {

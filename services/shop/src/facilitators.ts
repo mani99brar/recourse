@@ -1,10 +1,10 @@
 // Facilitator ladder: an ordered list of x402 facilitators behind one FacilitatorClient. At boot
 // the first rung whose /supported lists `exact` on the network becomes active. After a run of
 // consecutive settle failures on the facilitator's side (5xx, timeout, unreachable, malformed
-// reply) it moves to the next working rung and calls `onSwitch`, so the resource server can
-// re-read /supported: every 402 carries the active rung's fee payer, and a payment built for one
-// rung's fee payer cannot be settled by another. A request in flight always finishes on the rung
-// it started on.
+// reply, or a `transaction_failed` answer: its own submit failed, in any status) it moves to the
+// next working rung and calls `onSwitch`, so the resource server can re-read /supported: every 402
+// carries the active rung's fee payer, and a payment built for one rung's fee payer cannot be
+// settled by another. A request in flight always finishes on the rung it started on.
 
 import {
   FacilitatorResponseError,
@@ -59,10 +59,22 @@ export function httpRung(index: number, url: string, timeoutMs = 30_000): RungSp
   return { index, url, create: () => new HTTPFacilitatorClient({ url, timeoutMs }) };
 }
 
+/**
+ * The settle reason that says the facilitator itself could not submit a verified payment (its fee
+ * payer is out of HBAR, a node refused it). The Hedera scheme reports every signAndSubmit error this
+ * way; every payment-side refusal is an `invalid_...` reason from verification instead.
+ */
+export const SUBMIT_FAILED_REASON = 'transaction_failed';
+
+/** True for a settle reason that blames the facilitator, not the payment. */
+export function isFacilitatorSideReason(reason: string | undefined): boolean {
+  return reason === SUBMIT_FAILED_REASON;
+}
+
 /** True for failures that say the facilitator, not the payment, is at fault. */
 export function isFacilitatorSideFailure(error: unknown): boolean {
   if (error instanceof FacilitatorTimeoutError || error instanceof FacilitatorResponseError) return true;
-  if (error instanceof SettleError) return error.statusCode >= 500;
+  if (error instanceof SettleError) return error.statusCode >= 500 || isFacilitatorSideReason(error.errorReason);
   if (error instanceof TypeError) return true; // fetch could not reach the host
   if (error instanceof Error) {
     if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
@@ -151,28 +163,37 @@ export class FacilitatorLadder implements FacilitatorClient {
 
   async settle(paymentPayload: PaymentPayload, paymentRequirements: PaymentRequirements): Promise<SettleResponse> {
     const rung = this.active;
+    let result: SettleResponse;
     try {
-      const result = await this.client(rung).settle(paymentPayload, paymentRequirements);
-      if (result.success) {
-        if (rung === this.rungs[this.activeIndex]) this.consecutiveFailures = 0;
-      } else {
-        this.lastError = `rung ${rung.index}: ${result.errorReason ?? 'settle failed'}`;
-      }
-      return result;
+      result = await this.client(rung).settle(paymentPayload, paymentRequirements);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.lastError = `rung ${rung.index}: ${message}`;
-      if (isFacilitatorSideFailure(error) && rung === this.rungs[this.activeIndex]) {
-        this.consecutiveFailures += 1;
-        this.options.log.warn('facilitator_settle_failed', {
-          rung: rung.index,
-          consecutive: this.consecutiveFailures,
-          error: message.slice(0, 200),
-        });
-        if (this.consecutiveFailures >= this.failoverAfter) await this.advance(rung, message);
-      }
+      if (isFacilitatorSideFailure(error)) await this.countFailure(rung, message);
       throw error;
     }
+    if (result.success) {
+      if (rung === this.rungs[this.activeIndex]) this.consecutiveFailures = 0;
+    } else {
+      const reason = result.errorReason ?? 'settle failed';
+      this.lastError = `rung ${rung.index}: ${reason}`;
+      // A facilitator that cannot submit answers every order this way: as much an outage as a 5xx.
+      if (isFacilitatorSideReason(result.errorReason)) {
+        await this.countFailure(rung, result.errorMessage ? `${reason}: ${result.errorMessage}` : reason);
+      }
+    }
+    return result;
+  }
+
+  private async countFailure(rung: RungSpec, message: string): Promise<void> {
+    if (rung !== this.rungs[this.activeIndex]) return;
+    this.consecutiveFailures += 1;
+    this.options.log.warn('facilitator_settle_failed', {
+      rung: rung.index,
+      consecutive: this.consecutiveFailures,
+      error: message.slice(0, 200),
+    });
+    if (this.consecutiveFailures >= this.failoverAfter) await this.advance(rung, message);
   }
 
   private async advance(from: RungSpec, reason: string): Promise<void> {
