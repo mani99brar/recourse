@@ -163,4 +163,29 @@ describe('court evidence (what gate 4 reads)', () => {
     expect(store.status.arbitrum.lastError).toMatch(/^evidence: .*evidence module unreachable/);
     expect(store.status.arbitrum.lastErrorAt).toBe(1_700_000_000);
   });
+
+  it("a fresh store answers before an older case's evidence is read, which goes on over later polls", async () => {
+    const { sim } = arbSim();
+    const arb = new FakeArb();
+    arb.place(sim.logs, CASE);
+    arb.head = 60_000n; // the case is about 59 000 blocks old: 59 ranges of evidence at the default chunk
+    let evidenceReads = 0;
+    const logs = arb.logs.bind(arb);
+    arb.logs = async (a) => {
+      if (a.address !== CASE) evidenceReads++;
+      return logs(a);
+    };
+    const store = new Store();
+    ingest(store, sim);
+    store.rebuilding = true;
+    const r = indexerFor(store, arb);
+    await r.pollOnce();
+    expect(store.rebuilding).toBe(false);
+    expect(evidenceReads).toBe(10);
+    const [key] = Object.keys(store.evidenceCursor);
+    const after1 = store.evidenceCursor[key!]!;
+    await r.pollOnce();
+    expect(evidenceReads).toBe(20);
+    expect(store.evidenceCursor[key!]).toBe(after1 + 10_000n);
+  });
 });

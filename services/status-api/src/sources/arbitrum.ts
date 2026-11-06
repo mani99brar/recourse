@@ -97,6 +97,7 @@ export async function pollArbitrum(
  * every dispute on the chain, so the query filters on our external ids and starts at the block
  * where the case was opened. Read in ARB_LOG_CHUNK ranges, the cursor kept after each, as the case
  * logs are: an RPC that caps the range of eth_getLogs would otherwise refuse an older case's query.
+ * At most `maxChunks` ranges a call; the next call goes on from the cursor.
  */
 export async function pollEvidence(
   store: Store,
@@ -107,6 +108,7 @@ export async function pollEvidence(
   claimId: Hex,
   attempt: 1 | 2,
   fromBlock: bigint,
+  maxChunks = Infinity,
 ): Promise<void> {
   const ext = externalIdUint(caseChainId, caseAddress, claimId, attempt);
   const key = ext.toString();
@@ -116,7 +118,7 @@ export async function pollEvidence(
   const topic = ('0x' + ext.toString(16).padStart(64, '0')) as Hex;
   // topics[0] is the event signature; build it from the ABI.
   const sig = toEventSelector(evidenceAbi[0]);
-  while (from <= to) {
+  for (let n = 0; from <= to && n < maxChunks; n++) {
     const chunkTo = from + BigInt(d.chunk) - 1n < to ? from + BigInt(d.chunk) - 1n : to;
     const rows = await d.rpc.logs({ address: evidenceModule, fromBlock: from, toBlock: chunkTo, topics: [sig, topic] });
     const items = [];
