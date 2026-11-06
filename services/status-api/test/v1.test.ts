@@ -156,11 +156,13 @@ describe('/v1 reads', () => {
     expect((await get(`/v1/claims/${settledId}`)).body.claim.nextAction).toMatchObject({ action: 'withdrawCredit' });
     expect((await get('/v1/claims')).body.claims.find((c: any) => c.claimId === settledId).nextAction).toMatchObject({ action: 'withdrawCredit' });
     expect(Date.now() - t).toBeLessThan(delayMs);
-    // a quick read is taken as it is: the credit gone to zero hides it again
+    // one read at a time: once the running one lands, a quick read is taken as it is, and the
+    // credit gone to zero hides it again
+    await new Promise((r) => setTimeout(r, delayMs + 50));
     delayMs = 0;
     party0.credit = 0n;
     expect((await get(`/v1/claims/${settledId}`)).body.claim.nextAction).toBeNull();
-    expect(reads).toBeGreaterThanOrEqual(5);
+    expect(reads).toBeGreaterThanOrEqual(3);
   });
 
   it('has no next action for calls it does not build', () => {

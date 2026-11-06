@@ -94,7 +94,11 @@ describe('expiry', () => {
     const h = harness({ store, now: Number(b.now) });
     const r = (await h.svc.claimRows())[0]!;
     expect(r.statusKey).toBe('stuck');
-    expect(r.nextCall).toBe('expireClaim');
+    // Hedera takes expireClaim only after the timeout: nothing to send until then.
+    expect(r.nextCall).toBeNull();
+    expect(r.deadline).not.toBeNull();
+    h.clock.now = Number(r.deadline) + 1;
+    expect((await h.svc.claimRows())[0]!.nextCall).toBe('expireClaim');
   });
 
   it('passes Arbitrum expiresAt through: a received case past it is dead', async () => {

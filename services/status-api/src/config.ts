@@ -54,6 +54,11 @@ export interface Config {
   actionConcurrency: number;
   /** An action that has not answered by then answers upstream_unavailable (the web server waits 15 s). */
   actionDeadlineMs: number;
+  /**
+   * How long a request waits on live chain reads, all of them together: past it a read is served
+   * its last good value (meta.stale) and an action's chain read fails as upstream_unavailable.
+   */
+  readWaitMs: number;
 }
 
 export function loadConfig(env: Env = process.env): Config {
@@ -108,5 +113,6 @@ export function loadConfig(env: Env = process.env): Config {
     actionBurst: 10,
     actionConcurrency: 4,
     actionDeadlineMs: 12_000,
+    readWaitMs: 3_000,
   };
 }

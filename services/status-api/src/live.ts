@@ -349,7 +349,9 @@ export class TtlCache<T> {
  * already succeeded is not read again. One failing read is recorded and skipped.
  */
 export async function refreshLive(store: Store, reader: Reader, nowS: () => number): Promise<void> {
-  const errors: string[] = [];
+  // By the chain each read goes to: the case and Kleros on Arbitrum, an OffRamp on its own chain.
+  const errors: Record<'hedera' | 'arbitrum', string[]> = { hedera: [], arbitrum: [] };
+  const tried = { hedera: false, arbitrum: false };
   for (const id of store.claimIds()) {
     const evs = store.eventsOf(id);
     const claim = foldClaim(evs);
@@ -361,22 +363,20 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
     const finished = isTerminal(claim.status) || claim.status === ClaimStatus.Ruled;
     const messages = [...bridgeless(claim.toCourt, 'arbitrum'), ...bridgeless(claim.relayed, 'hedera')];
     if (finished && live.caseView && messages.every((m) => live.exec[m.messageId] === 2)) continue;
+    tried.arbitrum = true;
     try {
       live.caseView = await reader.caseOf(claim.claimId);
       live.caseReadAt = nowS();
     } catch (e) {
-      errors.push(safeError(e));
+      errors.arbitrum.push(safeError(e));
     }
-    const probe = [
-      ...bridgeless(claim.toCourt, 'arbitrum'),
-      ...bridgeless(claim.relayed, 'hedera'),
-    ];
-    for (const m of probe) {
+    for (const m of messages) {
       if (live.exec[m.messageId] === 2) continue;
+      tried[m.chain] = true;
       try {
         live.exec[m.messageId] = await reader.executionState(m.chain, m.messageId);
       } catch (e) {
-        errors.push(safeError(e));
+        errors[m.chain].push(safeError(e));
       }
     }
     const disputes = live.caseView ? live.caseView.disputeIds : claim.disputeIds;
@@ -385,15 +385,26 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
       try {
         live.kleros[d.toString()] = await reader.kleros(d);
       } catch (e) {
-        errors.push(safeError(e));
+        errors.arbitrum.push(safeError(e));
       }
     }
     live.at = nowS();
     store.live.set(id, live);
   }
-  if (errors.length > 0) {
-    const st = store.status.arbitrum;
-    st.lastError = errors[0] ?? null;
+  // A failed read keeps the value read before, so the chain is reported (degraded `live`) until a
+  // refresh reads it without a failure.
+  for (const chain of ['hedera', 'arbitrum'] as const) {
+    if (!tried[chain]) continue;
+    const lr = store.liveReads[chain];
+    const first = errors[chain][0];
+    if (first === undefined) {
+      lr.failing = false;
+      lr.okAt = nowS();
+      continue;
+    }
+    lr.failing = true;
+    const st = store.status[chain];
+    st.lastError = first;
     st.lastErrorAt = nowS();
   }
 }

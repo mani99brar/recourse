@@ -26,7 +26,13 @@ own `servers` entry.
 - Integers from a chain (amounts, ids, gas, chain times) are decimal strings. Small codes and counts are JSON
   numbers. Vault amounts are mUSDC base units (6 decimals); native amounts are wei, or weibar on Hedera (18 decimals).
 - Requests take addresses in any case; responses send them checksummed, and 32-byte values in lower case.
-- Every `/v1` read answers `{ <resource>: …, meta }`, where `meta` is `{ apiVersion, asOf, degraded, vaultToken, configLock }`.
+- Every `/v1` read answers `{ <resource>: …, meta }`, where `meta` is `{ apiVersion, asOf, degraded, stale, vaultToken, configLock }`.
+- A read answers within about 3 s whatever the chains do. Its live chain reads (the parameters, the contract
+  facts, a party's vault views, the config locks) are waited on for 3 s in all and refreshed in the background
+  every 30 s. One that fails or is slower is served its last good value: its name (`params`, `facts`, `vault`,
+  or `live` for the court, CCIP and Kleros reads) is in `degraded`, and `stale[]` gives
+  `{ read, upstreams, readAt, ageS }`, the RPCs it reads and the age of the value served (null when none was ever
+  read: the field is then null, and the parameters are the defaults with `params.defaulted` true).
 - Action bodies are closed: a field an action does not list is refused with `unknown_field`. No action takes a
   key, a seed or a password, and the API never signs, never holds a key and never broadcasts.
 
@@ -139,6 +145,11 @@ by simulating the call carries `details.revert = { contract, name, args }`.
 | 409 | `claim_exists`, `wrong_status`, `window_closed`, `window_open`, `not_expired`, `exit_due`, `insufficient_balance`, `no_credit`, `not_associated`, `vault_not_ready`, `resend_too_soon`, `max_sends_reached`, `bridge_unavailable`, `contract_underfunded`, `insufficient_value`, `case_wrong_state`, `cap_reached`, `no_dispute`, `call_reverted` |
 | 429 | `rate_limited` |
 | 500, 503 | `internal`, `upstream_unavailable` |
+| 502 | `upstream_unavailable` from the web server in front (`/api/v1/…`) when the status API does not answer within 15 s: `{ "error": { "code": "upstream_unavailable", "message": "status API unreachable" } }`, with no `details` |
+
+An action reads the chain at the latest block and never from a cache: a read that does not answer within 3 s
+(a simulation within 6 s) fails as `upstream_unavailable` with `details.upstream` `hedera_rpc` or `arbitrum_rpc`,
+so a hanging relay is answered in seconds, not at the 12-second deadline.
 
 `openapi.json` holds the same list with each code's meaning (`x-recourse-error-codes`), which codes each
 action can return (`x-recourse-errors`), and which contract custom error maps to which code

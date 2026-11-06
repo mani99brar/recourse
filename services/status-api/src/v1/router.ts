@@ -8,9 +8,10 @@ import { readFileSync } from 'node:fs';
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { ClaimStatus, STATUS_KEYS, type OrderParties } from '@recourse/shared';
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
-import { ChainRevert, ChainUnavailable, type ActionReads } from '../chain.js';
+import { ChainRevert, ChainUnavailable, boundedReads, type ActionReads } from '../chain.js';
 import { safeError } from '../http.js';
 import { foldClaim } from '../join.js';
+import { withDeadline } from '../lastgood.js';
 import { ApiError, type StatusService } from '../service.js';
 import { ACTIONS, ACTION_TARGET } from './actions.js';
 import { ACTION_NAMES, isActionName, type ActionName } from './build.js';
@@ -172,27 +173,36 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
   const cfg = svc.d.cfg;
   const buckets = new Buckets(cfg.actionsPerMin, cfg.actionBurst, opts.nowMs);
   const creditWaitMs = opts.creditWaitMs ?? CREDIT_WAIT_MS;
+  // Each chain read of an action waits cfg.readWaitMs at most, then fails as that chain's RPC unavailable.
+  const actionReads = opts.chain ? boundedReads(opts.chain, cfg.readWaitMs) : null;
   let building = 0;
 
-  const meta = async () => ({
+  // A read asks for the config lock when it starts, alongside its own reads; `degraded` and `stale`
+  // are taken after them.
+  const meta = async (lock: ReturnType<StatusService['configLock']> = svc.configLock()) => ({
     apiVersion: '1',
     asOf: svc.asOf(),
     degraded: svc.degraded(),
+    stale: svc.stale(),
     vaultToken: svc.d.deployments.token,
-    configLock: await svc.configLock(),
+    configLock: await lock,
   });
 
   const notRebuilding = () => {
     if (svc.d.store.rebuilding) throw upstream('index', { rebuilding: true });
   };
 
-  /** A read: `{ [key]: value, meta }`. */
+  /** A read: `{ [key]: value, meta }`. Its live reads wait cfg.readWaitMs in all, then their last good values stand. */
   const read = (key: string, fn: (req: Request) => Promise<unknown> | unknown, opts2: { duringRebuild?: boolean } = {}) =>
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         if (!opts2.duringRebuild) notRebuilding();
-        const value = await fn(req);
-        res.json({ [key]: value, meta: await meta() });
+        const body = await withDeadline(cfg.readWaitMs, async () => {
+          const lock = svc.configLock();
+          const value = await fn(req);
+          return { [key]: value, meta: await meta(lock) };
+        });
+        res.json(body);
       } catch (e) {
         next(e);
       }
@@ -214,13 +224,16 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
         if (req.query.status !== undefined && status === undefined) throw invalid('status', 'give it once');
         if (status !== undefined && !STATUS_SET.has(status)) throw invalid('status', `expected one of ${STATUS_KEYS.join(', ')}`);
         const addr = party === undefined ? undefined : addressParam(party, 'party');
-        const out = await svc.claimsResponse(addr, status);
-        const p = out as { rows: NextRow[]; standing?: unknown; groups?: unknown };
-        res.json({
-          claims: await withNextActions(p.rows, creditReads(svc, creditWaitMs)),
-          party: addr === undefined ? null : { standing: p.standing, groups: p.groups },
-          meta: await meta(),
+        const body = await withDeadline(cfg.readWaitMs, async () => {
+          const lock = svc.configLock();
+          const p = (await svc.claimsResponse(addr, status)) as { rows: NextRow[]; standing?: unknown; groups?: unknown };
+          return {
+            claims: await withNextActions(p.rows, creditReads(svc, creditWaitMs)),
+            party: addr === undefined ? null : { standing: p.standing, groups: p.groups },
+            meta: await meta(lock),
+          };
         });
+        res.json(body);
       } catch (e) {
         next(e);
       }
@@ -316,7 +329,7 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
   const run = async (req: Request, res: Response, next: NextFunction) => {
     const name = String(req.params.name) as ActionName;
     const target = ACTION_TARGET[name];
-    const chain = opts.chain;
+    const chain = actionReads;
     if (!chain) {
       next(upstream(target.chain === 'hedera' ? 'hedera_rpc' : 'arbitrum_rpc', { reason: 'live chain reads are not configured' }));
       return;

@@ -100,6 +100,14 @@ export class Store {
   rebuilding = false;
   /** Newest Arbitrum block at the finalized tag, when known. */
   arbFinalized: bigint | null = null;
+  /**
+   * The live reads (case, OffRamp, Kleros) by the chain they read: whether the last refresh that
+   * read the chain had a failure, and when one last read it without any. Not kept in the snapshot.
+   */
+  liveReads: Record<'hedera' | 'arbitrum', { failing: boolean; okAt: number | null }> = {
+    hedera: { failing: false, okAt: null },
+    arbitrum: { failing: false, okAt: null },
+  };
 
   private dirty = true;
   private idx = {

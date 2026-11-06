@@ -35,7 +35,8 @@ import {
   type Money,
 } from './join.js';
 import { ChainRevert, classify, type ClaimTerms } from './chain.js';
-import { TtlCache, type CaseParams, type ClaimsParams, type ConfigLocks, type PartyViews, type Reader, type VaultParams } from './live.js';
+import { LastGood, within } from './lastgood.js';
+import { TtlCache, type CaseParams, type ClaimsParams, type ConfigLocks, type ContractFacts, type PartyViews, type Reader, type VaultParams } from './live.js';
 import type { LiveState, Store } from './store.js';
 import type { HcsRecord, IndexedEvent, SourceName } from './types.js';
 
@@ -93,14 +94,24 @@ export interface RecordInfo {
   unread: boolean;
 }
 
+/** A live read served from its last good value: which one, the RPCs it reads, and how old the value is (null: none read yet). */
+export interface StaleRead {
+  read: 'params' | 'facts' | 'vault' | 'live';
+  upstreams: ('hedera_rpc' | 'arbitrum_rpc')[];
+  readAt: number | null;
+  ageS: number | null;
+}
+
 export class StatusService {
-  private params$: TtlCache<LiveParamBundle>;
-  private partyViews: TtlCache<PartyViews>;
-  /** The last vault credit each party view read, by address: only known parties and the parties of indexed claims are read. */
-  private credits = new Map<Address, bigint>();
-  private facts$: TtlCache<Awaited<ReturnType<Reader['facts']>>>;
+  // Each live read keeps its last good value: a request waits on a read at most cfg.readWaitMs.
+  /** The claims and vault parameters (Hedera). */
+  private hederaParams: LastGood<{ claims: ClaimsParams; vault: VaultParams | null }>;
+  /** The case parameters (Arbitrum). */
+  private caseParams: LastGood<CaseParams>;
+  /** The vault views by address: only known parties and the parties of indexed claims are read. */
+  private partyViews: LastGood<PartyViews>;
+  private facts$: LastGood<ContractFacts>;
   private ext = new TtlCache<unknown>(10_000);
-  private lastGood: LiveParamBundle | null = null;
   private locks: { flags: ConfigLocks | null; at: number; pending: Promise<void> | null } = { flags: null, at: -Infinity, pending: null };
   private hcsOrder: { size: number; map: Map<string, HcsRecord[]> } = { size: -1, map: new Map() };
   /** Claim terms by claim id: fixed at filing, so kept for good once read. */
@@ -110,9 +121,11 @@ export class StatusService {
   private termsUnsupported = false;
 
   constructor(readonly d: ServiceDeps) {
-    this.params$ = new TtlCache(d.cfg.viewCacheMs);
-    this.partyViews = new TtlCache(d.cfg.viewCacheMs);
-    this.facts$ = new TtlCache(d.cfg.viewCacheMs);
+    const o = { freshMs: d.cfg.viewCacheMs, waitMs: d.cfg.readWaitMs, nowS: d.nowS };
+    this.hederaParams = new LastGood(o);
+    this.caseParams = new LastGood(o);
+    this.partyViews = new LastGood(o);
+    this.facts$ = new LastGood(o);
   }
 
   private nowBig(): bigint {
@@ -121,24 +134,25 @@ export class StatusService {
 
   // ------------------------------------------------------------------ params and sources
 
+  private static hederaParamsOf(r: Reader) {
+    return async () => {
+      const [claims, vault] = await Promise.all([r.claimsParams(), r.vaultParams().catch(() => null)]);
+      return { claims, vault };
+    };
+  }
+
+  /**
+   * The live parameters, each half (Hedera, Arbitrum) its last good read when a read fails or is
+   * late; the defaults before any read (`defaulted`).
+   */
   async liveParams(): Promise<LiveParamBundle> {
     const r = this.d.reader;
-    if (r) {
-      try {
-        const b = await this.params$.get('p', async () => {
-          const [claims, kase] = await Promise.all([r.claimsParams(), r.caseParams()]);
-          const vault = await r.vaultParams().catch(() => null);
-          return { claims, kase, vault, defaulted: false };
-        });
-        this.lastGood = b;
-        return b;
-      } catch {
-        if (this.lastGood) return this.lastGood;
-      }
-    }
+    const [h, k] = r
+      ? await Promise.all([this.hederaParams.get('p', StatusService.hederaParamsOf(r)), this.caseParams.get('p', () => r.caseParams())])
+      : [null, null];
     const p = PARAMS.preLock;
     return {
-      claims: {
+      claims: h?.value?.claims ?? {
         contestWindow: BigInt(p.contestWindow),
         claimTimeout: BigInt(p.claimTimeout),
         courtFeeUsdc: BigInt(p.courtFeeUsdc),
@@ -148,9 +162,9 @@ export class StatusService {
         resendGap: BigInt(p.resendGap),
         maxSends: p.maxSends,
       },
-      kase: { caseDeadline: BigInt(p.caseDeadline), maxOpenCases: p.maxOpenCases, resendGap: BigInt(p.resendGap), maxSends: p.maxSends },
-      vault: null,
-      defaulted: true,
+      kase: k?.value ?? { caseDeadline: BigInt(p.caseDeadline), maxOpenCases: p.maxOpenCases, resendGap: BigInt(p.resendGap), maxSends: p.maxSends },
+      vault: h?.value?.vault ?? null,
+      defaulted: !h?.value || !k?.value,
     };
   }
 
@@ -160,10 +174,33 @@ export class StatusService {
    * it degraded, as it should be; the next read tries again.
    */
   warmParams(): Promise<void> {
-    return this.liveParams().then(
-      () => undefined,
-      () => undefined,
-    );
+    const r = this.d.reader;
+    if (!r) return Promise.resolve();
+    return Promise.all([this.hederaParams.refresh('p', StatusService.hederaParamsOf(r)), this.caseParams.refresh('p', () => r.caseParams())]).then(() => undefined);
+  }
+
+  /**
+   * Reads, in the background, every live value a request may wait on: the parameters, the
+   * contract facts, the config locks and the vault views of the known platforms and shops and of
+   * the parties of indexed claims. Run at start-up and then on a timer (main.ts), so requests are
+   * served from these reads rather than waiting on the relay. A read already running is not
+   * started again; one that fails is tried at the next run.
+   */
+  warm(): Promise<void> {
+    const r = this.d.reader;
+    if (!r) return Promise.resolve();
+    void this.configLock();
+    const parties = new Set<Address>();
+    for (const p of this.d.parties() ?? []) if (p.role === 'platform' || p.role === 'shop') parties.add(getAddress(p.evmAddress));
+    for (const id of this.d.store.claimIds()) {
+      const c = this.foldOf(id);
+      if (c) parties.add(c.shop).add(c.platform);
+    }
+    return Promise.all([
+      this.warmParams(),
+      this.facts$.refresh('f', () => r.facts()),
+      ...[...parties].map((a) => this.partyViews.refresh(a, () => r.party(a))),
+    ]).then(() => undefined);
   }
 
   private sourceConfigured(name: SourceName): boolean {
@@ -183,7 +220,38 @@ export class StatusService {
       const lag = st.indexedThrough === null ? null : now - st.indexedThrough;
       if (st.failing || lag === null || lag > this.d.cfg.lagWarnS[name]) out.push(name);
     }
-    if (this.lastGood === null && this.d.reader !== null && this.d.store.claimIds().length > 0) out.push('params');
+    if (this.d.reader !== null) {
+      const unread = this.hederaParams.peek('p').value === null || this.caseParams.peek('p').value === null;
+      if ((unread && this.d.store.claimIds().length > 0) || this.hederaParams.behind() || this.caseParams.behind()) out.push('params');
+      if (this.facts$.behind()) out.push('facts');
+      if (this.partyViews.behind()) out.push('vault');
+    }
+    const lr = this.d.store.liveReads;
+    if (lr.hedera.failing || lr.arbitrum.failing) out.push('live');
+    return out;
+  }
+
+  /**
+   * The live reads behind `degraded` (params, facts, vault, live) whose last read failed or was
+   * not waited for: each answer carries the value read before, and this says how old it is.
+   */
+  stale(): StaleRead[] {
+    const now = this.d.nowS();
+    const out: StaleRead[] = [];
+    const add = (read: StaleRead['read'], parts: [StaleRead['upstreams'][number], { readAt: number | null } | null][]) => {
+      const behind = parts.filter((p): p is [StaleRead['upstreams'][number], { readAt: number | null }] => p[1] !== null);
+      if (behind.length === 0) return;
+      const ats = behind.map((p) => p[1].readAt);
+      const readAt = ats.includes(null) ? null : Math.min(...(ats as number[]));
+      out.push({ read, upstreams: behind.map((p) => p[0]), readAt, ageS: readAt === null ? null : now - readAt });
+    };
+    add('params', [['hedera_rpc', this.hederaParams.behind()], ['arbitrum_rpc', this.caseParams.behind()]]);
+    // The facts read both chains in one go: a failure is not told apart by chain.
+    const f = this.facts$.behind();
+    add('facts', [['hedera_rpc', f], ['arbitrum_rpc', f]]);
+    add('vault', [['hedera_rpc', this.partyViews.behind()]]);
+    const lr = this.d.store.liveReads;
+    add('live', [['hedera_rpc', lr.hedera.failing ? { readAt: lr.hedera.okAt } : null], ['arbitrum_rpc', lr.arbitrum.failing ? { readAt: lr.arbitrum.okAt } : null]]);
     return out;
   }
 
@@ -208,7 +276,8 @@ export class StatusService {
           l.pending = null;
         });
     }
-    if (l.flags === null && l.pending) await l.pending;
+    // Before the first read lands, a request waits on it a bounded time; then the "not read" notice stands.
+    if (l.flags === null && l.pending) await within(l.pending, this.d.cfg.readWaitMs, undefined);
     return configLockView(l.flags);
   }
 
@@ -282,9 +351,7 @@ export class StatusService {
         }
       }),
     );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([all, new Promise((resolve) => (timer = setTimeout(resolve, waitMs)))]);
-    clearTimeout(timer);
+    await within(all, waitMs, undefined);
   }
 
   /** The parameters one claim runs under: its own contest window, timeout and handling once read. */
@@ -373,8 +440,7 @@ export class StatusService {
   }
 
   async claimRows(filter: { party?: Address; status?: string } = {}) {
-    const lp = await this.liveParams();
-    await this.loadTerms(this.d.store.claimIds());
+    const [lp] = await Promise.all([this.liveParams(), this.loadTerms(this.d.store.claimIds())]);
     const rows = [];
     for (const id of this.d.store.claimIds()) {
       const c = this.foldOf(id);
@@ -393,8 +459,7 @@ export class StatusService {
     if (party === undefined) return { rows: await this.claimRows(status ? { status } : {}) };
     if (!isAddress(party, { strict: false })) throw new ApiError(400, 'bad_id');
     const addr = getAddress(party);
-    const rows = await this.claimRows({ party: addr, ...(status ? { status } : {}) });
-    const standing = await this.partyBlock(addr);
+    const [rows, standing] = await Promise.all([this.claimRows({ party: addr, ...(status ? { status } : {}) }), this.partyBlock(addr)]);
     const groups = {
       waitingOnYou: [] as string[],
       waitingOnOther: [] as string[],
@@ -477,8 +542,9 @@ export class StatusService {
     let hashOk: boolean | null = null;
     let doc: unknown | null = null;
     if (payerOk) {
-      // Checked against the message's hash: a document that is not canonical counts as failed.
-      const info = await this.d.docs.get(msg.cid, msg.hash);
+      // Checked against the message's hash: a document that is not canonical counts as failed. One
+      // not fetched within the wait is unchecked for now (the fetch goes on and is kept).
+      const info = await within(this.d.docs.get(msg.cid, msg.hash), this.d.cfg.readWaitMs, null);
       if (info) {
         hashOk = info.ok && info.canonical;
         doc = info.ok && hashOk ? info.doc : null;
@@ -514,21 +580,23 @@ export class StatusService {
         break;
       }
     }
-    const records = [];
-    for (let k = 0; k < 6; k++) records.push(await this.recordInfo(id, k, undefined, order));
+    const records = await Promise.all([0, 1, 2, 3, 4, 5].map((k) => this.recordInfo(id, k, undefined, order)));
     return { orderId: id, claimId, records };
   }
 
   // ------------------------------------------------------------------ detail
 
-  private async external<T>(key: string, url: string): Promise<T | null> {
-    try {
-      return (await this.ext.get(key, () => getJson(this.d.fetch, url, this.d.cfg.sourceTimeoutMs))) as T;
-    } catch (e) {
-      // The docket answers 404 for a claim it has not seen: that is "none", not "unreachable".
-      if (key.startsWith('dk:') && e instanceof HttpError && e.status === 404) return { writeStatus: 'none', store: null, entityKey: null } as T;
-      return null;
-    }
+  /** A local service's answer, waited on a bounded time; null when it fails or is late. */
+  private external<T>(key: string, url: string): Promise<T | null> {
+    const p = this.ext.get(key, () => getJson(this.d.fetch, url, this.d.cfg.sourceTimeoutMs)).then(
+      (v) => v as T,
+      (e) => {
+        // The docket answers 404 for a claim it has not seen: that is "none", not "unreachable".
+        if (key.startsWith('dk:') && e instanceof HttpError && e.status === 404) return { writeStatus: 'none', store: null, entityKey: null } as T;
+        return null;
+      },
+    );
+    return within(p, this.d.cfg.readWaitMs, null);
   }
 
   async claimDetail(claimId: string) {
@@ -536,18 +604,20 @@ export class StatusService {
     const id = claimId.toLowerCase();
     const c = this.foldOf(id);
     if (!c) throw new ApiError(404, 'unknown');
-    const lp = await this.liveParams();
-    await this.loadTerms([id]);
+    // The reads that wait on the chain, a document or a local service run side by side.
+    const precheckP = c.preChecked ? this.external<Record<string, unknown>>(`pc:${id}`, `${this.d.cfg.precheckUrl}/results/${id}`) : Promise.resolve(null);
+    const dockP = this.external<Record<string, unknown>>(`dk:${id}`, `${this.d.cfg.docketUrl}/write-status/${id}`);
+    const recordsP = Promise.all(
+      [0, 1, 2, 3, 4, 5].map((k) =>
+        this.recordInfo(c.orderId, k, { topicNum: c.refs.topicNum, seq: c.refs.seq[k] ?? 0n, hash: (c.refs.hashes[k] ?? ZERO32) as Hex }, { platform: c.platform, shop: c.shop }),
+      ),
+    );
+    const [lp] = await Promise.all([this.liveParams(), this.loadTerms([id])]);
     const { status, caseView, bridge } = this.statusOf(c, lp);
     const money = this.moneyFor(c, lp);
     const events = this.d.store.eventsOf(id);
     const live = this.d.store.live.get(id);
-    const records = [];
-    for (let k = 0; k < 6; k++) {
-      records.push(
-        await this.recordInfo(c.orderId, k, { topicNum: c.refs.topicNum, seq: c.refs.seq[k] ?? 0n, hash: (c.refs.hashes[k] ?? ZERO32) as Hex }, { platform: c.platform, shop: c.shop }),
-      );
-    }
+    const records = await recordsP;
     const dep = this.d.deployments;
     const attemptsOpened = events.filter((e) => e.name === 'CaseOpened');
     const evidence = [];
@@ -565,14 +635,14 @@ export class StatusService {
     const current = caseView ? (caseView.attempts >= 2 ? caseView.disputeIds[1] : caseView.disputeIds[0]) : (c.disputeIds[c.disputeIds.length - 1] ?? 0n);
     const kl = live?.kleros[current.toString()];
     const tpl = this.d.cfg.courtUrlTemplate;
-    const precheckRes = c.preChecked ? await this.external<Record<string, unknown>>(`pc:${id}`, `${this.d.cfg.precheckUrl}/results/${id}`) : null;
+    const precheckRes = await precheckP;
     let packHashOk: boolean | null = null;
     const pcCid = precheckRes && typeof precheckRes.cid === 'string' ? precheckRes.cid : null;
     if (pcCid && HEX32.test(c.packHash) && c.packHash !== ZERO32) {
-      const info = await this.d.docs.get(pcCid, c.packHash.toLowerCase() as Hex);
+      const info = await within(this.d.docs.get(pcCid, c.packHash.toLowerCase() as Hex), this.d.cfg.readWaitMs, null);
       packHashOk = info ? info.ok : null;
     }
-    const dock = await this.external<Record<string, unknown>>(`dk:${id}`, `${this.d.cfg.docketUrl}/write-status/${id}`);
+    const dock = await dockP;
     const docketStatus = dock ? String(dock.writeStatus ?? 'none') : 'unreachable';
     return {
       ...this.row(c, lp),
@@ -633,22 +703,18 @@ export class StatusService {
 
   // ------------------------------------------------------------------ parties
 
+  /** The vault views of `address`: the last good read when this one fails or is late, null before any. */
   private async views(address: Address): Promise<PartyViews | null> {
     const r = this.d.reader;
     if (!r) return null;
-    try {
-      const v = await this.partyViews.get(address, () => r.party(address));
-      this.credits.set(address, v.credit);
-      return v;
-    } catch {
-      return null;
-    }
+    return (await this.partyViews.get(address, () => r.party(address))).value;
   }
 
   /**
-   * The vault credit of an account a claim names, for the claim's next action: a live read (null
-   * when it fails) that never rejects. Each answer is kept, also one that lands after its caller
-   * stopped waiting, so a slow relay still leaves a value for the next read (`knownCredit`).
+   * The vault credit of an account a claim names, for the claim's next action: a live read (the
+   * last one read when it fails, null before any) that never rejects. Each answer is kept, also one
+   * that lands after its caller stopped waiting, so a slow relay still leaves a value for the next
+   * read (`knownCredit`).
    */
   readCredit(address: Address): Promise<bigint | null> {
     return this.views(address).then((v) => (v ? v.credit : null));
@@ -656,28 +722,28 @@ export class StatusService {
 
   /** The last vault credit read for `address`, null before any. */
   knownCredit(address: Address): bigint | null {
-    return this.credits.get(address) ?? null;
+    return this.partyViews.peek(address).value?.credit ?? null;
   }
 
   async partyBlock(address: Address) {
     const ps = this.d.parties();
     const known: Party | undefined = ps ? partyByAddress(ps, address) : undefined;
-    const lp = await this.liveParams();
-    let escrowOpen = 0n;
-    let openClaims = 0;
-    let involved = false;
+    const claims: FoldedClaim[] = [];
     for (const id of this.d.store.claimIds()) {
       const c = this.foldOf(id);
-      if (!c || (c.shop !== address && c.platform !== address)) continue;
-      involved = true;
-      if (!isTerminal(c.status)) openClaims++;
-      const m = this.moneyFor(c, lp);
-      if (m.escrow.fate === 'held') escrowOpen += m.escrow.amount;
+      if (c && (c.shop === address || c.platform === address)) claims.push(c);
     }
     // The vault is read only for a known party or an address seen in an indexed claim: these
     // routes are public, and each new address would otherwise cost eight eth_calls on the Hedera
     // relay the keeper also uses. Any other address gets the standing fields as null (not read).
-    const v = known || involved ? await this.views(address) : null;
+    const [lp, v] = await Promise.all([this.liveParams(), known || claims.length > 0 ? this.views(address) : null]);
+    let escrowOpen = 0n;
+    let openClaims = 0;
+    for (const c of claims) {
+      if (!isTerminal(c.status)) openClaims++;
+      const m = this.moneyFor(c, lp);
+      if (m.escrow.fate === 'held') escrowOpen += m.escrow.amount;
+    }
     return {
       address,
       role: known?.role ?? 'unknown',
@@ -762,18 +828,14 @@ export class StatusService {
 
   async paramsResponse() {
     const dep = this.d.deployments;
-    const lp = await this.liveParams();
-    let facts = null;
-    if (this.d.reader) {
-      try {
-        facts = await this.facts$.get('f', () => this.d.reader!.facts());
-      } catch {
-        facts = null;
-      }
-    }
+    const r = this.d.reader;
+    const [lp, facts, docket] = await Promise.all([
+      this.liveParams(),
+      r ? this.facts$.get('f', () => r.facts()).then((h) => h.value) : null,
+      this.external<Record<string, unknown>>('dk:health', `${this.d.cfg.docketUrl}/health`),
+    ]);
     const ps = this.d.parties();
     const scheme = ps ? partiesByRole(ps, 'scheme')[0] : undefined;
-    const docket = await this.external<Record<string, unknown>>('dk:health', `${this.d.cfg.docketUrl}/health`);
     return {
       addresses: {
         claims: dep.claims ?? null,

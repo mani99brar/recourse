@@ -10,6 +10,7 @@
 import { createPublicClient, fallback, http, type Abi, type Address, type Hex, type PublicClient } from 'viem';
 import { CASE_ABI, CLAIMS_ABI, TOKEN_ABI, VAULT_ABI } from './abi/deployed.js';
 import { klerosAbi } from './abi/outside.js';
+import { bounded } from './lastgood.js';
 
 export type ChainName = 'hedera' | 'arbitrum';
 
@@ -162,6 +163,47 @@ export function classify(e: unknown, chain: ChainName): ChainRevert | ChainUnava
   }
   if (data !== null) revert = true;
   return revert ? new ChainRevert(chain, data) : new ChainUnavailable(chain);
+}
+
+/** The chain each read goes to; `arg`: its first argument names it. */
+const READ_CHAIN: Record<keyof ActionReads, ChainName | 'arg'> = {
+  head: 'arg',
+  gasPrice: 'arg',
+  simulate: 'arg',
+  claim: 'hedera',
+  claimTerms: 'hedera',
+  claimsNow: 'hedera',
+  previewSettle: 'hedera',
+  quoteSend: 'hedera',
+  handlingOf: 'hedera',
+  claimIdFor: 'hedera',
+  vaultToken: 'hedera',
+  tokenOf: 'hedera',
+  vaultGate: 'hedera',
+  vaultReserves: 'hedera',
+  creditOf: 'hedera',
+  escrowOf: 'hedera',
+  caseNow: 'arbitrum',
+  courtNow: 'arbitrum',
+  quoteRelay: 'arbitrum',
+  period: 'arbitrum',
+};
+
+/**
+ * `reads` with every call bounded: one that has not answered within `ms` (a simulation, an eth_call
+ * then an estimate, within twice that) fails as ChainUnavailable for its chain. An action then
+ * answers upstream_unavailable naming that chain's RPC in seconds, not at its deadline, when the
+ * relay hangs; viem's own timeout and retries over the fallback URLs can run past a minute.
+ */
+export function boundedReads(reads: ActionReads, ms: number): ActionReads {
+  const out: Record<string, unknown> = {};
+  for (const [name, on] of Object.entries(READ_CHAIN) as [keyof ActionReads, ChainName | 'arg'][]) {
+    out[name] = (...args: unknown[]) => {
+      const p = (reads[name] as (...a: unknown[]) => Promise<unknown>).apply(reads, args);
+      return bounded(p, name === 'simulate' ? 2 * ms : ms, () => new ChainUnavailable(on === 'arg' ? (args[0] as ChainName) : on));
+    };
+  }
+  return out as unknown as ActionReads;
 }
 
 export interface ViemActionReadsConfig {

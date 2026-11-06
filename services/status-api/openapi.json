@@ -3320,10 +3320,61 @@
                 "arbitrum",
                 "hcs",
                 "params",
+                "facts",
+                "vault",
+                "live",
                 "identity"
               ]
             },
-            "description": "Sources whose data is late or whose last read failed. `identity` (on /v1/cast only): a read of the ERC-8004 identity registry, or of a registration document, is not current."
+            "description": "Sources whose data is late or whose last read failed. `params`, `facts` (the contract facts of /v1/params), `vault` (a party's deposit, credit and standing) and `live` (court case, CCIP delivery and Kleros reads): the last live read failed or did not answer within the read wait (about 3 s), and the answer carries the value read before; `stale` says how old it is. `identity` (on /v1/cast only): a read of the ERC-8004 identity registry, or of a registration document, is not current."
+          },
+          "stale": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "read": {
+                  "type": "string",
+                  "enum": [
+                    "params",
+                    "facts",
+                    "vault",
+                    "live"
+                  ]
+                },
+                "upstreams": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "hedera_rpc",
+                      "arbitrum_rpc"
+                    ]
+                  }
+                },
+                "readAt": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Unix seconds of the value served; null when none was ever read (the field is null, or the parameters are the defaults)."
+                },
+                "ageS": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "read",
+                "upstreams",
+                "readAt",
+                "ageS"
+              ],
+              "additionalProperties": false
+            },
+            "description": "Each live read in `degraded` answered from its last good value: which read, the RPCs it reads, and how old the value is. Empty while every live read is current."
           },
           "vaultToken": {
             "$ref": "#/components/schemas/VaultToken"

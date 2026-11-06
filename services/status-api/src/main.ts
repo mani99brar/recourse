@@ -18,6 +18,9 @@ import { StatusService } from './service.js';
 import { viemArbRpc } from './sources/viem-arb.js';
 import { Store } from './store.js';
 
+/** How often the live values a request may wait on are read again in the background (about 20 eth_calls a run). */
+const WARM_EVERY_MS = 30_000;
+
 function main(): void {
   const cfg = loadConfig();
   const deployments = loadDeployments(cfg.deploymentsDir);
@@ -81,7 +84,9 @@ function main(): void {
 
   const svc = new StatusService({ store, cfg, deployments, reader, parties: () => parties, docs, fetch: realFetch, nowS });
   // Not awaited: the server listens at once, and /health stops saying `params` when this lands.
-  void svc.warmParams();
+  // Then every 30 s, so requests are served from these reads instead of waiting on the relay.
+  void svc.warm();
+  setInterval(() => void svc.warm(), WARM_EVERY_MS).unref();
   const indexer = new Indexer({ store, cfg, deployments, fetch: realFetch, arbRpc, reader, parties: () => parties, docs, nowS });
   indexer.start();
   const server = createApp(svc, { chain }).listen(cfg.port, '127.0.0.1', () => {

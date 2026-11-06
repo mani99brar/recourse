@@ -3,6 +3,7 @@
 
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { apiReplacer } from './json.js';
+import { withDeadline } from './lastgood.js';
 import { ApiError, type StatusService } from './service.js';
 import { createV1Router, serveOpenapi, type V1Options } from './v1/router.js';
 
@@ -45,9 +46,13 @@ export function createApp(svc: StatusService, v1: V1Options = { chain: null }): 
   const wrap = (fn: (req: Request) => Promise<object> | object) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       if (svc.d.store.rebuilding) throw new ApiError(503, 'rebuilding');
-      const body = await fn(req);
-      const configLock = await svc.configLock();
-      res.json({ ...body, asOf: svc.asOf(), degraded: svc.degraded(), vaultToken: svc.d.deployments.token, configLock });
+      // Live reads wait cfg.readWaitMs in all; past it their last good values stand (`stale`).
+      const out = await withDeadline(svc.d.cfg.readWaitMs, async () => {
+        const lock = svc.configLock();
+        const body = await fn(req);
+        return { ...body, asOf: svc.asOf(), degraded: svc.degraded(), stale: svc.stale(), vaultToken: svc.d.deployments.token, configLock: await lock };
+      });
+      res.json(out);
     } catch (e) {
       next(e);
     }
