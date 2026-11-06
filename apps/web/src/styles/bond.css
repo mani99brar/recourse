@@ -1,1 +1,361 @@
-/* Bond page: scoped under .bond-page; reads the tokens only. */
+/*
+ * I run a shopping agent (#/bond): the deposit calculator beside its estimate, what the company
+ * agrees to, the bonded mark shops read, the operator's steps, then the two actions. Shared pieces
+ * (cards, fields, .kv rows, pills, buttons, the action panel and its preview) come from
+ * components.css and case.css; every rule here is scoped under .bond-page and reads the tokens only.
+ */
+
+.bond-page .page-head h1 {
+  max-width: 14em;
+}
+.bond-page .bond-intro {
+  max-width: 70ch;
+  margin-bottom: var(--sp-4);
+  color: var(--fg2);
+}
+
+/* ---------- your numbers: the fields beside the estimate, one column on a phone ---------- */
+.bond-page .bond-numbers-in {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-5) var(--sp-6);
+  align-items: start;
+}
+@media (min-width: 980px) {
+  .bond-page .bond-numbers-in {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  }
+}
+.bond-page .bond-form {
+  min-width: 0;
+}
+.bond-page .bond-field p.error {
+  margin: -6px 0 14px;
+}
+.bond-page .bond-form .fields {
+  align-items: start;
+}
+
+/* the months it covers: three plain radio choices on one line */
+.bond-page .bond-k {
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+}
+.bond-page .bond-k legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: var(--fg2);
+  font-size: 14.5px;
+  font-weight: 500;
+}
+.bond-page .bond-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.bond-page .bond-opts label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  cursor: pointer;
+}
+.bond-page .bond-opts input {
+  margin: 0;
+}
+
+/* the estimate on the sheet, its figure in an ink band, as the design's deposit sum */
+.bond-page .bond-sum {
+  min-width: 0;
+  padding: 18px 22px 20px;
+  background: var(--g);
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.bond-page .bond-sum > h3 {
+  margin: 0 0 10px;
+  font-size: var(--fs-h3);
+}
+.bond-page .bond-sum .kv {
+  grid-template-columns: minmax(0, 40%) minmax(0, 1fr);
+}
+.bond-page .bond-sum .kv dd {
+  text-wrap: pretty;
+}
+.bond-page .bond-total {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 16px -22px 0;
+  padding: 14px 22px 16px;
+  background: var(--s);
+  color: var(--k);
+}
+.bond-page .bond-total > span {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.bond-page .bond-total > span small {
+  display: block;
+  margin-top: 3px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.bond-page .bond-total b {
+  font-weight: 600;
+  font-stretch: var(--semi);
+  font-size: clamp(32px, 3.4vw, 46px);
+  letter-spacing: -0.024em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bond-page .bond-total b small {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+/* no estimate yet: the words stay at text size, so the band does not shout an empty figure */
+.bond-page .bond-total b.bond-nofig {
+  font-size: var(--fs-lead);
+  font-stretch: 100%;
+  letter-spacing: 0;
+}
+.bond-page .bond-notes {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--fg2);
+  font-size: var(--fs-sm);
+  line-height: 1.42;
+}
+.bond-page .bond-notes li {
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+}
+.bond-page .bond-notes li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* ---------- what you agree to: four numbered rules, two columns on a wide screen ---------- */
+.bond-page .bond-terms {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 var(--sp-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: term;
+}
+@media (min-width: 900px) {
+  .bond-page .bond-terms {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.bond-page .bond-terms li {
+  position: relative;
+  counter-increment: term;
+  padding: 14px 0 16px 40px;
+  border-top: 1px solid var(--rule);
+  color: var(--fg2);
+  font-size: var(--fs-md);
+  line-height: 1.42;
+}
+.bond-page .bond-terms li::before {
+  content: counter(term);
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(var(--t), 0.5);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 26px;
+  text-align: center;
+}
+.bond-page .bond-terms b {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--fg);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  font-stretch: 108%;
+  line-height: 1.25;
+}
+
+/* ---------- what a shop sees: one mark per agent company ---------- */
+.bond-page .bond-seen {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: var(--sp-5) var(--sp-6);
+}
+.bond-page .seen {
+  min-width: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+.bond-page .seen-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.bond-page .card .seen-head h3 {
+  margin: 0;
+}
+.bond-page .card .seen-words {
+  margin: 10px 0 12px;
+  color: var(--fg2);
+  font-size: var(--fs-sm);
+  line-height: 1.42;
+}
+.bond-page .seen .loading,
+.bond-page .seen .muted.small {
+  margin-top: 10px;
+}
+.bond-page a.read {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: 4px;
+  font-weight: 600;
+  text-underline-offset: 4px;
+}
+
+/* the bonded mark, as the party page draws it */
+.bond-page .mark {
+  display: block;
+  width: 170px;
+  height: 170px;
+  max-width: 100%;
+  margin: 0 0 14px;
+  color: var(--fg3);
+  animation: fadein var(--t-slow) ease both;
+}
+.bond-page .mark-on {
+  color: var(--fg);
+}
+.bond-page .mark text {
+  font-family: var(--font);
+  fill: currentColor;
+}
+.bond-page .mark .mark-name {
+  font-stretch: 112%;
+}
+.bond-page .mark .mark-amount {
+  font-stretch: var(--semi);
+  font-variant-numeric: tabular-nums;
+}
+/* the ring is drawn dark on a light sheet; on the dark sheet it is turned to light metal */
+html:not([data-theme='light']) .bond-page .mark image {
+  filter: invert(1) brightness(0.86);
+}
+
+/* ---------- the operator's steps: three lines, an aside on the sheet ---------- */
+.bond-page .bond-ops ul {
+  max-width: 80ch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-md);
+  line-height: 1.42;
+}
+.bond-page .bond-ops li {
+  position: relative;
+  padding: 9px 0 9px 22px;
+  border-top: 1px solid var(--rule);
+}
+.bond-page .bond-ops li:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+.bond-page .bond-ops li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 17px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--s);
+}
+
+/* ---------- the two actions, side by side on a wide screen ---------- */
+.bond-page .bond-acts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 var(--sp-6);
+  align-items: start;
+}
+@media (min-width: 1100px) {
+  .bond-page .bond-acts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.bond-page .bond-act {
+  min-width: 0;
+}
+.bond-page .bond-held {
+  margin: 0 0 14px;
+  color: var(--fg2);
+}
+.bond-page .act .hint .linkish {
+  font-size: inherit;
+  font-weight: 600;
+}
+.bond-page .bond-now {
+  margin: 4px 0 6px;
+  padding: 10px 14px;
+  background: var(--g);
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.bond-page .card .bond-now h3 {
+  margin: 0 0 4px;
+  font-size: var(--fs-md);
+}
+.bond-page .bond-after {
+  max-width: none;
+  margin-top: 14px;
+}
+.bond-page .bond-after p + p {
+  margin-top: 8px;
+}
+
+/* ---------- phone ---------- */
+@media (max-width: 720px) {
+  .bond-page .bond-sum {
+    padding: 16px 16px 18px;
+  }
+  .bond-page .bond-total {
+    margin: 14px -16px 0;
+    padding: 12px 16px 14px;
+  }
+  .bond-page .bond-terms li {
+    padding-left: 36px;
+  }
+  .bond-page .mark {
+    width: 150px;
+    height: 150px;
+  }
+}
+@media (max-width: 480px) {
+  .bond-page .bond-sum .kv {
+    grid-template-columns: 1fr;
+  }
+}
