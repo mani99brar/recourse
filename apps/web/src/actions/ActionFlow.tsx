@@ -49,6 +49,12 @@ export interface ActionFlowProps {
   children?: ReactNode;
   /** Hears the error code of a refused build (the file form shows more fields on some). */
   onRefused?: (code: string) => void;
+  /**
+   * The action is due now (default true). The pages keep a panel mounted after it stops being due,
+   * so an action that just landed keeps its hashes and read-back on screen; a panel that is not due
+   * and not yet started shows nothing.
+   */
+  offered?: boolean;
 }
 
 /** The action, wired to the API and the browser wallet. */
@@ -129,6 +135,7 @@ export function ActionFlowView(v: ActionFlowViewProps) {
   const { phase, wallet } = v;
   const wrongSigner = !!(v.signer && wallet.account && !sameAddress(v.signer.address, wallet.account));
   const editing = phase.kind === 'form' || phase.kind === 'building' || phase.kind === 'refused';
+  if (v.offered === false && (phase.kind === 'form' || phase.kind === 'refused')) return null;
   return (
     <Card title={v.title ?? ACTION_WORDS[v.name]}>
       {v.intro && <p>{v.intro}</p>}

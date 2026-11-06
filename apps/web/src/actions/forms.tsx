@@ -1,10 +1,10 @@
 // The actions a person can take from these pages, each through the same /v1/actions call the agents
 // use: file a claim, contest a finding, add evidence, withdraw credit, and the next step anyone may
 // take when the keeper has not.
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { NextCall, VaultToken } from '@recourse/shared';
 import { isAddress } from 'viem';
-import type { ActionName } from '../lib/actions.js';
+import { hasCredit, type ActionName } from '../lib/actions.js';
 import { parseUsdc, usdc, when } from '../lib/format.js';
 import { COURT_PERIODS } from '../lib/words.js';
 import type { CaseDetail } from '../pages/Case.js';
@@ -25,11 +25,12 @@ export function contesterOf(d: Pick<CaseDetail, 'answer' | 'shop' | 'platform'>)
   return { address: d.shop, who: 'the shop', why };
 }
 
-export function ContestAction({ d }: { d: CaseDetail }) {
+export function ContestAction({ d, offered = true }: { d: CaseDetail; offered?: boolean }) {
   const c = contesterOf(d);
   return (
     <ActionFlow
       name="contest"
+      offered={offered}
       request={{ claimId: d.claimId }}
       claimId={d.claimId}
       signer={{ address: c.address, who: c.who }}
@@ -139,7 +140,9 @@ export function fileRequest(f: { orderId: string; netLoss: string; nonce: string
 export function FileClaimAction({ orderId, packedHeld, platform, netLoss, token }: { orderId: string; packedHeld: boolean; platform: string; netLoss: string; token?: VaultToken | undefined }) {
   const [withNonce, setWithNonce] = useState(false);
   const [nonce, setNonce] = useState('');
-  const [plat, setPlat] = useState(platform);
+  // Follows the address typed in step 3 until one is typed here.
+  const [ownPlat, setPlat] = useState<string | null>(null);
+  const plat = ownPlat ?? platform;
   const [unpacked, setUnpacked] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const { request, problem } = fileRequest({ orderId, netLoss, nonce, platform: plat, unpacked, withNonce });
@@ -152,10 +155,7 @@ export function FileClaimAction({ orderId, packedHeld, platform, netLoss, token 
       token={token}
       onRefused={(code) => {
         setRefused(code);
-        if (code === 'order_nonce_unknown') {
-          setWithNonce(true);
-          if (!plat) setPlat(platform);
-        }
+        if (code === 'order_nonce_unknown') setWithNonce(true);
       }}
       intro={
         <>
@@ -188,14 +188,20 @@ export function FileClaimAction({ orderId, packedHeld, platform, netLoss, token 
   );
 }
 
-export function WithdrawAction({ address, credit, token }: { address: string; credit: string; token?: VaultToken | undefined }) {
+/** Offered while the account has credit; kept on screen after a withdrawal so its hash and read-back stay. */
+export function WithdrawAction({ address, credit, token }: { address: string; credit: string | null; token?: VaultToken | undefined }) {
+  // The last credit above zero, so the panel still names the amount once the read shows 0.
+  const last = useRef<string | null>(null);
+  if (hasCredit(credit)) last.current = credit;
+  if (last.current === null) return null;
   return (
     <ActionFlow
       name="withdrawCredit"
       request={{}}
+      offered={hasCredit(credit)}
       signer={{ address, who: 'this account' }}
       token={token}
-      intro={`This account has ${usdc(credit, token)} of credit in the deposit vault. Withdrawing pays all of it into the account's own wallet. Only the account itself can do it.`}
+      intro={`Withdraw this account's credit in the deposit vault (${usdc(last.current, token)}) into the account's own wallet. A withdrawal pays out all of it, and only the account itself can make one.`}
     />
   );
 }
@@ -208,11 +214,12 @@ export function anyoneAction(call: NextCall | null): AnyoneAction | null {
   return call !== null && (ANYONE_ACTIONS as readonly string[]).includes(call) ? (call as AnyoneAction) : null;
 }
 
-export function NextStepAction({ d, action }: { d: CaseDetail; action: AnyoneAction }) {
+export function NextStepAction({ d, action, offered = true }: { d: CaseDetail; action: AnyoneAction; offered?: boolean }) {
   const [payIn, setPayIn] = useState<'native' | 'link'>('native');
   return (
     <ActionFlow
       name={action}
+      offered={offered}
       request={{ claimId: d.claimId, ...(action === 'relayRuling' ? { payIn } : {}) }}
       claimId={d.claimId}
       names={partyNames(d)}
@@ -232,15 +239,27 @@ export function NextStepAction({ d, action }: { d: CaseDetail; action: AnyoneAct
   );
 }
 
-/** The claim's actions, for its page: contest and the next step when due. Null when none is due. */
+/** The next steps offered so far on this page, oldest first; `next` is added once. */
+export function rememberStep(seen: readonly AnyoneAction[], next: AnyoneAction | null): readonly AnyoneAction[] {
+  return next === null || seen.includes(next) ? seen : [...seen, next];
+}
+
+/**
+ * The claim's actions, for its page: contest and the next step when due. The page re-reads the claim
+ * every few seconds, and an action that lands changes what is due; every panel offered so far stays
+ * mounted, so the one that just ran keeps its hashes and read-back while the new step is offered.
+ */
 export function ClaimActions({ d }: { d: CaseDetail }) {
   const contest = d.nextCall === 'contest' && (d.statusKey === 'finding_made' || d.statusKey === 'no_finding');
   const next = anyoneAction(d.nextCall);
-  if (!contest && !next) return null;
+  const seen = useRef<readonly AnyoneAction[]>([]);
+  seen.current = rememberStep(seen.current, next);
   return (
-    <section aria-label="Act on this claim">
-      {contest && <ContestAction d={d} />}
-      {next && <NextStepAction key={next} d={d} action={next} />}
-    </section>
+    <>
+      <ContestAction d={d} offered={contest} />
+      {seen.current.map((a) => (
+        <NextStepAction key={a} d={d} action={a} offered={a === next} />
+      ))}
+    </>
   );
 }

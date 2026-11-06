@@ -33,11 +33,6 @@ export interface ClaimsBody extends Fresh {
   groups?: Record<string, string[]>;
 }
 
-/** Credit that a withdrawal would pay out: read, and above zero. */
-export function hasCredit(credit: string | null): credit is string {
-  return credit !== null && /^\d+$/.test(credit) && BigInt(credit) > 0n;
-}
-
 export function ClaimList({ rows }: { rows: RowT[] }) {
   if (rows.length === 0) return <p className="muted">No claims.</p>;
   return (
@@ -62,7 +57,7 @@ export function PartyPage({ address }: { address: string }) {
       {error?.status === 400 && <p>That does not look like an address.</p>}
       {!data && !error && <Loading what="worklist" />}
       {data?.standing && <Standing s={data.standing} address={address} token={data.vaultToken} />}
-      {data?.standing && hasCredit(data.standing.credit) && <WithdrawAction address={address} credit={data.standing.credit} token={data.vaultToken} />}
+      {data?.standing && <WithdrawAction key={address.toLowerCase()} address={address} credit={data.standing.credit} token={data.vaultToken} />}
       {data?.groups &&
         Object.entries(GROUP_WORDS).map(([k, label]) => {
           const ids = new Set(data.groups?.[k] ?? []);

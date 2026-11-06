@@ -121,6 +121,11 @@ export function looksBuilt(v: unknown): v is ActionResponse {
   return txOk && previewOk;
 }
 
+/** Credit that a withdrawal would pay out: read, and above zero. */
+export function hasCredit(credit: string | null | undefined): credit is string {
+  return typeof credit === 'string' && UINT.test(credit) && BigInt(credit) > 0n;
+}
+
 export function sameAddress(a: string | null | undefined, b: string | null | undefined): boolean {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }

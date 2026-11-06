@@ -8,10 +8,10 @@ import { encodeFunctionData, erc20Abi, toFunctionSelector, type Abi, type AbiFun
 import { describe, expect, it } from 'vitest';
 import { Shell } from '../src/App.js';
 import { ActionFlowView, type Phase } from '../src/actions/ActionFlow.js';
-import { ClaimActions, EvidenceAction, FileClaimAction, WithdrawAction, contesterOf, evidenceBytes, evidenceProblem, fileRequest } from '../src/actions/forms.js';
+import { ClaimActions, EvidenceAction, FileClaimAction, WithdrawAction, contesterOf, evidenceBytes, evidenceProblem, fileRequest, rememberStep } from '../src/actions/forms.js';
 import { ApiFailure, failureFrom } from '../src/lib/api.js';
 import {
-  ACTION_NAMES, ERROR_WORDS, amountText, errorWords, looksBuilt, postAction, readBackPath, readBackShows, signingProblems,
+  ACTION_NAMES, ERROR_WORDS, amountText, errorWords, hasCredit, looksBuilt, postAction, readBackPath, readBackShows, signingProblems,
   type ActionName, type ActionResponse, type ReadBody,
 } from '../src/lib/actions.js';
 import { ACTION_CALLS, CALL_ABIS, callProblem } from '../src/lib/calls.js';
@@ -19,7 +19,6 @@ import { CHAINS, txLink } from '../src/lib/chains.js';
 import { readBack, signAll, type Step } from '../src/lib/flow.js';
 import { NO_WALLET, WalletStop, stopWords, walletOps, type WalletOps, type WalletState } from '../src/lib/wallet.js';
 import { CaseView, type CaseDetail } from '../src/pages/Case.js';
-import { hasCredit } from '../src/pages/Party.js';
 
 const root = new URL('../../../', import.meta.url);
 const spec = JSON.parse(readFileSync(new URL('services/status-api/openapi.json', root), 'utf8')) as {
@@ -450,6 +449,25 @@ describe('what the person sees', () => {
     const late = view({ kind: 'done', resp: example('contest'), steps: [{ state: 'mined', hash: hash(5) }], after: null, shows: false });
     expect(late).toContain('has not answered with the new state yet');
   });
+  it('a panel that is no longer due keeps a started flow on screen, and shows nothing otherwise', () => {
+    const c = example('contest');
+    const done: Phase = { kind: 'done', resp: c, steps: [{ state: 'mined', hash: hash(6) }], after: { claim: { claimId: c.claimId!, statusKey: 'at_court' } }, shows: true };
+    const kept = view(done, connected, { offered: false });
+    expect(kept).toContain(hash(6));
+    expect(kept).toContain('Read back from the chain');
+    expect(kept).toContain('At court');
+    expect(view({ kind: 'signing', resp: c, steps: [{ state: 'mining', hash: hash(6) }] }, connected, { offered: false })).toContain(hash(6));
+    expect(view({ kind: 'form' }, connected, { offered: false })).toBe('');
+    expect(view({ kind: 'refused', problem: { text: 'x' } }, connected, { offered: false })).toBe('');
+    expect(view({ kind: 'form' }, connected)).toContain('Show what this will do');
+  });
+  it('remembers each next step offered, once, in order', () => {
+    let seen = rememberStep([], 'sendToCourt');
+    seen = rememberStep(seen, 'sendToCourt');
+    seen = rememberStep(seen, null);
+    seen = rememberStep(seen, 'openCase');
+    expect(seen).toEqual(['sendToCourt', 'openCase']);
+  });
   it('explains a refusal by its code, and a stop in the wallet', () => {
     const exists = view({ kind: 'refused', problem: { text: errorWords(failureFrom(409, { error: { code: 'claim_exists', message: 'x', details: { claimId: '0x' + '77'.repeat(32) } } })), code: 'claim_exists', claimId: '0x' + '77'.repeat(32) } });
     expect(exists).toContain('already filed');
@@ -536,7 +554,9 @@ describe('the pages, with no wallet', () => {
   it('file and withdraw render, and every route renders with no wallet control', () => {
     expect(render(<FileClaimAction orderId={'0x' + '22'.repeat(32)} packedHeld={false} platform="" netLoss="" token={MOCK} />)).toContain('File without a packing record');
     expect(render(<FileClaimAction orderId={'0x' + '22'.repeat(32)} packedHeld platform="" netLoss="" token={MOCK} />)).not.toContain('File without a packing record');
-    expect(render(<WithdrawAction address={SHOP} credit="28250000" token={MOCK} />)).toContain('28.25 mUSDC (testnet mock) of credit');
+    expect(render(<WithdrawAction address={SHOP} credit="28250000" token={MOCK} />)).toContain("this account's credit in the deposit vault (28.25 mUSDC (testnet mock))".replace("'", '&#x27;'));
+    expect(render(<WithdrawAction address={SHOP} credit="0" token={MOCK} />)).toBe('');
+    expect(render(<WithdrawAction address={SHOP} credit={null} token={MOCK} />)).toBe('');
     expect(render(<EvidenceAction d={detail('at_court', { court: { ...detail('at_court').court, disputeIds: ['1', '2'] } })} />)).toContain('Second case (dispute #2)');
     for (const h of ['#/', '#/docket', '#/file', '#/claim/0x12', '#/party/0x12']) {
       const html = render(<Shell hash={h} />);

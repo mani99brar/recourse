@@ -116,7 +116,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
           </p>
         )}
       </header>
-      <ClaimActions d={d} />
+      <ClaimActions key={d.claimId} d={d} />
       <div className="grid">
         <Card title="Timeline">
           <Timeline events={d.events} statusKey={d.statusKey} />
@@ -199,7 +199,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
           </p>
         </Card>
       </div>
-      {d.court.disputeIds.length > 0 && <EvidenceAction d={d} />}
+      {d.court.disputeIds.length > 0 && <EvidenceAction key={d.claimId} d={d} />}
       <Card title="Records" id="records">
         <p className="muted">
           Each record document is fetched by its content id and checked against the hash on the records topic. A record that could not be fetched yet reads as unchecked, never as verified. Buyer details inside the documents appear only as salted hashes.
