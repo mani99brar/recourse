@@ -17,6 +17,10 @@
 # RecourseCase first (order.md, "Replacing a deployment"). LOCK_IGNORE_RELAY_BUDGET=1 locks anyway, with a warning.
 # A case whose claimTimeout is above the locked one is always refused. On a half lock it only warns.
 #
+# Peer: the lock makes Claims.peer() permanent, so the step refuses unless it is the RecourseCase that
+# $ARBITRUM_FILE records (the case 00-readback and the relay budget read). The Lock script checks the same peer
+# against the same file, and the pre-check signer and ruling relayer against deployments/parties.json.
+#
 # A half lock: the Lock script sends claims.setParams, vault.setParams, claims.lockConfig, vault.lockConfig in
 # that order. If the last one failed, Claims is locked and the vault is not, and the Lock script refuses to run
 # again. This step then finishes the vault alone: it checks Claims' parameters are the locked set, sets the
@@ -25,7 +29,7 @@
 . "$(dirname "$0")/lib.sh"
 parse_args "$@"; check_chains both; load_deployed
 HSH=$ROOT/contracts/script/hedera/hedera.sh
-export HEDERA_FILE HEDERA_RPC_URL_1=$HEDERA_RPC HEDERA_MIRROR_URL=$MIRROR HEDERA_REHEARSAL=$WIRE_LOCAL
+export HEDERA_FILE ARBITRUM_FILE HEDERA_RPC_URL_1=$HEDERA_RPC HEDERA_MIRROR_URL=$MIRROR HEDERA_REHEARSAL=$WIRE_LOCAL
 
 locked() { jq -r --arg k "$1" '.locked[$k]' "$PARAMS_JSON"; }
 claims_locked_set() { # the locked Claims.params() tuple, in the order cast prints it
@@ -89,6 +93,7 @@ if [ "$hl" = true ]; then
 fi
 
 # Neither is locked: the normal path.
+expect "Claims.peer() is the RecourseCase in $ARBITRUM_FILE" "$(hcall "$CLAIMS" 'peer()(address)')" "$CASE"
 relay_budget_kept
 quiesced
 if [ "$SEND" = 0 ]; then "$HSH" lock; exit 0; fi
