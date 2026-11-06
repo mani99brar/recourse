@@ -92,11 +92,20 @@ has_usdc() {
 }
 
 # send_cast <role> <rpc> <cast send args...>   (signs with that role's keystore)
+# Sends only to HEDERA_RPC_URL_1 answering Hedera testnet (296) or ARB_RPC_URL answering Arbitrum Sepolia
+# (421614), and signs for that chain id, so a swapped or mistyped endpoint stops the run before anything is
+# signed. A refusal names the host only: a keyed URL carries its key in the path.
 send_cast() {
-  local role=$1 rpc=$2; shift 2
+  local role=$1 rpc=$2 want got host; shift 2
   echo "+ cast send $* [signer: $role]"
   [[ $SEND == 1 ]] || return 0
-  cast send "$@" --keystore "$KEYSTORE_DIR/$role.json" --password-file "$KEYSTORE_DIR/$role.json.pass" --rpc-url "$rpc" --legacy
+  host=${rpc#*://}; host=${host%%[/?#]*}; host=${host##*@}
+  if [[ $rpc == "$HEDERA_RPC_URL_1" ]]; then want=296
+  elif [[ $rpc == "$ARB_RPC_URL" ]]; then want=421614
+  else echo "refusing to send: the RPC at $host is neither HEDERA_RPC_URL_1 nor ARB_RPC_URL" >&2; exit 1; fi
+  got=$(cast chain-id --rpc-url "$rpc" 2>/dev/null) || { echo "refusing to send: the RPC at $host does not answer its chain id" >&2; exit 1; }
+  [[ $got == "$want" ]] || { echo "refusing to send: the RPC at $host is chain $got, not $want" >&2; exit 1; }
+  cast send "$@" --keystore "$KEYSTORE_DIR/$role.json" --password-file "$KEYSTORE_DIR/$role.json.pass" --rpc-url "$rpc" --legacy --chain "$want"
 }
 
 # One tiny self-paid transfer (1 tinybar) from the role to itself. On Hedera, an Ethereum
