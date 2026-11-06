@@ -25,12 +25,19 @@ import type { FetchLike } from './mirror.js';
 /** Largest document this client pins or fetches. */
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
 
+/**
+ * `not_found` is a definite miss: the gateway answered 404 (after the retries), the local store
+ * does not hold the document and there is no gateway to ask, or the CID is not one this client can
+ * fetch (not a raw SHA-256 CID and no hash given). `fetch_failed` is everything that may pass on a
+ * later try (network errors, timeouts, other gateway statuses, a damaged local copy).
+ */
 export type IpfsErrorCode =
   | 'pin_not_configured'
   | 'pin_failed'
   | 'pin_mismatch'
   | 'document_too_large'
   | 'fetch_failed'
+  | 'not_found'
   | 'hash_mismatch';
 
 export class IpfsError extends Error {
@@ -138,10 +145,8 @@ export async function fetchDocument(cid: string, expectedHash: Hex, options: Ipf
   }
   const gatewayUrl = options.gatewayUrl;
   if (!gatewayUrl) {
-    throw new IpfsError(
-      'fetch_failed',
-      options.localDir ? `${cid} is not in the local store and IPFS_GATEWAY_URL is not set` : 'IPFS_GATEWAY_URL is not set; documents cannot be fetched',
-    );
+    if (options.localDir) throw new IpfsError('not_found', `${cid} is not in the local store and IPFS_GATEWAY_URL is not set`);
+    throw new IpfsError('fetch_failed', 'IPFS_GATEWAY_URL is not set; documents cannot be fetched');
   }
   return withRetries(
     async () => {
@@ -149,6 +154,7 @@ export async function fetchDocument(cid: string, expectedHash: Hex, options: Ipf
         headers: { accept: 'application/vnd.ipld.raw, application/octet-stream, */*' },
         signal: AbortSignal.timeout(timeoutMs),
       });
+      if (res.status === 404) throw new IpfsError('not_found', `gateway answered 404 for ${cid}`);
       if (!res.ok) throw new IpfsError('fetch_failed', `gateway answered ${res.status} for ${cid}`);
       const length = Number(res.headers.get('content-length') ?? '0');
       if (length > MAX_DOCUMENT_BYTES) throw new IpfsError('document_too_large', `${cid} is ${length} bytes`);
@@ -425,7 +431,7 @@ export function openPinClient(env: Env = process.env, overrides: Partial<IpfsOpt
     pin: (bytes) => pinDocument(bytes, provider, options),
     fetch: (cid, expectedHash) => {
       const hash = expectedHash ?? hashOfCid(cid);
-      if (!hash) return Promise.reject(new IpfsError('fetch_failed', `${cid} is not a raw SHA-256 CID; pass the expected hash`));
+      if (!hash) return Promise.reject(new IpfsError('not_found', `${cid} is not a raw SHA-256 CID; pass the expected hash`));
       return fetchDocument(cid, hash, options);
     },
   };

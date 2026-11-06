@@ -1,8 +1,11 @@
 // HCS record message: one per record, on the records topic. The body is canonical JSON with
 // exactly five string fields, so its bytes are always
 // {"cid":"…","hash":"0x…","kind":"<0-5>","orderId":"0x…","v":"1"}
+// The cid must be the raw-block CIDv1 of the hash (`rawCidOfHash`), so a message can never point
+// at a document other than the one its hash names, and every reader can fetch by the hash alone.
 
 import type { Hex } from 'viem';
+import { rawCidOfHash } from './cid.js';
 import { canonicalBytes, isHex32, parseCanonical } from './hashing.js';
 import { isRecordKind, type RecordKind } from './records.js';
 
@@ -10,7 +13,7 @@ export const RECORD_MSG_VERSION = '1';
 export const RECORD_MSG_MAX_BYTES = 1024;
 
 export interface RecordMsgFields {
-  /** IPFS CID of the record document. */
+  /** IPFS CID of the record document: always `rawCidOfHash(hash)`. */
   cid: string;
   /** recordHash of the document bytes, `0x` + 64 lowercase hex. */
   hash: Hex;
@@ -26,6 +29,7 @@ const KIND_TEXT = /^[0-5]$/;
 function checkFields(f: RecordMsgFields): string | undefined {
   if (typeof f.cid !== 'string' || f.cid === '' || !CID.test(f.cid)) return 'cid must be a non-empty base-encoded CID';
   if (!isHex32(f.hash)) return 'hash must be 0x + 64 lowercase hex';
+  if (f.cid !== rawCidOfHash(f.hash)) return 'cid must be the raw SHA-256 CIDv1 of hash';
   if (!isRecordKind(f.kind)) return 'kind must be 0-5';
   if (!isHex32(f.orderId)) return 'orderId must be 0x + 64 lowercase hex';
   return undefined;

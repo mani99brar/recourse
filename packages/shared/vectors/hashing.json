@@ -99,13 +99,13 @@
   ],
   "recordMsg": {
     "fields": {
-      "cid": "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy",
+      "cid": "bafkreigcb7s62yqtzg3bllkz5q4jsyrmcheqnb2ngkcdwy7oxhrkkzm4se",
       "hash": "0xc20fe5ed6213c9b615ad59ec3899622c11c906874d32843b63eeb9e2a5659c91",
       "kind": 0,
       "orderId": "0xabababababababababababababababababababababababababababababababab"
     },
-    "text": "{\"cid\":\"bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy\",\"hash\":\"0xc20fe5ed6213c9b615ad59ec3899622c11c906874d32843b63eeb9e2a5659c91\",\"kind\":\"0\",\"orderId\":\"0xabababababababababababababababababababababababababababababababab\",\"v\":\"1\"}",
-    "sha256": "0x816f961cdbd1d8bba7ad7120150923b2d4909d5aac3dc457148ca9bca6a9394f"
+    "text": "{\"cid\":\"bafkreigcb7s62yqtzg3bllkz5q4jsyrmcheqnb2ngkcdwy7oxhrkkzm4se\",\"hash\":\"0xc20fe5ed6213c9b615ad59ec3899622c11c906874d32843b63eeb9e2a5659c91\",\"kind\":\"0\",\"orderId\":\"0xabababababababababababababababababababababababababababababababab\",\"v\":\"1\"}",
+    "sha256": "0xb02a729d658e41c220343b4279a11807961d1984da925b6739c04d4ab6416300"
   },
   "saltedField": {
     "salt": "0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",

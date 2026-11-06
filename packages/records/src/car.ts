@@ -18,7 +18,10 @@ export function cidOfHash(hash: Hex): CID {
   return CID.create(1, raw.code, createDigest(SHA2_256, hexToBytes(hash)));
 }
 
-/** The record hash a raw SHA2-256 CID carries, or null for any other kind of CID. */
+/**
+ * The record hash a raw SHA2-256 CID carries, or null for any other kind of CID, including one
+ * whose digest is not 32 bytes (a truncated SHA-256 would name no document a reader can check).
+ */
 export function hashOfCid(cid: string | CID): Hex | null {
   let parsed: CID;
   try {
@@ -27,6 +30,7 @@ export function hashOfCid(cid: string | CID): Hex | null {
     return null;
   }
   if (parsed.version !== 1 || parsed.code !== raw.code || parsed.multihash.code !== SHA2_256) return null;
+  if (parsed.multihash.digest.length !== 32) return null;
   let hex = '0x';
   for (const b of parsed.multihash.digest) hex += b.toString(16).padStart(2, '0');
   return hex as Hex;

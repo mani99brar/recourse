@@ -9,6 +9,7 @@ import {
   hex32,
   isCanonical,
   packHash,
+  rawCidOfHash,
   recordHash,
   saltedField,
   utf8ToBytes,
@@ -60,6 +61,11 @@ describe('HCS record message', () => {
     ['short order id', { ...good, orderId: '0x12' }],
     ['empty cid', { ...good, cid: '' }],
     ['over 1,024 bytes', { ...good, cid: 'b'.repeat(1000) }],
+    // A cid the hash does not fix could name a document nobody can fetch, or another document.
+    ['a CIDv0', { ...good, cid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG' }],
+    ['an alphanumeric string that is no CID', { ...good, cid: 'notacidatall' }],
+    ['the raw CID of another hash', { ...good, cid: rawCidOfHash(recordHash(utf8ToBytes('another document'))) }],
+    ['a CID of another codec', { ...good, cid: 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi' }],
   ])('rejects %s', (_n, o) => {
     expect(decodeRecordMsg(body(o as Record<string, unknown>)).ok).toBe(false);
   });
@@ -68,6 +74,21 @@ describe('HCS record message', () => {
     expect(decodeRecordMsg(utf8ToBytes(m.text.replace(',', ', '))).ok).toBe(false);
     expect(() => encodeRecordMsg({ ...m.fields, kind: 6 })).toThrow();
     expect(() => encodeRecordMsg({ ...m.fields, cid: 'b'.repeat(1000) })).toThrow();
+    expect(() => encodeRecordMsg({ ...m.fields, cid: rawCidOfHash(recordHash(utf8ToBytes('x'))) })).toThrow(/raw SHA-256 CIDv1/);
+  });
+
+  it('the vector cid is the raw CID of the vector hash', () => {
+    expect(rawCidOfHash(m.fields.hash)).toBe(m.fields.cid);
+  });
+});
+
+describe('raw-block CID', () => {
+  // The court policy is one raw block; its published CID and SHA-256 pin the derivation.
+  it('derives the published CID from a SHA-256', () => {
+    expect(rawCidOfHash('0x5efd65be933b514c8a432d240e5e5bbb7a35bc0e1200849d7bab0290d29286ee')).toBe(
+      'bafkreic67vs35ez3kfgiuqzneqhf4w53pi23ydqsaccj265lakinfeug5y',
+    );
+    expect(() => rawCidOfHash('0x12' as never)).toThrow(RangeError);
   });
 });
 

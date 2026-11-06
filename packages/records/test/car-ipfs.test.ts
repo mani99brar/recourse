@@ -1,4 +1,7 @@
 import { CarBufferReader } from '@ipld/car/buffer-reader';
+import { CID } from 'multiformats/cid';
+import * as raw from 'multiformats/codecs/raw';
+import { create as createDigest } from 'multiformats/hashes/digest';
 import { describe, expect, it } from 'vitest';
 import { canonicalBytes, recordHash, utf8ToBytes } from '@recourse/shared';
 import { cidOfHash, hashOfCid, packCar } from '../src/car.js';
@@ -33,6 +36,12 @@ describe('content addressing', () => {
   it('reads no hash from a CID of another codec or a malformed one', () => {
     expect(hashOfCid('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi')).toBeNull();
     expect(hashOfCid('not-a-cid')).toBeNull();
+  });
+
+  it('reads no hash from a raw SHA-256 CID whose digest is not 32 bytes', () => {
+    const short = CID.create(1, raw.code, createDigest(0x12, new Uint8Array(20).fill(7)));
+    expect(hashOfCid(short)).toBeNull();
+    expect(hashOfCid(short.toString())).toBeNull();
   });
 });
 
@@ -104,9 +113,11 @@ describe('fetching', () => {
     expect(ipfs.gatewayCalls).toBe(0);
   });
 
-  it('reports fetch_failed for a CID the gateway does not have', async () => {
+  it('reports not_found for a CID the gateway does not have, and fetch_failed for a gateway error', async () => {
     const ipfs = new MemoryIpfs();
     const { rootCid, hash } = packCar(doc(0));
-    await expect(fetchDocument(rootCid.toString(), hash, ipfs.options())).rejects.toMatchObject({ code: 'fetch_failed' });
+    await expect(fetchDocument(rootCid.toString(), hash, ipfs.options())).rejects.toMatchObject({ code: 'not_found' });
+    const down = { ...ipfs.options(), fetchImpl: async () => new Response('busy', { status: 503 }) };
+    await expect(fetchDocument(rootCid.toString(), hash, down)).rejects.toMatchObject({ code: 'fetch_failed' });
   });
 });

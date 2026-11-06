@@ -14,6 +14,7 @@ export * from './codes.js';
 export * from './claim.js';
 export * from './ids.js';
 export * from './hashing.js';
+export * from './cid.js';
 export * from './recordMsg.js';
 export * from './codec.js';
 export * from './faultRule.js';

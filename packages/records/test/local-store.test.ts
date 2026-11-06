@@ -99,7 +99,7 @@ describe('local content store', () => {
     expect(same(await fetchDocument(elsewhere.rootCid.toString(), elsewhere.hash, options), doc(8))).toBe(true);
     expect(ipfs.gatewayCalls).toBe(1);
     await expect(fetchDocument(packCar(doc(9)).rootCid.toString(), packCar(doc(9)).hash, { localDir: dir })).rejects.toMatchObject({
-      code: 'fetch_failed',
+      code: 'not_found',
       message: /not in the local store/,
     });
   });
@@ -109,7 +109,7 @@ describe('local content store', () => {
     writeFileSync(join(dir, 'secret'), 'x');
     const hash = recordHash(doc(0));
     for (const cid of ['../secret', 'secret', `${dir}/secret`, 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi']) {
-      await expect(fetchDocument(cid, hash, { localDir: dir })).rejects.toMatchObject({ code: 'fetch_failed' });
+      await expect(fetchDocument(cid, hash, { localDir: dir })).rejects.toMatchObject({ code: 'not_found' });
     }
     expect(await new LocalPinProvider(dir).readPinned('../secret')).toBeNull();
   });
@@ -163,7 +163,7 @@ describe('openPinClient', () => {
     expect(same(await pins.fetch(cid), bytes)).toBe(true);
     expect(same(await pins.fetch(cid, hash), bytes)).toBe(true);
     await expect(pins.fetch(cid, recordHash(doc(11)))).rejects.toMatchObject({ code: 'hash_mismatch' });
-    await expect(pins.fetch('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi')).rejects.toMatchObject({ code: 'fetch_failed' });
+    await expect(pins.fetch('bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi')).rejects.toMatchObject({ code: 'not_found' });
   });
 
   it('fails at once when pinning is not configured', () => {
