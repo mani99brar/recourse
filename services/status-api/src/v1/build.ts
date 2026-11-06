@@ -47,11 +47,13 @@ export const GAS_FLOORS: Partial<Record<string, bigint>> = {
  * fileClaim's gas limit when it cannot be simulated before its approve mines. On Hedera testnet the
  * deployed pair's fileClaim used 559,974 and 559,986 gas (the shop's last two, signed at its x1.3
  * margin as 764,630 and 764,645). The current contracts also freeze the claim's terms and reserve
- * the deposit at filing, four more new storage slots (about 90k), so about 650k. 800k covers both.
+ * the deposit at filing, four more new storage slots (about 90k), so about 650k. On 6 Nov two claims
+ * simulated once their approve had mined needed 802,847 and 802,879 at the x1.3 margin, above the
+ * 800k this was, so the client stopped before sending them; 1,000,000 covers that with room.
  * Hedera testnet bills the gas a call uses (the mirror shows 559,986 used for one of those), so the
  * limit only bounds the fee; a fileClaim that runs out of gas is billed too, and has to be sent again.
  */
-export const FILE_CLAIM_BUDGET = 800_000n;
+export const FILE_CLAIM_BUDGET = 1_000_000n;
 
 export interface UnsignedTx {
   chainId: number;

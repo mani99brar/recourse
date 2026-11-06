@@ -471,7 +471,7 @@ describe('what the person sees', () => {
     expect(html).not.toMatch(/\d mUSDC(?! \(testnet mock\))/);
     expect(html).toContain('Leaves your wallet into the claim&#x27;s escrow');
     expect(html).toContain('Held from the agent company&#x27;s deposit in the vault');
-    expect(html).toContain('At most 0.60918 HBAR');
+    expect(html).toContain('At most 0.75118 HBAR');
     expect(html).toContain('Hedera charges for the gas the call uses');
     expect(html).not.toContain('80%');
     expect(html).toContain('fixed budget');
