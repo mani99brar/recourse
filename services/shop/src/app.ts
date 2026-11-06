@@ -187,11 +187,20 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
       try {
         const route = parseOrderPath(request.path);
         const headers = orderHeaders(request.header);
-        if (route && headers) {
+        const orderId = route && headers ? orderIdOf(headers.platform, config.shopAddress, headers.orderNonce) : null;
+        const earlier = orderId ? book.get(orderId) : undefined;
+        if (orderId && earlier) {
+          // The order was already paid: this second payment is owed back, and must not vanish
+          // behind the first (a second order_paid would be dropped by the book).
+          if (earlier.payment.txId !== s.transaction) {
+            write({ type: 'duplicate_payment', at: now(), orderId, txId: s.transaction, payer: s.payer, amount: s.amount, asset: s.asset, payTo: s.payTo });
+            log.error('duplicate_payment', { orderId, txId: s.transaction, first: earlier.payment.txId, payer: s.payer, amount: s.amount, asset: s.asset });
+          }
+        } else if (route && headers && orderId) {
           write({
             type: 'order_paid',
             at: now(),
-            orderId: orderIdOf(headers.platform, config.shopAddress, headers.orderNonce),
+            orderId,
             orderNonce: headers.orderNonce,
             platform: headers.platform,
             sku: route.item.sku,
@@ -393,7 +402,8 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
         res.status(409).json({ error: 'order_in_flight', orderId });
         return;
       }
-      res.on('close', () => book.end(orderId));
+      // Released when the payment middleware below is done (settled, refused or failed), never on
+      // a client disconnect: settlement goes on without the client.
       body = parsed.data;
     }
     const ctx: OrderContext = { orderId, orderNonce: headers.orderNonce, platform: headers.platform, ...route, body };
@@ -401,7 +411,18 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
     next();
   });
 
-  app.use(payments.middleware);
+  // The payment middleware settles before the handler and resolves once the response is done,
+  // whether or not the client is still connected. The order stays in flight until then, so a
+  // client that gives up and retries with a new payment cannot start a second settle for it.
+  app.use(async (req: Request, res: Response, next: NextFunction) => {
+    const ctx = res.locals.order as OrderContext | undefined;
+    const held = ctx?.body ? ctx.orderId : null;
+    try {
+      await payments.middleware(req, res, next);
+    } finally {
+      if (held) book.end(held);
+    }
+  });
 
   app.post(PING_ROUTE, (req, res) => {
     const settled = payments.settlements.take(paymentHeaderOf(req));
@@ -425,7 +446,16 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
       res.status(500).json({ error: 'settlement_not_captured' });
       return;
     }
-    if (!book.get(ctx.orderId)) {
+    const earlier = book.get(ctx.orderId);
+    if (earlier && earlier.payment.txId !== settled.transaction) {
+      // A second payment for an order already paid: journaled (by the hook, else here) and owed back.
+      if (!earlier.duplicatePayments.some((d) => d.txId === settled.transaction)) {
+        write({ type: 'duplicate_payment', at: now(), orderId: ctx.orderId, txId: settled.transaction, payer: settled.payer, amount: settled.amount, asset: settled.asset, payTo: settled.payTo });
+      }
+      res.status(409).json({ error: 'duplicate_payment', orderId: ctx.orderId, txId: settled.transaction, paidWith: earlier.payment.txId });
+      return;
+    }
+    if (!earlier) {
       // The settlement hook could not journal it; do it now, before anything else.
       write({
         type: 'order_paid',

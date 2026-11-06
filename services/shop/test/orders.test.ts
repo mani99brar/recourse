@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { getAddress } from 'viem';
 import { PrivateKey } from '@hiero-ledger/sdk';
 import { x402Client, x402HTTPClient } from '@x402/core/client';
@@ -8,7 +8,7 @@ import { encodeRecordMsg, newOrderNonce, orderIdOf, type Parties } from '@recour
 import { MemoryLedger, TopicReader, cidOfHash, readJournal } from '@recourse/records';
 import { NONCE_HEADER, PLATFORM_HEADER, type ShopJournalRow } from '../src/app.js';
 import { CATALOG, MAX_QUANTITY, orderPath } from '../src/catalog.js';
-import { fakeFacilitator } from './fake-facilitator.js';
+import { fakeFacilitator, type FakeFacilitator } from './fake-facilitator.js';
 import { TEST_SHOP_ACCOUNT, TEST_SHOP_ADDRESS, startTestShop } from './helpers.js';
 
 const BUYER = '0.0.990200';
@@ -157,6 +157,71 @@ describe('paid orders', () => {
     expect(again.first.status).toBe(409);
     expect((await again.first.json()).error).toBe('order_exists');
     expect(fake.settled).toHaveLength(1);
+  });
+
+  test('keeps an order in flight while it settles, even after the client hung up, and journals a second payment', async () => {
+    const fake = fakeFacilitator();
+    // The first settle waits until released; the client gives up meanwhile.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let entered!: () => void;
+    const inSettle = new Promise<void>((r) => (entered = r));
+    let first = true;
+    const slow: FakeFacilitator = {
+      ...fake,
+      settle: async (payload, requirements) => {
+        if (first) {
+          first = false;
+          entered();
+          await gate;
+        }
+        return fake.settle(payload, requirements);
+      },
+    };
+    const shop = await startTestShop([slow], {}, { parties: PARTIES });
+    cleanup = shop.close;
+    const req = orderRequest(newOrderNonce());
+    const url = `${shop.url}${orderPath('cap-red', 1)}`;
+    const http = buyer();
+    const unpaid = await fetch(url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body) });
+    const required = http.getPaymentRequiredResponse((n) => unpaid.headers.get(n), await unpaid.json().catch(() => undefined));
+    const payload = await http.createPaymentPayload(required);
+    const abort = new AbortController();
+    const hungUp = fetch(url, { method: 'POST', headers: { ...req.headers, ...http.encodePaymentSignatureHeader(payload) }, body: JSON.stringify(req.body), signal: abort.signal }).catch(
+      (e: unknown) => e,
+    );
+    await inSettle;
+    abort.abort();
+    await hungUp;
+    await new Promise((r) => setTimeout(r, 100));
+
+    // A retry while the first payment settles is refused before any payment.
+    const retry = await payOrder(url, req);
+    expect(retry.first.status).toBe(409);
+    expect((await retry.first.json()).error).toBe('order_in_flight');
+
+    // Past the in-flight mark's lifetime a retry goes through, and its payment lands first; the
+    // first settle then completes too. Both are on the journal: the second as owed back.
+    const realNow = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 121_000);
+    try {
+      const late = await payOrder(url, req);
+      expect(late.second!.status).toBe(200);
+      release();
+      for (let i = 0; i < 50 && fake.settled.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+      for (let i = 0; i < 50; i++) {
+        if (readJournal<ShopJournalRow>(`${shop.config.stateDir}/journal.jsonl`).rows.some((r) => r.type === 'duplicate_payment')) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    } finally {
+      clock.mockRestore();
+    }
+    expect(fake.settled).toHaveLength(2);
+    const rows = readJournal<ShopJournalRow>(`${shop.config.stateDir}/journal.jsonl`).rows;
+    expect(rows.map((r) => r.type)).toEqual(['order_paid', 'order_confirmed', 'duplicate_payment']);
+    const view = (await (await fetch(`${shop.url}/orders/${req.orderId}`)).json()) as { order: { duplicatePayments: { txId: string }[]; payment: { txId: string } } };
+    expect(view.order.duplicatePayments.map((d) => d.txId)).toEqual([fake.settled[1]!.txId]);
+    expect(view.order.payment.txId).toBe(fake.settled[0]!.txId);
   });
 
   test('keeps orders across a restart', async () => {
