@@ -152,7 +152,8 @@ export function CastView({ d }: { d: CastBody }) {
 }
 
 export function CastPage() {
-  const { data, error } = usePoll<CastBody>(CAST_READ, 30000);
+  // The API reads the registry at most every 30 s; polling at the usual pace shows a late read as soon as it lands.
+  const { data, error } = usePoll<CastBody>(CAST_READ);
   // The page says itself when the registry is behind; the banner names the other sources.
   const fresh = data ? { ...data, degraded: (data.degraded ?? []).filter((s) => s !== 'identity') } : undefined;
   return (
