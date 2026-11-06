@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "contracts": {
+    "claims": "0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
+    "vault": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
+    "case": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8"
+  },
+  "peers": {
+    "casePeer": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
+    "arbSelector": "3478487238524512106",
+    "claimsPeer": "0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
+    "hederaSelector": "222782988166878823"
+  },
+  "extraArgs": {
+    "toArbitrum": "0x181dcf1000000000000000000000000000000000000000000000000000000000000249f00000000000000000000000000000000000000000000000000000000000000001",
+    "toHedera": "0x181dcf1000000000000000000000000000000000000000000000000000000000000249f00000000000000000000000000000000000000000000000000000000000000001"
+  },
+  "link": {
+    "claims": "0",
+    "case": "0"
+  },
+  "feePoolWei": "10000000000000000",
+  "association": {
+    "vault": "0.0.11329716",
+    "mirrorRows": "1",
+    "checkedAt": "2026-11-06T06:34:38Z"
+  },
+  "sourcify": {},
+  "lock": {},
+  "steps": [
+    {
+      "id": "W3-claims-peer",
+      "chain": "hedera",
+      "call": "setPeer(0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8)",
+      "fromRole": "deployer",
+      "tx": "0xafb362f6359a431922572bc9eda21dab4e817ccf94e6f0dc8459a0b8f923d40a",
+      "at": "2026-11-06T06:31:26Z",
+      "result": "peer = 0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
+      "by": "agentops"
+    },
+    {
+      "id": "W3-case-peer",
+      "chain": "arbitrum",
+      "call": "setPeer(0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C)",
+      "fromRole": "deployer",
+      "tx": "0x8dede3bb76a399c8d07f72befa2f4645c5ec8120ad84955ff69060d0298a7163",
+      "at": "2026-11-06T06:31:37Z",
+      "result": "peer = 0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
+      "by": "agentops"
+    },
+    {
+      "id": "W3a-claims-fee-token",
+      "chain": "hedera",
+      "call": "setFeeToken(0x0000000000000000000000000000000000000000)",
+      "fromRole": "deployer",
+      "tx": "0x421418ee2557c7acc3da4009ad94d9b69794cd2d4a300c96e1fd4cd1cd0de75f",
+      "at": "2026-11-06T06:33:03Z",
+      "result": "feeToken = 0x0000000000000000000000000000000000000000 (native)",
+      "by": "agentops"
+    },
+    {
+      "id": "W5-claims-native",
+      "chain": "hedera",
+      "call": "fundNative() value 3000000000000000000",
+      "fromRole": "platform",
+      "tx": "0x3d7d12dc7b29bfd2912f80ec6a190d379388cd5c3eb96189299eb55b8e5279e2",
+      "at": "2026-11-06T06:33:29Z",
+      "result": "balance 3000000000000000000 weibar",
+      "by": "agentops"
+    },
+    {
+      "id": "W6-fee-pool",
+      "chain": "arbitrum",
+      "call": "fundFeePool() value 10000000000000000",
+      "fromRole": "ops-arb",
+      "tx": "0xcdeb1e02b46cd8092ae12c5fa196b78a10ad30ceb52c3e0653d50b2311ef4dc3",
+      "at": "2026-11-06T06:33:51Z",
+      "result": "feePool 10000000000000000",
+      "by": "agentops"
+    }
+  ]
+}
