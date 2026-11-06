@@ -16,6 +16,12 @@ overrides:
   "@chainlink/contracts>@changesets/get-github-info": "-"
   "@chainlink/contracts>@eslint/eslintrc": "-"
   "@chainlink/local>forge-std": "-"
+  # Security fixes under the Hedera SDK, which pins exact versions (2.85.0, the one @x402/hedera
+  # pins). These are the versions SDK 2.90.1 ships: protobufjs decodes untrusted payment headers
+  # (GHSA-wcpc-wj8m-hjx6, GHSA-94rc-8x27-4472 and later), grpc-js and ws are client-side.
+  "protobufjs@8.2.0": "8.6.6"
+  "@grpc/grpc-js@1.12.6": "1.13.6"
+  "ws@>=8.0.0 <8.21.0": "8.21.0"
 
 # No dependency install scripts run. The ones below are not needed at runtime:
 # esbuild finds its platform binary package without its postinstall check. The native

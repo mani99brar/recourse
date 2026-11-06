@@ -3,7 +3,7 @@ import { PrivateKey } from '@hiero-ledger/sdk';
 import { x402Client, x402HTTPClient } from '@x402/core/client';
 import { createClientHederaSigner } from '@x402/hedera';
 import { ExactHederaScheme } from '@x402/hedera/exact/client';
-import { PING_PRICE_USDC, PING_ROUTE } from '../src/app.js';
+import { MAX_PAYMENT_HEADER_BYTES, PING_PRICE_USDC, PING_ROUTE } from '../src/app.js';
 import { USDC_TOKEN_ID } from '../src/payments.js';
 import { FAKE_FEE_PAYER, fakeFacilitator } from './fake-facilitator.js';
 import { TEST_SHOP_ACCOUNT, startTestShop } from './helpers.js';
@@ -107,6 +107,25 @@ describe('connectivity-check route', () => {
       services: { name: string; endpoint: string; payTo: string }[];
     };
     expect(reg.services[0]).toMatchObject({ name: 'x402', endpoint: `${shop.url}/x402/`, payTo: TEST_SHOP_ACCOUNT });
+  });
+
+  test('an oversized payment header is refused before it is decoded, and a real one fits well under the cap', async () => {
+    const fake = fakeFacilitator();
+    const shop = await startTestShop([fake]);
+    cleanup = shop.close;
+    const res = await fetch(`${shop.url}${PING_ROUTE}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'payment-signature': 'A'.repeat(MAX_PAYMENT_HEADER_BYTES + 1) },
+      body: '{}',
+    });
+    expect(res.status).toBe(431);
+    expect(fake.calls.verify).toBe(0);
+
+    const http = buyer();
+    const first = await fetch(`${shop.url}${PING_ROUTE}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const payload = await http.createPaymentPayload(http.getPaymentRequiredResponse((n) => first.headers.get(n), await first.json().catch(() => undefined)));
+    const header = Object.values(http.encodePaymentSignatureHeader(payload))[0]!;
+    expect(header.length).toBeLessThan(MAX_PAYMENT_HEADER_BYTES / 2);
   });
 
   test('oversized bodies are refused before payment', async () => {

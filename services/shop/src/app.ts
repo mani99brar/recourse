@@ -88,6 +88,9 @@ export function pingPrice(config: ShopConfig): Price {
     : { amount: PING_PRICE_USDC, asset: USDC_TOKEN_ID };
 }
 
+/** Largest payment-signature (or X-PAYMENT) header the shop decodes, in characters of base64. */
+export const MAX_PAYMENT_HEADER_BYTES = 8192;
+
 interface OrderContext {
   orderId: Hex;
   orderNonce: Hex;
@@ -260,6 +263,16 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
   app.use(express.json({ limit: '8kb' }));
+  // A payment header is decoded (base64, JSON, then the Hedera transaction's protobuf) before
+  // anything is verified, so its size is capped first. A real one is well under 4 KB.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const header = paymentHeaderOf(req);
+    if (header !== undefined && header.length > MAX_PAYMENT_HEADER_BYTES) {
+      res.status(431).json({ error: 'payment_header_too_large', max: MAX_PAYMENT_HEADER_BYTES });
+      return;
+    }
+    next();
+  });
 
   app.get('/health', (_req, res) => {
     const ladder = deps.facilitator.state?.();
