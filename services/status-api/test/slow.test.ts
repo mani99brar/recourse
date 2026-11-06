@@ -2,6 +2,7 @@
 // says which reads are behind and how old their values are, and an action's chain read that does
 // not answer fails as upstream_unavailable naming the RPC, well before the action's deadline.
 
+import { getAddress } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { ActionReads } from '../src/chain.js';
@@ -140,6 +141,20 @@ describe('reads on a relay that hangs or fails', () => {
     expect(reads.party).toBeGreaterThanOrEqual(2);
     expect(h.svc.knownCredit(SHOP)).toBe(0n);
     expect(h.svc.degraded()).toEqual([]);
+  });
+
+  it('warm reads again a party whose vault read failed, also one it does not read otherwise', async () => {
+    const { reader, mode } = switchable();
+    const { h } = await boot(reader);
+    const agent = getAddress('0x' + '31'.repeat(20));
+    mode.now = 'fail';
+    await h.svc.party(agent); // the agent's page during a relay blip
+    expect(h.svc.degraded()).toContain('vault');
+    mode.now = 'ok';
+    h.clock.now += 30;
+    await h.svc.warm();
+    expect(h.svc.degraded()).not.toContain('vault');
+    expect(h.svc.stale().filter((s) => s.read === 'vault')).toEqual([]);
   });
 
   it('the legacy routes are bounded the same way', async () => {

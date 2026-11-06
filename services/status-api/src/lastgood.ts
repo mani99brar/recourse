@@ -106,6 +106,11 @@ export class LastGood<T> {
     return { value: e?.value ?? null, readAt: e?.readAt ?? null };
   }
 
+  /** The keys whose last read failed or was not waited for. */
+  behindKeys(): string[] {
+    return [...this.m].filter(([, e]) => e.behind).map(([k]) => k);
+  }
+
   /** Null while every key is current; else the oldest value served in place of a failed or late read (readAt null: a key never read). */
   behind(): { readAt: number | null } | null {
     let out: { readAt: number | null } | null = null;
