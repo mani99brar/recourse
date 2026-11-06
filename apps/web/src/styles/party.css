@@ -1,0 +1,219 @@
+/*
+ * The party page (a shop's or an agent company's worklist) and the header's wallet control.
+ * Shared pieces (cards, .kv rows, pills, tables, .empty) come from components.css; every rule
+ * here is scoped under .party-page or header.top .wallet, and reads the tokens only.
+ */
+
+/* ---------- head: the role, the name, one line on the worklist ---------- */
+.party-page .party-head {
+  margin-bottom: var(--sp-6);
+  padding-bottom: var(--sp-5);
+  box-shadow: inset 0 -1px var(--line);
+}
+.party-page .party-head h1 {
+  max-width: 18ch;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.party-page .party-head .lead {
+  color: var(--mute);
+}
+
+/* ---------- two working columns: the standing beside the worklist, one column on a phone ---------- */
+.party-page .party-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+@media (min-width: 980px) {
+  .party-page .party-cols {
+    grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  }
+}
+.party-page .party-side {
+  display: grid;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+.party-page .party-side > .card,
+.party-page .party-cols > .card {
+  margin-bottom: 0;
+  min-width: 0;
+}
+.party-page .party-cols > .worklist:only-child {
+  grid-column: 1 / -1;
+}
+
+/* ---------- the bonded mark ---------- */
+.party-page .mark {
+  display: block;
+  width: 210px;
+  height: 210px;
+  max-width: 100%;
+  margin: 2px 0 18px;
+  color: var(--fg3);
+  animation: fadein var(--t-slow) ease both;
+}
+.party-page .mark-on {
+  color: var(--fg);
+}
+.party-page .mark text {
+  font-family: var(--font);
+  fill: currentColor;
+}
+.party-page .mark .mark-name {
+  font-stretch: 112%;
+}
+.party-page .mark .mark-amount {
+  font-stretch: var(--semi);
+  font-variant-numeric: tabular-nums;
+}
+/* the ring is drawn dark on a light sheet; on the dark sheet it is turned to light metal */
+html:not([data-theme='light']) .party-page .mark image {
+  filter: invert(1) brightness(0.86);
+}
+@media (max-width: 720px) {
+  .party-page .mark {
+    width: 170px;
+    height: 170px;
+  }
+}
+
+/* ---------- worklist ---------- */
+.party-page .wl-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.party-page .wl-tally li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 12px;
+  border-radius: var(--round);
+  box-shadow: inset 0 0 0 1px rgba(var(--t), 0.38);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+}
+.party-page .wl-tally b {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.party-page .wl-tally li.wl-zero {
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--fg3);
+}
+.party-page .wl-group h3 {
+  margin: 24px 0 6px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-stretch: 108%;
+}
+.party-page .wl-n {
+  font-weight: 400;
+  color: var(--fg3);
+}
+.party-page .worklist .empty {
+  margin-top: 16px;
+}
+.party-page .wl td {
+  vertical-align: middle;
+}
+.party-page .wl .wl-id a {
+  font-size: 14px;
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+.party-page .wl .wl-when {
+  color: var(--fg3);
+  white-space: nowrap;
+}
+.party-page .wl .wl-owed {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* on a phone a claim is one block: its id and status on a line, the other side and the time under them */
+@media (max-width: 600px) {
+  .party-page .wl thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .party-page .wl,
+  .party-page .wl tbody {
+    display: block;
+  }
+  .party-page .wl tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .party-page .wl tr:last-child {
+    border-bottom: 1px solid var(--rule);
+  }
+  .party-page .wl td {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+  .party-page .wl .wl-other,
+  .party-page .wl .wl-owed,
+  .party-page .wl .wl-when {
+    grid-column: 1 / -1;
+    font-size: var(--fs-sm);
+  }
+  .party-page .wl .wl-other {
+    color: var(--fg2);
+  }
+}
+
+/* ---------- the header's wallet: one quiet chip, the account and its network ---------- */
+header.top .wallet-on {
+  gap: 4px;
+  padding: 3px 3px 3px 12px;
+  border-radius: var(--round);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+header.top .wallet-on a.mono {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding-right: 6px;
+  font-size: 13.5px;
+  text-decoration: none;
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+/* the dot says an account is connected; the network's own pill says whether it is ours */
+header.top .wallet-on a.mono::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+header.top .wallet-on a.mono:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+header.top .wallet-on .pill {
+  min-height: 26px;
+}
+header.top .wallet-off .error {
+  max-width: 28ch;
+  font-size: 13px;
+  line-height: 1.3;
+}
