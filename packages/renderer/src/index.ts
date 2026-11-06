@@ -8,7 +8,8 @@
 // a cap, so only an offered price above it counts as a change.
 //
 // An approval signs the text's hash, and the records keep the raw values, so `render` refuses an
-// asked or offered value the text would not show as given (see `shownAsGiven`).
+// asked or offered value the text would not show as given (see `shownAsGiven`) with an
+// UnshowableValueError, which a caller can record as its refusal.
 
 import { ATTRIBUTES, compareDecimal, normalise, parsePrice, sha256, utf8ToBytes, type Attribute, type Attrs } from '@recourse/shared';
 
@@ -105,20 +106,29 @@ function valueOf(attrs: Attrs, attribute: Attribute): string | undefined {
   return normalise(raw) === '' ? undefined : raw;
 }
 
+/** What `render` throws for an asked or offered value it would not show as given. Never quotes the value. */
+export class UnshowableValueError extends RangeError {
+  constructor(
+    readonly section: 'asked' | 'offer',
+    readonly attribute: Attribute,
+  ) {
+    super(
+      `render: the ${section} ${attribute} cannot be shown as given (line breaks, control or invisible characters, repeated spaces, or over ${MAX_VALUE_CHARS} characters)`,
+    );
+    this.name = 'UnshowableValueError';
+  }
+}
+
 /**
  * Throws on a value that `clean` would change beyond trimming its ends: a line break, control or
  * invisible character, a run of spaces, a form that is not NFC, or more than MAX_VALUE_CHARS. Two
  * such values could show as the same text and so give the same hash, while the records keep them
- * apart. The ends are free: the fault rule trims them too. The error never quotes the value.
+ * apart. The ends are free: the fault rule trims them too.
  */
 function shownAsGiven(section: 'asked' | 'offer', attrs: Attrs, attributes: readonly Attribute[]): void {
   for (const attribute of attributes) {
     const v = valueOf(attrs, attribute);
-    if (v !== undefined && clean(v) !== v.trim()) {
-      throw new RangeError(
-        `render: the ${section} ${attribute} cannot be shown as given (line breaks, control or invisible characters, repeated spaces, or over ${MAX_VALUE_CHARS} characters)`,
-      );
-    }
+    if (v !== undefined && clean(v) !== v.trim()) throw new UnshowableValueError(section, attribute);
   }
 }
 
