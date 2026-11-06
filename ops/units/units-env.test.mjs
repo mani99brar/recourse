@@ -6,7 +6,8 @@
 //
 // The first test works the unit files out on paper. The second runs each unit's environment lines in a
 // throwaway transient unit (systemd-run --user) over a fixture env file with dummy values, so it checks what
-// systemd on this host actually passes; it is skipped where systemd-run --user is not available.
+// systemd on this host actually passes. The tests that start such units run only with
+// RECOURSE_TEST_SYSTEMD_RUN=1 (a plain run starts no unit), and are skipped where systemd-run --user fails.
 // UNITS_DIR=<dir> points both at another copy of the unit files.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -101,12 +102,14 @@ test('every key path a service source names is one its unit keeps', () => {
   }
 });
 
-function systemdRunWorks() {
+function systemdRunSkip() {
+  if (process.env.RECOURSE_TEST_SYSTEMD_RUN !== '1') return 'starts throwaway systemd-run --user units: set RECOURSE_TEST_SYSTEMD_RUN=1';
   const r = spawnSync('systemd-run', ['--user', '--wait', '--pipe', '-q', '/bin/true'], { encoding: 'utf8', timeout: 20000 });
-  return r.status === 0;
+  return r.status === 0 ? false : 'no systemd-run --user here';
 }
+const SYSTEMD_RUN_SKIP = systemdRunSkip();
 
-test('systemd on this host passes each unit only what its service reads', { skip: !systemdRunWorks() && 'no systemd-run --user here' }, () => {
+test('systemd on this host passes each unit only what its service reads', { skip: SYSTEMD_RUN_SKIP }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'units-env-'));
   try {
     // Dummy values only: the real env files are never read here.
@@ -169,12 +172,18 @@ test('every long-running unit restarts on failure, has a memory cap and OOMScore
   assert.ok(total < 1536, `the MemoryMax caps add up to ${total}M`);
 });
 
-// A user unit cannot go below its manager's oom_score_adj (100 here): a lower value is raised to it
-// without a warning, so a unit file asking for less would claim a protection it does not get.
-test('systemd on this host gives a user unit the OOMScoreAdjust it asks for', { skip: !systemdRunWorks() && 'no systemd-run --user here' }, () => {
-  const r = spawnSync('systemd-run', ['--user', '--wait', '--pipe', '-q', '-p', 'OOMScoreAdjust=100', '/bin/cat', '/proc/self/oom_score_adj'], { encoding: 'utf8', timeout: 30000 });
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim(), '100');
+// A user unit cannot go below its manager's oom_score_adj (100 here, from user@.service): a lower value is
+// raised to it without a warning, so a unit file asking for less would claim a protection it does not get.
+// Each throwaway unit prints its own value and its parent's, the user manager's.
+test('systemd on this host gives a user unit OOMScoreAdjust=100, and nothing below its manager', { skip: SYSTEMD_RUN_SKIP }, () => {
+  const probe = ['/bin/sh', '-c', 'read a < /proc/self/oom_score_adj; read m < /proc/$PPID/oom_score_adj; echo "$a $m"'];
+  for (const ask of ['100', '0', '-100']) {
+    const r = spawnSync('systemd-run', ['--user', '--wait', '--pipe', '-q', '-p', `OOMScoreAdjust=${ask}`, ...probe], { encoding: 'utf8', timeout: 30000 });
+    assert.equal(r.status, 0, r.stderr);
+    const [got, manager] = r.stdout.trim().split(' ').map(Number);
+    assert.equal(got, Math.max(Number(ask), manager), `OOMScoreAdjust=${ask} gave ${got} under a manager at ${manager}`);
+    if (ask === '100') assert.equal(got, 100);
+  }
 });
 
 test('the watch is a oneshot run by its timer every two minutes, with a cap and OOMScoreAdjust=100', () => {
