@@ -43,7 +43,7 @@ bash ops/units/ctl.sh health tunnel-named        # up: /ready on 127.0.0.1:8790 
 curl -s https://shop.<domain>/health; curl -s https://app.<domain>/api/health
 ```
 
-The quick tunnels keep running beside it until they are stopped, so nothing breaks while the new names are checked.
+The quick tunnels keep running beside it until they are stopped, so nothing breaks while the new names are checked. Option 1 runs the tunnel with its token and this config's ingress; that pairing has not been run on this host yet (no tunnel exists), so check both hostnames before stopping the quick tunnels. If they answer 404 or 503, the token is not picking up the local ingress: `cloudflared tunnel --config ~/.config/recourse/cloudflared.yml run` uses the credentials file the config names instead.
 
 ## After the switch
 
