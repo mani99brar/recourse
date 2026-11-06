@@ -6,6 +6,7 @@ import { READS, usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when, whenS } from '../lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, SIDE_WORDS, STATUS_WORDS, deadlineLabel, statusPlain } from '../lib/words.js';
 import type { NextActor, NextCall, StatusKey } from '@recourse/shared';
+import '../styles/case.css';
 
 export interface CaseDetail extends Fresh {
   claimId: string;
@@ -70,20 +71,26 @@ const STEPS: { label: string; events: string[] }[] = [
 
 const FINAL_KEYS: StatusKey[] = ['settled', 'closed_uncontested', 'closed_undrawn', 'expired', 'unresolved'];
 
-export function Timeline({ events, statusKey }: { events: CaseDetail['events']; statusKey?: StatusKey }) {
+/**
+ * The seven steps from filing to the money, one row each. `facts` holds an optional line per step,
+ * read from the claim itself (who contested, the dispute, the ruling, what was paid).
+ */
+export function Timeline({ events, statusKey, facts = [] }: { events: CaseDetail['events']; statusKey?: StatusKey; facts?: readonly (string | null)[] }) {
   const final = statusKey !== undefined && FINAL_KEYS.includes(statusKey);
   let reachedCurrent = final;
   return (
     <ol className="timeline">
-      {STEPS.map((s) => {
+      {STEPS.map((s, i) => {
         const hit = events.find((e) => s.events.includes(e.name));
         const cls = hit ? 'done' : !reachedCurrent ? 'current' : 'todo';
         if (!hit) reachedCurrent = true;
+        const fact = facts[i] ?? null;
         return (
-          <li key={s.label} className={cls}>
+          <li key={s.label} className={cls} aria-current={cls === 'current' ? 'step' : undefined}>
             <span className="dot" aria-hidden />
             <span className="tl-text">
               <span className="tl-label">{s.label}</span>
+              {fact && <span className="tl-fact">{fact}</span>}
               <span className="tl-when">{hit ? when(hit.time) : cls === 'current' ? 'next' : final ? 'did not happen' : ''}</span>
             </span>
           </li>
@@ -93,16 +100,53 @@ export function Timeline({ events, statusKey }: { events: CaseDetail['events']; 
   );
 }
 
+/** One line per step, from what the claim read says; null where it says nothing more than the step's name. */
+export function stepFacts(d: CaseDetail): (string | null)[] {
+  const closed = d.events.some((e) => e.name === 'ClosedUncontested');
+  const paid = d.money.paid !== null && d.money.paid !== '0' ? `${usdc(d.money.paid, d.vaultToken)} paid from the deposit` : null;
+  return [
+    null,
+    d.precheck ? `At fault: ${SIDE_WORDS[d.precheck.side] ?? d.precheck.side}` : null,
+    d.contest.by ? `Contested by ${d.contest.by === d.platform ? 'the agent company' : 'the shop'}` : closed ? 'Closed with no contest' : d.contest.windowEndsAt && (d.statusKey === 'finding_made' || d.statusKey === 'no_finding') ? `Contest window ends ${when(d.contest.windowEndsAt)}` : null,
+    d.court.attempts > 1 ? `Attempt ${d.court.attempts}` : null,
+    d.court.disputeIds.length > 0 ? `Dispute ${d.court.disputeIds.map((id) => `#${id}`).join(', ')}` : null,
+    d.court.ruling !== null ? `Ruling: ${rulingWord(String(d.court.ruling))}` : null,
+    paid,
+  ];
+}
+
+/** A party named as the claim read names it, linked to its own page. */
+function PartyLink({ address, name, role }: { address: string; name: string | null; role: string }) {
+  return (
+    <a className="party" href={`#/party/${address}`}>
+      <span className="party-name">{name ?? <span className="mono">{short(address)}</span>}</span>
+      <span className="party-role">{role}</span>
+    </a>
+  );
+}
+
 export function CaseView({ d }: { d: CaseDetail }) {
   const word = STATUS_WORDS[d.statusKey];
   const tone = ['settled', 'closed_uncontested', 'closed_undrawn'].includes(d.statusKey) ? 'ok' : ['stuck', 'expired', 'unresolved'].includes(d.statusKey) ? 'bad' : 'wait';
   return (
-    <>
+    <div className="case-page">
       <header className="case-head">
-        <p className="eyebrow">Claim {short(d.claimId)}</p>
+        <p className="eyebrow">
+          Order <span className="mono">{short(d.orderId)}</span>
+        </p>
         <h1>
+          <span className="case-id">
+            Claim <span className="mono">{short(d.claimId)}</span>
+          </span>{' '}
           <Pill tone={tone}>{word.title}</Pill>
         </h1>
+        <p className="case-parties">
+          <PartyLink address={d.shop} name={d.shopName} role="the shop" />
+          <span className="case-v" aria-hidden>
+            v
+          </span>
+          <PartyLink address={d.platform} name={d.platformName} role="the agent company" />
+        </p>
         <p className="lead">{statusPlain(d.statusKey, d.nextCall, d.court.state)}</p>
         {d.nextCall && (
           <p className="next">
@@ -116,11 +160,11 @@ export function CaseView({ d }: { d: CaseDetail }) {
           </p>
         )}
       </header>
+      <Card title="Timeline">
+        <Timeline events={d.events} statusKey={d.statusKey} facts={stepFacts(d)} />
+      </Card>
       <ClaimActions key={d.claimId} d={d} />
       <div className="grid">
-        <Card title="Timeline">
-          <Timeline events={d.events} statusKey={d.statusKey} />
-        </Card>
         <Card title="Money">
           <dl>
             <Row label="Basket">{usdc(d.basketUsdc, d.vaultToken)}</Row>
@@ -205,7 +249,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
           Each record document is fetched by its content id and checked against the hash on the records topic. A record that could not be fetched yet reads as unchecked, never as verified. Buyer details inside the documents appear only as salted hashes.
         </p>
         <div className="table-wrap">
-          <table>
+          <table className="records">
             <thead>
               <tr>
                 <th>Record</th>
@@ -223,7 +267,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
                     {r.held === true ? <Pill tone="ok">verified</Pill> : r.held === null ? <Pill tone="wait">unchecked</Pill> : <Pill tone="bad">not held</Pill>}{' '}
                     <span className="muted small">{r.hashOk === false ? 'content differs from its hash; ' : ''}{!r.payerOk && r.cid ? 'wrong payer; ' : ''}{r.cid && !r.refsMatch ? 'not the one the shop referenced' : ''}</span>
                   </td>
-                  <td className="mono">{r.cid ?? '-'}</td>
+                  <td className="mono hash">{r.cid ?? '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -235,12 +279,12 @@ export function CaseView({ d }: { d: CaseDetail }) {
         <ul className="plain events">
           {d.events.map((e) => (
             <li key={`${e.tx}-${e.name}-${e.time}`}>
-              <span className="mono">{whenS(e.time)}</span> {e.name} <span className="muted small">on {e.chain}</span> <ExtLink href={e.explorer}>{short(e.tx, 4)}</ExtLink>
+              <span className="mono ev-time">{whenS(e.time)}</span> <span className="ev-name">{e.name}</span> <span className="muted small ev-chain">on {e.chain}</span> <ExtLink href={e.explorer}>{short(e.tx, 4)}</ExtLink>
             </li>
           ))}
         </ul>
       </Card>
-    </>
+    </div>
   );
 }
 
@@ -259,10 +303,9 @@ export function RecordCheck({ hashes }: { hashes: string[] }) {
       <label htmlFor="rc">Paste the exact text of a record document. It is hashed here in your browser and nothing is sent anywhere.</label>
       <textarea id="rc" rows={4} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
       {hash && (
-        <p className="mono small">
-          SHA-256: {hash}
-          <br />
-          {idx >= 0 ? <strong>Matches the {KIND_WORDS[idx]} record on this claim.</strong> : 'Does not match any record on this claim.'}
+        <p className="proof">
+          <span className="proof-k">SHA-256</span> <span className="mono">{hash}</span>
+          <span className="proof-says">{idx >= 0 ? <strong>Matches the {KIND_WORDS[idx]} record on this claim.</strong> : 'Does not match any record on this claim.'}</span>
         </p>
       )}
     </div>

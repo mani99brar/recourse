@@ -1,0 +1,312 @@
+/*
+ * The claim page and the action panel. Imported by pages/Case.tsx and actions/ActionFlow.tsx.
+ * Claim rules are scoped under .case-page; the action panel (also used by the file and party pages)
+ * under .act. Colours come only from tokens.css, so both modes follow from the same rules.
+ * Red is the case's progress line and a fault fill, never small text.
+ */
+
+/* ---------- the head: order kicker, "Claim <id>" and its status, the two parties, what it means ---------- */
+.case-page .case-head {
+  margin-bottom: var(--sp-6);
+}
+.case-page .case-head h1 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 22px;
+  margin: 12px 0 18px;
+  font-size: clamp(28px, 4.2vw, 60px);
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.case-page .case-id .mono {
+  display: inline-block;
+  font-size: inherit;
+  font-weight: inherit;
+  font-stretch: 100%;
+  letter-spacing: 0;
+  overflow-wrap: normal;
+}
+.case-page .case-head h1 .pill {
+  flex: none;
+}
+.case-parties {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 18px;
+  margin-bottom: 14px;
+}
+.case-parties .party {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  color: var(--s);
+  text-decoration: none;
+}
+.case-parties .party-name {
+  font-size: 21px;
+  font-weight: 600;
+  font-stretch: var(--semi);
+  line-height: 1.15;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  transition: text-decoration-color var(--t-fast) ease;
+}
+.case-parties .party:hover .party-name {
+  text-decoration-color: currentColor;
+}
+.case-parties .party-name .mono {
+  font-size: inherit;
+  font-weight: inherit;
+}
+.case-parties .party-role {
+  color: var(--mute);
+  font-size: 13.5px;
+}
+.case-parties .case-v {
+  padding-top: 3px;
+  color: var(--mute);
+  font-size: 17px;
+}
+@media (max-width: 600px) {
+  /* the names stack on a phone; their role lines say who is who */
+  .case-parties {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .case-parties .case-v {
+    display: none;
+  }
+}
+.case-page .case-head .lead {
+  color: var(--s);
+}
+
+/* ---------- the seven steps: one row each, the step it is at lit, the red line is the progress ---------- */
+.case-page ol.timeline > li {
+  display: block;
+  padding: 11px 12px 11px 42px;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--fg3);
+}
+.case-page ol.timeline > li:last-child {
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--rule);
+}
+/* the line out of a step (down to the next dot) and the line into it (from the dot above) */
+.case-page ol.timeline > li::before {
+  left: 17px;
+  top: 21px;
+  bottom: 0;
+  width: 2px;
+}
+.case-page ol.timeline > li::after {
+  content: '';
+  position: absolute;
+  left: 17px;
+  top: 0;
+  height: 21px;
+  width: 2px;
+  background: var(--line);
+}
+.case-page ol.timeline > li:first-child::after {
+  display: none;
+}
+.case-page ol.timeline > li.done + li::after {
+  background: var(--r);
+}
+.case-page .timeline .dot {
+  position: absolute;
+  z-index: 1;
+  left: 12px;
+  top: 15px;
+  margin: 0;
+}
+.case-page .tl-text {
+  display: grid;
+  grid-template-columns: minmax(0, 14em) minmax(0, 1fr) auto;
+  grid-template-areas: 'label fact when';
+  align-items: baseline;
+  gap: 2px 18px;
+}
+.case-page .tl-label {
+  grid-area: label;
+  font-size: var(--fs-md);
+  font-weight: 400;
+}
+.case-page .tl-fact {
+  grid-area: fact;
+  font-size: var(--fs-sm);
+}
+.case-page .tl-when {
+  grid-area: when;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.case-page .timeline .done {
+  color: var(--fg);
+}
+.case-page .timeline .done .tl-label {
+  font-weight: 600;
+  font-stretch: 108%;
+}
+.case-page .timeline .done .tl-fact {
+  color: var(--fg2);
+}
+.case-page .timeline .done .tl-when {
+  color: var(--fg3);
+}
+/* the step the claim is at: the lit row */
+.case-page ol.timeline > li.current {
+  padding-block: 18px;
+  border-radius: var(--radius);
+  border-top-color: transparent;
+  background: var(--s);
+  color: var(--k);
+}
+.case-page ol.timeline > li.current + li {
+  border-top-color: transparent;
+}
+.case-page ol.timeline > li.current::before {
+  top: 28px;
+}
+.case-page ol.timeline > li.current::after {
+  height: 28px;
+}
+.case-page .timeline .current .dot {
+  top: 22px;
+  background: var(--k);
+  box-shadow: inset 0 0 0 3px var(--r);
+}
+.case-page .timeline .current .tl-label {
+  font-weight: 700;
+  font-stretch: var(--semi);
+}
+.case-page .timeline .current .tl-fact,
+.case-page .timeline .current .tl-when {
+  color: var(--k);
+}
+.case-page .timeline .current .tl-when {
+  font-weight: 600;
+}
+@media (max-width: 600px) {
+  .case-page .tl-text {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label when'
+      'fact fact';
+  }
+  .case-page .tl-when {
+    white-space: normal;
+  }
+}
+
+/* ---------- records: content ids as hashes; the pasted record's hash as a proof block ---------- */
+.case-page table.records td.hash {
+  color: var(--fg2);
+  font-size: 13px;
+  letter-spacing: 0.01em;
+}
+.case-page table.records td:first-child {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.case-page .proof {
+  margin-top: 14px;
+  padding: 12px 0 14px;
+  border-block: 1px solid var(--rule2);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+}
+.case-page .proof-k {
+  margin-right: 8px;
+  font-weight: 600;
+  font-stretch: 108%;
+}
+.case-page .proof .mono {
+  font-size: 14px;
+}
+.case-page .proof-says {
+  display: block;
+  margin-top: 6px;
+}
+
+/* ---------- everything that happened: a ledger ---------- */
+.case-page ul.events li {
+  gap: 2px 14px;
+}
+.case-page .ev-time {
+  min-width: 12.6em;
+  color: var(--fg3);
+}
+.case-page .ev-name {
+  font-weight: 600;
+}
+
+/* ---------- the action panel: preview, sign, read the result back ---------- */
+.act-stages {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+  counter-reset: none;
+}
+.act-stages > li {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 2px solid var(--line);
+  color: var(--fg3);
+  font-size: 13.5px;
+  line-height: 1.3;
+}
+.act-stages .act-n {
+  margin-right: 6px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.act-stages > li.done {
+  border-top-color: var(--s);
+  color: var(--fg2);
+}
+.act-stages > li.now {
+  border-top-color: var(--s);
+  color: var(--w);
+  font-weight: 600;
+}
+.act .act-intro {
+  max-width: 72ch;
+}
+.act .preview {
+  margin-top: 18px;
+}
+.act .preview > h3:first-child {
+  margin-top: 12px;
+  font-size: 19px;
+  font-stretch: var(--semi);
+}
+.act ol.steps > li .pill {
+  margin-right: 6px;
+}
+.act .tx .mono {
+  font-size: 12.5px;
+}
+/* on the claim page the panel is the claim's next move: an ink edge marks it */
+.case-page .act {
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 3px 0 0 var(--s);
+}
+.act > p.small + label,
+.act > p.small + .fields,
+.act > p.small + label.check-row {
+  margin-top: 14px;
+}
