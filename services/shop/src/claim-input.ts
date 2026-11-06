@@ -11,7 +11,7 @@ import type { FileClaimInput } from './filing.js';
 import { OrderBook, type ShopJournalRow } from './orders.js';
 import { USDC_TOKEN_ID } from './payments.js';
 
-export type ClaimInputErrorCode = 'not_paid' | 'no_ordered_record' | 'ordered_tx_mismatch' | 'ordered_unreadable';
+export type ClaimInputErrorCode = 'not_paid' | 'no_ordered_record' | 'ordered_tx_mismatch' | 'ordered_unreadable' | 'no_packed_record';
 
 export class ClaimInputError extends Error {
   constructor(
@@ -32,6 +32,12 @@ export async function claimInputFor(deps: {
   netLossUsdc?: bigint;
   /** Fetches a record document by CID, checked against its hash. */
   fetchDoc: (cid: string, hash: Hex) => Promise<Uint8Array>;
+  /**
+   * File even though the topic holds no packed record from the shop. Without one the fault rule
+   * answers against the shop from step 6 on (no packed record), so the claim stands only if an
+   * earlier step blames the platform; refused unless this is set.
+   */
+  allowUnpacked?: boolean;
 }): Promise<FileClaimInput & { orderId: Hex; settlement: string }> {
   const book = new OrderBook();
   for (const row of deps.rows) book.apply(row);
@@ -56,6 +62,12 @@ export async function claimInputFor(deps: {
   }
   if (x402TxId !== order.payment.txId) {
     throw new ClaimInputError('ordered_tx_mismatch', `ordered record names ${String(x402TxId)}, the shop settled ${order.payment.txId}`);
+  }
+  if (refs.seq[RecordKind.Packed] === 0n && !deps.allowUnpacked) {
+    throw new ClaimInputError(
+      'no_packed_record',
+      `the topic has no packed record from the shop for ${order.orderId} (shop journal: ${order.status}); without it the fault rule answers against the shop unless the platform is at fault earlier. Pack the order first, or file anyway on purpose`,
+    );
   }
   return { orderId: order.orderId, orderNonce: order.orderNonce, platform: order.platform, refs, basketUsdc, netLossUsdc: deps.netLossUsdc ?? basketUsdc, settlement: order.payment.txId };
 }

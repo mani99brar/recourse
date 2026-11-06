@@ -3,11 +3,15 @@
 // the court fee and the shop's balance of the vault's token (the deployment's USDC); nothing is signed. `--send` approves exactly the court fee and
 // files, once (a rerun finds the claim and sends nothing).
 //
-//   pnpm --filter @recourse/shop file-claim --order <orderId> [--net-loss 1.50] [--send] [--state <dir>]
+//   pnpm --filter @recourse/shop file-claim --order <orderId> [--net-loss 1.50] [--send] [--state <dir>] [--unpacked]
 //   pnpm --filter @recourse/shop file-claim --order <orderId> --local <name>.local.json --rpc http://127.0.0.1:<port> [--send]
 //
 // `--local` files on a local anvil deployment from anvil's development account 4 (the shop role
 // there); otherwise on the Hedera testnet deployment (deployments/hedera.json) from SHOP_KEY_FILE.
+//
+// A claim with no packed record from the shop on the topic is refused (no_packed_record): the fault
+// rule would answer against the shop from step 6 on. `--unpacked` files it anyway, for an order whose
+// platform is at fault in an earlier step.
 
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -31,6 +35,7 @@ async function main(): Promise<number> {
       state: { type: 'string' },
       local: { type: 'string' },
       rpc: { type: 'string' },
+      unpacked: { type: 'boolean', default: false },
     },
   });
   if (!values.order) throw new Error('--order is required');
@@ -66,6 +71,7 @@ async function main(): Promise<number> {
     orderId,
     ...(values['net-loss'] ? { netLossUsdc: parseUnits(values['net-loss'], 6) } : {}),
     fetchDoc: (cid, hash) => fetchDocument(cid, hash, ipfs),
+    allowUnpacked: values.unpacked ?? false,
   });
   const clients = chainClients({ rpcUrl, chainId: deployment.chainId, account });
   const journalName = values.local ? `claims.${values.local.replace(/\.local\.json$/, '')}.jsonl` : 'claims.jsonl';

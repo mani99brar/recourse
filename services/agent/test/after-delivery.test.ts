@@ -10,7 +10,7 @@ import { Journal, RecordsClient, TopicReader, fetchDocument, type RecordsJournal
 import { claimInputFor } from '../../shop/src/claim-input.js';
 import { packOrder } from '../../shop/src/pack.js';
 import type { ShopJournalRow } from '../../shop/src/orders.js';
-import { TEST_SHOP_ACCOUNT } from '../../shop/test/helpers.js';
+import { TEST_SHOP_ACCOUNT, TEST_SHOP_ADDRESS } from '../../shop/test/helpers.js';
 import { reportSigner } from '../src/approval.js';
 import { arrivedBody } from '../src/docs.js';
 import { AGENT, ASKED_CAP, PARTIES, TOPIC, docAt, world, type World } from './world.js';
@@ -70,6 +70,57 @@ describe('packed record', () => {
     });
   });
 
+  test('a rerun commits the journaled document and refuses attributes that differ from it', async () => {
+    w = await world();
+    const { orderId } = await paidOrder(w);
+    const failing = {
+      commitRecord: async () => {
+        throw new Error('HCS submit failed');
+      },
+    } as unknown as RecordsClient;
+    const sizeM: Attrs = { brand: 'Northwind', size: 'M', colour: 'Red', quantity: '1', merchant: 'Test Shop', price: '1 USDC' };
+    await expect(packOrder({ records: failing, journal: w.shop.journal, orderId, merchant: 'Test Shop', attrs: sizeM })).rejects.toThrow('HCS submit failed');
+    await expect(
+      packOrder({ records: shopRecords(w), journal: w.shop.journal, orderId, merchant: 'Test Shop', attrs: { ...sizeM, size: 'L' } }),
+    ).rejects.toThrow(/says size=M; a rerun commits that document, not the attributes given \(size=L\)/);
+    expect(kindsOf(w, orderId).filter((m) => m.kind === RecordKind.Packed)).toEqual([]);
+    // The same flags, or none, commit the journaled document.
+    const packed = await packOrder({ records: shopRecords(w), journal: w.shop.journal, orderId, merchant: 'Test Shop' });
+    expect(await docAt(w, packed.cid)).toMatchObject({ kind: 'packed', orderId, attrs: sizeM });
+  });
+
+  test('an order paid but never confirmed is confirmed from its platform records on the topic, then packed', async () => {
+    w = await world();
+    const { orderId } = await paidOrder(w);
+    const original = w.shop.journal.read().rows.find((r) => r.type === 'order_confirmed' && r.orderId === orderId);
+    expect(original).toBeDefined();
+    const journal = Journal.open<ShopJournalRow>(join(mkdtempSync(join(tmpdir(), 'shop-journal-')), 'journal.jsonl'));
+    try {
+      for (const row of w.shop.journal.read().rows) if (!(row.type === 'order_confirmed' && row.orderId === orderId)) journal.append(row);
+      await expect(packOrder({ records: shopRecords(w), journal, orderId, merchant: 'Test Shop' })).rejects.toThrow(/is paid_unconfirmed/);
+
+      const reader = new TopicReader(w.ledger.mirror(), TOPIC);
+      const noApproval = {
+        refsFor: async (...args: Parameters<TopicReader['refsFor']>) => {
+          const refs = await reader.refsFor(...args);
+          const seq = [...refs.seq] as [bigint, bigint, bigint, bigint, bigint, bigint];
+          seq[RecordKind.Approval] = 0n;
+          return { ...refs, seq };
+        },
+      };
+      await expect(
+        packOrder({ records: shopRecords(w), journal, orderId, merchant: 'Test Shop', confirm: { reader: noApproval, parties: PARTIES, shop: TEST_SHOP_ADDRESS } }),
+      ).rejects.toThrow(/no approval record from its platform/);
+
+      const packed = await packOrder({ records: shopRecords(w), journal, orderId, merchant: 'Test Shop', confirm: { reader, parties: PARTIES, shop: TEST_SHOP_ADDRESS } });
+      expect(packed.existing).toBe(false);
+      const confirmed = journal.read().rows.find((r) => r.type === 'order_confirmed' && r.orderId === orderId);
+      expect(confirmed && confirmed.type === 'order_confirmed' && confirmed.refs).toEqual(original && original.type === 'order_confirmed' && original.refs);
+    } finally {
+      journal.close();
+    }
+  });
+
   test('is refused for an order the shop has no payment for', async () => {
     w = await world();
     await expect(
@@ -126,5 +177,18 @@ describe('claim input', () => {
     const altered = rows.map((r) => (r.type === 'order_paid' && r.orderId === orderId ? { ...r, txId: 'fake-settlement:other' } : r));
     await expect(claimInputFor({ rows: altered, reader, parties: PARTIES, orderId, fetchDoc })).rejects.toMatchObject({ code: 'ordered_tx_mismatch' });
     await expect(claimInputFor({ rows, reader, parties: PARTIES, orderId: `0x${'cd'.repeat(32)}`, fetchDoc })).rejects.toMatchObject({ code: 'not_paid' });
+  });
+
+  test('refuses an order with no packed record from the shop unless told to file anyway', async () => {
+    w = await world();
+    const { buyer, orderId } = await paidOrder(w);
+    await buyer.report(orderId, { attrs: ARRIVED, buyerAccount: w.buyerAccount });
+    const rows = w.shop.journal.read().rows;
+    const reader = new TopicReader(w.ledger.mirror(), TOPIC);
+    const fetchDoc = (cid: string, hash: `0x${string}`) => fetchDocument(cid, hash, w!.ipfs.options());
+    await expect(claimInputFor({ rows, reader, parties: PARTIES, orderId, fetchDoc })).rejects.toMatchObject({ code: 'no_packed_record' });
+    const input = await claimInputFor({ rows, reader, parties: PARTIES, orderId, fetchDoc, allowUnpacked: true });
+    expect(input.refs.seq[RecordKind.Packed]).toBe(0n);
+    expect(input.refs.seq[RecordKind.Ordered]).toBeGreaterThan(0n);
   });
 });
