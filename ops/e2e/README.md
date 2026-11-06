@@ -18,7 +18,10 @@ bash ops/e2e/run.sh --suites --only suites            # pnpm test per package an
 
 Output: `results/<label>/results.md` and `results.json` (header: commit, the deployments' addresses as the
 repo's loaders read them, the run's times); `results/<label>/raw/` holds each part's JSON lines, logs and
-screenshots and is not committed. Exit 1 when any row failed or a step stopped the run.
+screenshots and is not committed. Exit 1 when any row failed or a step stopped the run. A label that already
+has a folder is refused (exit 2), so two attempts never mix in one table; `--replace` runs again under it and
+moves the earlier attempt's raw files into `raw/prev-<time>/`, which the table does not read. `compare.mjs`
+counts a row that passed in one run and is missing from the other as passed in only one run.
 
 ## What runs, in order
 
@@ -36,7 +39,10 @@ screenshots and is not committed. Exit 1 when any row failed or a step stopped t
    with valid and invalid input, checked against the served `openapi.json` (status, schema, typed errors at
    their documented status); each built transaction decoded with `deployments/abi`, checked against
    `/v1/params` addresses, and simulated again on the public RPC. An RPC that does not answer makes the row
-   `blocked`, a revert makes it `fail`. Then the shop's catalog and x402 payment request, and the rate limit.
+   `blocked`, a revert makes it `fail`. A read that would pass while the answer's `meta.degraded` names a chain
+   source (`hedera`, `arbitrum`, `params`, `facts`, `vault`, `live`) is `blocked`, its note naming them and
+   `meta.stale`'s ages: the API served last-good values. `hcs` and `identity` are only noted. Then the shop's
+   catalog and x402 payment request, and the rate limit.
 4. **selftest** (`api-agent.mjs --selftest`): the checks are run on broken copies of real answers and on wrong
    expectations; each row passes only when the broken one fails.
 5. **ui** (`ui-wallet.mjs`): the web app in Chromium with an injected EIP-1193 wallet (the key, in send mode,
@@ -67,13 +73,21 @@ Each step records its transaction hashes, and a step that fails stops the run an
 4. Claim B the same way, then the web app's withdraw as the shop (`--flows withdraw`) and the same read-back.
    Contest, evidence and the next-step panel are not sent: a contest takes the claim to court, which is the
    court case itself.
-5. The payouts came out of the agent company's deposit: `ops/wire/07-deposit.sh <required> --send` (wiring step
-   4.1) tops it up to the API's `required`, then `inGoodStanding` must read true. In mock mode the platform's
+5. The payouts came out of the agent company's deposit. When the API's `balance` is below `required`
+   (`inGoodStanding` is not the test: a vault with a top-up window keeps the party in good standing for that
+   window), `ops/wire/07-deposit.sh <required> --send` (wiring step 4.1) tops it up to `required`; the read-back
+   is `balance` at least `required`, `inGoodStanding` true and no `topUpDeadline`. In mock mode the platform's
    mUSDC is minted by the deployer first (`hedera.sh mint platform`); without it the step stops. The script
    appends a row to `deployments/wiring.json`.
 
 Before the first send: `node ops/e2e/api-agent.mjs --check-signer --as shop` (and `--as platform`) loads each
 key as a send does and prints only its address and balances.
+
+`--restarts` (build session only) restarts web, intake, docket, status-api, precheck, shop and keeper one at a
+time with `ops/units/ctl.sh restart <svc>`, each followed by `ops-checks.sh after <svc>`. Before each it checks
+the plan's step 0 (`ops-checks.sh plan`): no claim within 10 minutes of its `deadline`, no contest window in the
+keeper's `windowsActive`, no `live-order` running; before precheck its queue is 0, before keeper its
+`openIntents` are empty. What it cannot read stops the run. An action in flight in the UI is not seen.
 
 ## Who signs what
 
@@ -102,7 +116,8 @@ key as a send does and prints only its address and balances.
 | deposit top-up | platform | the payouts in mUSDC (basket plus handling fee, about 3 mUSDC per claim from the params); HBAR fee not measured |
 | Arbitrum Sepolia | nobody | 0 ETH: nothing in this round goes to court |
 
-In all, about 4.5 HBAR from the agent, 1.6 HBAR from the shop, 0.4 HBAR from the keeper, and some mUSDC moving
+In all, about 3 HBAR from the agent (the two order prices; its share of the record messages is a few hundredths),
+1.6 HBAR from the shop, 0.4 HBAR from the keeper, and some mUSDC moving
 from the agent company's deposit to the shop. The shop needs at least 1 HBAR and 2 mUSDC before it starts.
 
 ## Parts

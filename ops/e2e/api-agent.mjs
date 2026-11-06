@@ -22,6 +22,10 @@
 // signed or sent. 200 answers are decoded against the generated ABIs and simulated again on the
 // chain's public RPC (eth_call + eth_estimateGas as `from`), so they end as `dry-only`.
 //
+// A read that would pass while its answer's meta.degraded names a chain source (hedera, arbitrum, params,
+// facts, vault, live) is `blocked` instead, with the degraded sources and meta.stale's ages in its note: the
+// API served last-good values, so the path was not tested live. hcs and identity are noted only.
+//
 // --send signs the built transactions with the role's keystore (packages/shared's loadSigner, in this
 // process; the key never leaves it and is never printed), sends them in order on the test chain the
 // answer names (296 or 421614 only, checked against the RPC), waits for each receipt, then reads
@@ -126,6 +130,22 @@ function judge(method, template, r, expect = {}) {
   return { result: problems.length ? 'fail' : 'pass', problems, notes, code };
 }
 
+/** meta.degraded sources whose lag or failed read means a 200 may carry last-good chain values. */
+const CHAIN_SOURCES = new Set(['hedera', 'arbitrum', 'params', 'facts', 'vault', 'live']);
+
+/**
+ * A 2xx answer's meta.degraded and meta.stale, as a note; `blocks` when a chain source is among them, so a
+ * read that passed on values the API could not read live is not counted as a pass. hcs (the records topic
+ * lag) and identity (the ERC-8004 registry, /v1/cast only) are noted only.
+ */
+function degradedNote(r) {
+  const meta = r.status >= 200 && r.status < 300 ? r.json?.meta : null;
+  const deg = Array.isArray(meta?.degraded) ? meta.degraded : [];
+  if (!deg.length) return null;
+  const stale = Array.isArray(meta.stale) ? meta.stale.map((x) => `${x.read} (${(x.upstreams ?? []).join('+')}, ${x.ageS === null || x.ageS === undefined ? 'never read live' : `${x.ageS} s old`})`) : [];
+  return { blocks: deg.some((d) => CHAIN_SOURCES.has(d)), note: `answered while the API reports degraded: ${deg.join(', ')}${stale.length ? `; last-good values: ${stale.join(', ')}` : ''}` };
+}
+
 async function probe(test, method, path, template, opts = {}) {
   const { body, raw, headers, expect, base, after, timeoutMs } = opts;
   const r = await http.request(method, base ? `${base}${path}` : path, { body, raw, headers, timeoutMs });
@@ -150,10 +170,16 @@ async function probe(test, method, path, template, opts = {}) {
     v.problems.push(...extra.problems);
     v.result = 'fail';
   }
-  const result = extra.result && v.result === 'pass' ? extra.result : v.result;
+  let result = extra.result && v.result === 'pass' ? extra.result : v.result;
+  const notes = [...v.notes, ...(extra.notes ?? [])];
+  const deg = degradedNote(rr);
+  if (deg) {
+    notes.push(deg.note);
+    if (deg.blocks && result === 'pass') result = 'blocked';
+  }
   res.add({
     test, path: `${method} ${template}`, input: short(body ?? raw), http: rr.status, ms: rr.ms, result, code: v.code,
-    ...(v.problems.length ? { problems: v.problems } : {}), ...(v.notes.length || extra.notes?.length ? { notes: [...v.notes, ...(extra.notes ?? [])] } : {}),
+    ...(v.problems.length ? { problems: v.problems } : {}), ...(notes.length ? { notes } : {}),
     ...(extra.data ? { data: extra.data } : {}),
   });
   return rr;
@@ -243,7 +269,7 @@ async function discover() {
   ctx.credit = credit;
   res.add({
     test: 'discovery from the API', path: 'GET /v1/params + /v1/claims', result: 'pass',
-    data: { claims: ctx.claims.map((x) => `${x.claimId.slice(0, 10)} ${x.statusKey}`), addresses: { claims: ctx.params.addresses.claims, vault: ctx.params.addresses.vault, recourseCase: ctx.params.addresses.recourseCase }, credit },
+    data: { claims: ctx.claims.map((x) => `${x.claimId.slice(0, 10)} ${x.statusKey}`), addresses: { claims: ctx.params.addresses.claims, vault: ctx.params.addresses.vault, recourseCase: ctx.params.addresses.recourseCase }, credit, degraded: c.json.meta?.degraded ?? null, stale: c.json.meta?.stale ?? null },
   });
   return true;
 }
@@ -481,8 +507,14 @@ async function actions() {
       await action(`follow nextAction ${d.nextAction.action} of ${row.claimId.slice(0, 10)} as its actor ${d.nextAction.actor}`, d.nextAction.action, body, { status: 200 });
     }
   }
-  await action('withdrawCredit as the shop', 'withdrawCredit', { from: as('shop') }, BigInt(credit.shop ?? '0') > 0n ? { status: 200 } : { status: 409, code: 'no_credit' });
-  await action('withdrawCredit as an account with credit (scheme)', 'withdrawCredit', { from: as('scheme') }, BigInt(credit.scheme ?? '0') > 0n ? { status: 200 } : { status: 409, code: 'no_credit' });
+  // A credit discovery could not read is read again; still unread, either answer is the documented one.
+  const creditExpect = async (role) => {
+    const c = credit[role] ?? (await getRetry(`/v1/parties/${as(role)}`)).json?.party?.credit ?? null;
+    if (c === null) return { status: [200, 409] };
+    return BigInt(c) > 0n ? { status: 200 } : { status: 409, code: 'no_credit' };
+  };
+  await action('withdrawCredit as the shop', 'withdrawCredit', { from: as('shop') }, await creditExpect('shop'));
+  await action('withdrawCredit as an account with credit (scheme)', 'withdrawCredit', { from: as('scheme') }, await creditExpect('scheme'));
   await action('withdrawCredit, body sent as text/plain (read as JSON whatever its type)', 'withdrawCredit', { from: as('shop') }, { status: [200, 409] }, { raw: JSON.stringify({ from: as('shop') }), headers: { 'content-type': 'text/plain' } });
 
   // fileClaim with valid input: claimed orders answer claim_exists, by orderId alone and by nonce + platform.
@@ -693,11 +725,13 @@ async function selftest() {
     res.add({ test: 'selftest: /v1/claims did not answer in 4 tries', path: 'selftest GET /v1/claims', http: list.status, result: 'blocked', notes: ['no real answer to test the checks with (an upstream down)'] });
     return 0;
   }
-  if (list.status !== 200 || !list.json?.claims?.length) throw new Error(`claims ${list.status}: no claim to take an answer from`);
-  const id = list.json.claims[0].claimId;
-  const detail = await getRetry(`/v1/claims/${id}`);
+  if (list.status !== 200 || !Array.isArray(list.json?.claims)) throw new Error(`claims ${list.status}: no claims list to take an answer from`);
+  // A new deployment has no claims yet: the claim-detail cases wait for one, the rest run.
+  const id = list.json.claims[0]?.claimId;
+  const detail = id ? await getRetry(`/v1/claims/${id}`) : null;
   const missing = await http.request('GET', `/v1/claims/${HEX32(1n)}`);
-  if (detail.status !== 200 || missing.status !== 404) throw new Error(`claim ${detail.status}, unknown claim ${missing.status}: no answers to test with`);
+  if ((detail && detail.status !== 200) || missing.status !== 404) throw new Error(`claim ${detail?.status}, unknown claim ${missing.status}: no answers to test with`);
+  if (!detail) res.add({ test: 'selftest: the claim detail and claim row cases', path: 'selftest GET /v1/claims/{claimId}', http: list.status, result: 'blocked', notes: ['no claim on this deployment to take an answer from'] });
   const copy = (r, f, extra = {}) => {
     const json = JSON.parse(JSON.stringify(r.json));
     if (f) f(json);
@@ -706,17 +740,19 @@ async function selftest() {
   const C = ['GET', '/v1/claims/{claimId}'];
   const L = ['GET', '/v1/claims'];
   const cases = [
-    ['claim detail as served', ...C, detail, {}, 'pass'],
-    ['claim detail, statusKey not in its enum', ...C, copy(detail, (j) => (j.claim.statusKey = 'bogus')), {}, 'fail'],
-    ['claim detail, claimId deleted (required)', ...C, copy(detail, (j) => delete j.claim.claimId), {}, 'fail'],
-    ['claim detail, claimId a number', ...C, copy(detail, (j) => (j.claim.claimId = 1)), {}, 'fail'],
-    ['claim detail, meta deleted', ...C, copy(detail, (j) => delete j.meta), {}, 'fail'],
-    ['claim detail at HTTP 201 (not documented)', ...C, copy(detail, null, { status: 201 }), {}, 'fail'],
-    ['claim detail served as text/html', ...C, copy(detail, null, { headers: { ...detail.headers, 'content-type': 'text/html' } }), {}, 'fail'],
-    ['claim detail, expected 404 on purpose', ...C, detail, { status: 404, code: 'not_found' }, 'fail'],
+    ...(detail ? [
+      ['claim detail as served', ...C, detail, {}, 'pass'],
+      ['claim detail, statusKey not in its enum', ...C, copy(detail, (j) => (j.claim.statusKey = 'bogus')), {}, 'fail'],
+      ['claim detail, claimId deleted (required)', ...C, copy(detail, (j) => delete j.claim.claimId), {}, 'fail'],
+      ['claim detail, claimId a number', ...C, copy(detail, (j) => (j.claim.claimId = 1)), {}, 'fail'],
+      ['claim detail, meta deleted', ...C, copy(detail, (j) => delete j.meta), {}, 'fail'],
+      ['claim detail at HTTP 201 (not documented)', ...C, copy(detail, null, { status: 201 }), {}, 'fail'],
+      ['claim detail served as text/html', ...C, copy(detail, null, { headers: { ...detail.headers, 'content-type': 'text/html' } }), {}, 'fail'],
+      ['claim detail, expected 404 on purpose', ...C, detail, { status: 404, code: 'not_found' }, 'fail'],
+    ] : []),
     ['claims list as served', ...L, list, {}, 'pass'],
     ['claims list, claims an object', ...L, copy(list, (j) => (j.claims = {})), {}, 'fail'],
-    ['claims list, a row with nextActor not in its enum', ...L, copy(list, (j) => (j.claims[0].nextActor = 'nobody')), {}, 'fail'],
+    ...(detail ? [['claims list, a row with nextActor not in its enum', ...L, copy(list, (j) => (j.claims[0].nextActor = 'nobody')), {}, 'fail']] : []),
     ['unknown claim as served (404 not_found)', ...C, missing, { status: 404, code: 'not_found' }, 'pass'],
     ['unknown claim, expected 400 invalid_field on purpose', ...C, missing, { status: 400, code: 'invalid_field' }, 'fail'],
     ['error, code not in ErrorCode', ...C, copy(missing, (j) => (j.error.code = 'made_up')), {}, 'fail'],

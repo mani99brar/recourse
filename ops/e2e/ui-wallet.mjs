@@ -567,6 +567,13 @@ async function evidenceFlow(vp, account) {
   });
 }
 
+/** Why a claim found open to contest at discovery no longer is (read from the API now), or null if it still is. */
+async function leftContest(claimId) {
+  const r = await crossCheck('GET', `/v1/claims/${claimId}`);
+  const c = r.json?.claim;
+  return c && c.nextCall !== 'contest' ? `the claim left contest during the run: now ${c.statusKey}, next ${c.nextCall ?? 'none'}` : null;
+}
+
 async function contestFlow(vp, account) {
   const d = claimWith((x) => x.nextCall === 'contest');
   if (!d) {
@@ -601,6 +608,11 @@ async function contestFlow(vp, account) {
     await page.goto(`${WEB}/#/claim/${d.claimId}`);
     await settle(page);
     const r = await runAction({ page, log, wallet, vp, title: 'Contest the finding', name: 'contest', flow: `contest-${d.claimId.slice(2, 10)}` });
+    if (!r.offered) {
+      // The window may have closed since discovery: then the panel is rightly gone and the path is not testable.
+      const left = await leftContest(d.claimId);
+      add({ path: 'UI claim contest', test: `Contest the finding: preview, confirm, wallet asked, declined (${vp})`, result: left || r.unreachable ? 'blocked' : 'fail', ...(left || r.unreachable ? { notes: [left ?? 'the page said the status service cannot be reached'] } : { problems: ['the contest panel is missing on a claim whose next call is contest'] }), shot: await shot(page, 'contest-absent', vp) });
+    }
     if (r.refused) add({ path: 'UI claim contest', test: `contest refused ${r.refused.code} (${vp})`, result: r.refused.problems.length ? 'fail' : 'pass', problems: r.refused.problems, shot: await shot(page, 'contest-refused', vp) });
   });
   // The other side sees why it cannot contest, and its build button stays off.
@@ -611,9 +623,12 @@ async function contestFlow(vp, account) {
       await page.goto(`${WEB}/#/claim/${d.claimId}`);
       await settle(page);
       const c = card(page, 'Contest the finding');
+      const shown = await c.count();
       const warned = await c.getByText('This must be signed by').count();
       const disabled = await c.getByRole('button', { name: 'Show what this will do' }).isDisabled().catch(() => false);
-      add({ path: 'UI claim contest', test: `the side that may not contest is told so and cannot build (${vp})`, result: warned && disabled ? 'pass' : 'fail', shot: await shot(page, 'contest-wrong-signer', vp) });
+      const left = shown ? null : await leftContest(d.claimId);
+      const problems = shown ? [...(warned ? [] : ['no "This must be signed by" on the panel']), ...(disabled ? [] : ['the build button is not disabled'])] : left ? [] : ['the contest panel is missing'];
+      add({ path: 'UI claim contest', test: `the side that may not contest is told so and cannot build (${vp})`, result: left ? 'blocked' : problems.length ? 'fail' : 'pass', ...(left ? { notes: [left] } : {}), ...(problems.length ? { problems } : {}), shot: await shot(page, 'contest-wrong-signer', vp) });
     });
   }
 }
