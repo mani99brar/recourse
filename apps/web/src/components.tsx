@@ -3,6 +3,7 @@ import type { VaultToken } from '@recourse/shared';
 import { isRebuilding, type ApiFailure, type Fresh } from './lib/api.js';
 import { mockNote } from './lib/format.js';
 import { useTheme } from './lib/theme.js';
+import { SIDE_WORDS } from './lib/words.js';
 
 export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; error?: ApiFailure | null; token?: VaultToken | undefined }) {
   const notes: string[] = [];
@@ -55,6 +56,15 @@ export function Card({ title, children, id }: { title: string; children: ReactNo
 
 export function Pill({ tone, children }: { tone: 'ok' | 'wait' | 'bad' | 'plain'; children: ReactNode }) {
   return <span className={`pill pill-${tone}`}>{children}</span>;
+}
+
+/**
+ * A side the API names as at fault, in the design's red. Only 'shop' and 'platform' are a fault;
+ * 'neither' and 'none' stay plain words.
+ */
+export function SideWords({ side, suffix = '' }: { side: string; suffix?: string }) {
+  const words = `${SIDE_WORDS[side] ?? side}${suffix}`;
+  return side === 'shop' || side === 'platform' ? <span className="fault">{words}</span> : <>{words}</>;
 }
 
 export function Row({ label, children }: { label: string; children: ReactNode }) {

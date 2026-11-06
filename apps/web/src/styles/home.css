@@ -13,7 +13,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
   align-items: center;
-  max-width: calc(var(--measure) + 160px);
+  max-width: var(--measure);
   min-height: min(78vh, 700px);
   margin: 0 auto;
   padding: var(--sp-7) var(--pad);

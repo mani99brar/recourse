@@ -127,7 +127,7 @@ export function HomePage() {
           Fault rates from cases the court has ruled on, each with its range. Nothing is ranked.
         </Door>
         <Door href="#/cast" kicker="Shops and agent companies" title="Shops and agents">
-          Every shop and agent company registered on Hedera testnet, the orders its records name, and how its claims ended.
+          Every shop and agent company in this demo, the orders its records name, and how its claims ended.
         </Door>
         {wallet.account ? (
           <Door href={`#/party/${wallet.account}`} kicker="Your wallet" title="Your worklist">
@@ -169,6 +169,7 @@ export function HomePage() {
       </Card>
       <Card title="Latest claims">
         {!data && !error && <Loading what="claims" />}
+        {!data && error && <p className="empty">The claims could not be read just now.</p>}
         {data && <ClaimList rows={data.rows.slice(0, 20)} />}
       </Card>
     </>

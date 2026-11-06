@@ -139,6 +139,14 @@ html:not([data-theme='light']) .party-page .mark image {
   font-weight: 600;
   white-space: nowrap;
 }
+/* the pre-check's side, from the claims read, under the other party's name */
+.party-page .wl .wl-fault {
+  display: block;
+  margin-top: 4px;
+  color: var(--fg3);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
 
 /* on a phone a claim is one block: its id and status on a line, the other side and the time under them */
 @media (max-width: 600px) {

@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { WithdrawAction } from '../actions/forms.js';
 import ring from '../assets/ring.webp';
-import { Banner, Card, Loading, Pill, Row } from '../components.js';
+import { Banner, Card, Loading, Pill, Row, SideWords } from '../components.js';
 import { READS, usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when } from '../lib/format.js';
 import { GROUP_WORDS, STATUS_WORDS } from '../lib/words.js';
@@ -17,6 +17,8 @@ interface RowT {
   platform: string;
   updatedAt: string;
   owed: string | null;
+  /** The pre-check's side, as the claims read gives it (ClaimSummary.findingSide). */
+  findingSide?: string | null;
 }
 export interface Standing {
   address?: string;
@@ -88,9 +90,6 @@ export function PartyPage({ address }: { address: string }) {
   const s = data?.standing;
   return (
     <div className="party-page">
-      <Banner fresh={data ?? undefined} error={error} />
-      {error?.status === 400 && <p>That does not look like an address.</p>}
-      {!data && !error && <Loading what="worklist" />}
       {s && (
         <header className="page-head party-head">
           <p className="eyebrow">{roleWord(s.role)}</p>
@@ -98,17 +97,22 @@ export function PartyPage({ address }: { address: string }) {
           <p className="lead">{worklistLine(data.rows, data.groups)}</p>
         </header>
       )}
+      {/* the page opens on its title; what the page knows about its sources follows it */}
+      <Banner fresh={data ?? undefined} error={error} />
+      {error?.status === 400 && <p>That does not look like an address.</p>}
+      {!data && !error && <Loading what="worklist" />}
       {(s || data?.groups) && (
         <div className="party-cols">
           {s && (
             <div className="party-side">
               <StandingCard s={s} address={address} token={data?.vaultToken} />
-              <WithdrawAction key={address.toLowerCase()} address={address} credit={s.credit} token={data?.vaultToken} />
             </div>
           )}
           {data?.groups && <Worklist rows={data.rows} groups={data.groups} role={s?.role ?? 'unknown'} token={data.vaultToken} />}
         </div>
       )}
+      {/* the withdraw panel and its preview get the page's full width, not the narrow standing column */}
+      {s && <WithdrawAction key={address.toLowerCase()} address={address} credit={s.credit} token={data?.vaultToken} />}
     </div>
   );
 }
@@ -256,7 +260,14 @@ export function Worklist({ rows, groups, role, token }: { rows: RowT[]; groups: 
                   <td className="wl-st">
                     <Pill tone="plain">{STATUS_WORDS[r.statusKey]?.title ?? r.statusKey}</Pill>
                   </td>
-                  <td className="wl-other">{otherName(r)}</td>
+                  <td className="wl-other">
+                    {otherName(r)}
+                    {(r.findingSide === 'shop' || r.findingSide === 'platform') && (
+                      <span className="wl-fault">
+                        pre-check: <SideWords side={r.findingSide} suffix=" at fault" />
+                      </span>
+                    )}
+                  </td>
                   {g.key === 'owedToYou' && <td className="wl-owed">{usdc(r.owed, token)}</td>}
                   <td className="wl-when">{when(r.updatedAt)}</td>
                 </tr>

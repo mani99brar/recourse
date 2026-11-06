@@ -1,4 +1,4 @@
-import { Arrow, Banner, ExtLink, Loading, Pill, Row } from '../components.js';
+import { Arrow, Banner, ExtLink, Loading, Pill, Row, SideWords } from '../components.js';
 import '../styles/docket.css';
 import { usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when } from '../lib/format.js';
@@ -43,6 +43,20 @@ function findingWords(c: CastClaim): string {
   if (c.findingSide === null) return 'not pre-checked yet';
   if (c.findingSide === 'none') return 'no finding';
   return `${SIDE_WORDS[c.findingSide] ?? c.findingSide} at fault`;
+}
+
+/** "with <other>; pre-check: <finding>; paid <amount>", the side named at fault in the fault red. */
+function ClaimLine({ c, token }: { c: CastClaim; token: VaultToken | undefined }) {
+  const head = `with ${c.counterpartyName ?? short(c.counterparty)}; pre-check: `;
+  const tail = c.paid !== null ? `; paid ${usdc(c.paid, token)}` : '';
+  if (c.findingSide !== 'shop' && c.findingSide !== 'platform') return <small>{`${head}${findingWords(c)}${tail}`}</small>;
+  return (
+    <small>
+      {head}
+      <SideWords side={c.findingSide} suffix=" at fault" />
+      {tail}
+    </small>
+  );
 }
 
 /** "2 (1 closed, not contested; 1 settled)". */
@@ -99,7 +113,7 @@ function Member({ m, token }: { m: CastMember; token: VaultToken | undefined }) 
             <li key={c.claimId}>
               <span className="claim-main">
                 <a href={`#/claim/${c.claimId}`}>{short(c.claimId)}</a>
-                <small>{`with ${c.counterpartyName ?? short(c.counterparty)}; pre-check: ${findingWords(c)}${c.paid !== null ? `; paid ${usdc(c.paid, token)}` : ''}`}</small>
+                <ClaimLine c={c} token={token} />
               </span>
               <Pill tone="plain">{STATUS_WORDS[c.statusKey]?.title ?? c.statusKey}</Pill>
             </li>
