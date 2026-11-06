@@ -68,6 +68,22 @@ contract RecourseCaseTest is CaseBase {
         vm.expectRevert(IRecourseCase.ZeroGasLimit.selector);
         d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, 0, CLAIM_TIMEOUT);
         vm.expectRevert(IRecourseCase.BadParams.selector);
+        d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, 49_999, CLAIM_TIMEOUT);
+        vm.expectRevert(IRecourseCase.BadParams.selector);
+        d.deploy(address(router), address(link), address(arb), address(reg), sel, owner, ok, 3_000_001, CLAIM_TIMEOUT);
+        vm.expectRevert(IRecourseCase.BadParams.selector); // caseDeadline at the claim timeout
+        d.deploy(
+            address(router),
+            address(link),
+            address(arb),
+            address(reg),
+            sel,
+            owner,
+            RecourseCase.Params(CLAIM_TIMEOUT, 1, 0, 1),
+            RELAY_GAS,
+            CLAIM_TIMEOUT
+        );
+        vm.expectRevert(IRecourseCase.BadParams.selector);
         d.deploy(
             address(router),
             address(link),
@@ -365,12 +381,14 @@ contract RecourseCaseTest is CaseBase {
         fresh.openCase(payload);
     }
 
+    /// @dev From `expiresAt - caseDeadline` on a court round no longer fits: openCase marks the case Stale.
     function test_openCase_staleSpendsNothing() public {
         bytes memory payload = payloadOf(1);
         deliver(payload);
-        vm.warp(T0 + DEADLINE - 1);
+        uint256 openBy = uint256(rc.expiresAt(idOf(1))) - DEADLINE;
+        vm.warp(openBy - 1);
         bytes32 snap = keccak256(abi.encode(rc.feePool(), arb.disputeCount()));
-        vm.warp(T0 + DEADLINE);
+        vm.warp(openBy);
         vm.expectEmit(true, false, false, false, address(rc));
         emit IRecourseCase.ClaimStale(idOf(1));
         uint256 disputeId = rc.openCase(payload);
@@ -385,8 +403,8 @@ contract RecourseCaseTest is CaseBase {
     function test_openCase_justBeforeDeadlineOpens() public {
         bytes memory payload = payloadOf(1);
         deliver(payload);
-        vm.warp(T0 + DEADLINE - 1);
-        assertGt(rc.openCase(payload) + 1, 0);
+        vm.warp(uint256(rc.expiresAt(idOf(1))) - DEADLINE - 1);
+        assertGt(rc.openCase(payload), 0);
         assertEq(uint8(stateOf(idOf(1))), uint8(CaseState.Opened));
     }
 
@@ -841,14 +859,17 @@ contract RecourseCaseTest is CaseBase {
         rc.sweepLink(owner);
         vm.expectRevert(IRecourseCase.ConfigIsLocked.selector);
         rc.lockConfig();
-        // Still allowed after lock, affecting later cases and sends only.
-        rc.setExtraArgs(BridgeCodec.extraArgsFor(250_000));
+        // What the jurors read is frozen with the rest.
+        vm.expectRevert(IRecourseCase.ConfigIsLocked.selector);
         rc.setPolicyURI("/ipfs/bafkreiexample");
+        vm.expectRevert(IRecourseCase.ConfigIsLocked.selector);
         rc.setTemplateText(variantParts(1));
+        // Still allowed after lock, affecting later sends only.
+        rc.setExtraArgs(BridgeCodec.extraArgsFor(250_000));
         vm.stopPrank();
         assertEq(rc.extraArgs(), BridgeCodec.extraArgsFor(250_000));
-        assertEq(rc.policyURI(), "/ipfs/bafkreiexample");
-        assertEq(keccak256(abi.encode(rc.templateParts())), keccak256(abi.encode(variantParts(1))));
+        assertEq(rc.policyURI(), policyURI);
+        assertEq(keccak256(abi.encode(rc.templateParts())), keccak256(abi.encode(variantParts(0))));
     }
 
     function test_config_ownerGates() public {
@@ -885,19 +906,29 @@ contract RecourseCaseTest is CaseBase {
         vm.expectEmit(false, false, false, true, address(rc));
         emit IRecourseCase.ParamsSet(3 hours, 3, 0, 1);
         rc.setParams(3 hours, 3, 0, 1);
+        // A court round as long as the claim timeout would make every case Stale on arrival.
+        vm.expectRevert(IRecourseCase.BadParams.selector);
+        rc.setParams(CLAIM_TIMEOUT, MAX_OPEN, RESEND_GAP, MAX_SENDS);
+        rc.setParams(CLAIM_TIMEOUT - 1, MAX_OPEN, RESEND_GAP, MAX_SENDS);
 
         vm.expectRevert(IRecourseCase.ZeroGasLimit.selector);
         rc.setExtraArgs(BridgeCodec.extraArgsFor(0));
-        vm.expectRevert(IRecourseCase.ZeroGasLimit.selector);
+        vm.expectRevert(IRecourseCase.BadParams.selector);
         rc.setExtraArgs(hex"181dcf10");
-        vm.expectRevert(IRecourseCase.ZeroGasLimit.selector);
+        vm.expectRevert(IRecourseCase.BadParams.selector);
         rc.setExtraArgs(hex"deadbeef0000000000000000000000000000000000000000000000000000000000030d40");
-        vm.expectRevert(IRecourseCase.ZeroGasLimit.selector);
+        vm.expectRevert(IRecourseCase.BadParams.selector);
         rc.setExtraArgs("");
+        vm.expectRevert(IRecourseCase.BadParams.selector);
         rc.setExtraArgs(abi.encodeWithSelector(bytes4(0x97a657c9), uint256(200_000))); // V1
+        vm.expectRevert(IRecourseCase.BadParams.selector);
         rc.setExtraArgs(abi.encodePacked(bytes4(0xa69dd4aa), uint32(200_000), uint16(0))); // V3 prefix
-        vm.expectRevert(IRecourseCase.ZeroGasLimit.selector);
-        rc.setExtraArgs(abi.encodePacked(bytes4(0xa69dd4aa), uint32(0), uint16(0)));
+        vm.expectRevert(IRecourseCase.BadParams.selector);
+        rc.setExtraArgs(BridgeCodec.extraArgsFor(49_999));
+        vm.expectRevert(IRecourseCase.BadParams.selector);
+        rc.setExtraArgs(BridgeCodec.extraArgsFor(3_000_001));
+        rc.setExtraArgs(BridgeCodec.extraArgsFor(50_000));
+        rc.setExtraArgs(BridgeCodec.extraArgsFor(3_000_000));
 
         vm.expectRevert(IRecourseCase.BadParams.selector);
         rc.setPolicyURI("ipfs://bafkrei");
@@ -911,7 +942,7 @@ contract RecourseCaseTest is CaseBase {
     function test_config_extraArgsUsedForLaterSends() public {
         toRuled(1, 1);
         vm.prank(owner);
-        rc.setExtraArgs(BridgeCodec.extraArgsFor(5_000));
+        rc.setExtraArgs(BridgeCodec.extraArgsFor(50_000)); // the lowest allowed, too little for this mock peer
         vm.expectPartialRevert(CCIPLocalRouter.ReceiverError.selector);
         rc.relayRuling(idOf(1));
         vm.prank(owner);
@@ -1065,7 +1096,7 @@ contract RecourseCaseTest is CaseBase {
         uint256 first = receiveAndOpen(1);
         vm.warp(block.timestamp + 8100); // about one court round
         arb.giveRuling(first, 0);
-        vm.warp(block.timestamp + DEADLINE - 1); // inside ruledAt + caseDeadline, past expiresAt
+        vm.warp(block.timestamp + DEADLINE - 1); // past expiresAt, so no court round fits
         assertGe(block.timestamp, rc.expiresAt(idOf(1)));
         uint256 pool = rc.feePool();
         vm.expectEmit(true, false, false, false, address(rc));
@@ -1079,7 +1110,7 @@ contract RecourseCaseTest is CaseBase {
     }
 
     function test_openCase_afterExpirySpendsNothing() public {
-        // Filed 3.5 hours ago: expires in 30 minutes, well before receivedAt + caseDeadline.
+        // Filed 3.5 hours ago: expires in 30 minutes, less than a court round (caseDeadline) away.
         bytes memory payload = _freshPayload(1, 3.5 hours);
         deliver(payload);
         vm.warp(block.timestamp + 30 minutes);

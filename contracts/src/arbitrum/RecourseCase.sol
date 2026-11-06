@@ -29,6 +29,10 @@ import {CaseView, IRecourseCase} from "./IRecourseCase.sol";
 /// the surplus goes back to the caller after every state change, or joins the fee pool if the caller refuses it.
 /// LINK leaves only through `relayRuling` (exactly the quoted fee) and `sweepLink` (before lock). `rule` and the
 /// CCIP receive path never move money, never call out and never revert on data.
+/// Timing: `expiresAt = filedAt + claimTimeout`, where `claimTimeout` is Hedera's claim timeout less a relay budget,
+/// so a ruling this contract accepts (strictly before `expiresAt`) still has that budget to land on Hedera. A case
+/// opens or refiles only while more than `caseDeadline` (the time one court round needs) is left before
+/// `expiresAt`; until then it waits for a free slot and a funded pool instead of going Stale.
 contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
@@ -45,9 +49,11 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
     uint8 internal constant REJECT_UNDECODABLE = 3;
     uint8 internal constant REJECT_VERSION = 4;
 
-    bytes4 internal constant EVM_EXTRA_ARGS_V1_TAG = 0x97a657c9;
-    bytes4 internal constant GENERIC_EXTRA_ARGS_V2_TAG = 0x181dcf10;
-    bytes4 internal constant GENERIC_EXTRA_ARGS_V3_TAG = 0xa69dd4aa;
+    /// @dev RulingBack receive gas on Hedera: above the measured worst case (about 38,000) and at most the lane's cap.
+    uint256 internal constant MIN_GAS_LIMIT = 50_000;
+    uint256 internal constant MAX_GAS_LIMIT = 3_000_000;
+    /// @dev GenericExtraArgsV2: tag, gas limit word, allowOutOfOrderExecution word.
+    uint256 internal constant EXTRA_ARGS_V2_LEN = 68;
 
     // ---------------------------------------------------------------- immutables
 
@@ -115,9 +121,11 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
     /// @param hederaSelector_ CCIP chain selector of Hedera; the only source accepted and the only destination used.
     /// @param owner_ Owner of the configuration and the fee pool.
     /// @param init Start parameters (see `setParams`).
-    /// @param relayGasLimit Receive gas for `RulingBack` on Hedera; becomes `GenericExtraArgsV2` extra args.
-    /// @param claimTimeout_ Hedera's claim timeout after lock: a claim filed at `filedAt` can no longer use a ruling
-    /// from `filedAt + claimTimeout_` on (see `expiresAt`).
+    /// @param relayGasLimit Receive gas for `RulingBack` on Hedera, `MIN_GAS_LIMIT` to `MAX_GAS_LIMIT`; becomes
+    /// `GenericExtraArgsV2` extra args.
+    /// @param claimTimeout_ Hedera's claim timeout after lock less the relay budget (the longest a final ruling may
+    /// take to land there, resends included). From `filedAt + claimTimeout_` on, a case opens nothing and a ruling
+    /// for it is ignored (see `expiresAt`); Hedera still takes a ruling for at least the budget after that.
     constructor(
         address router,
         address link_,
@@ -134,12 +142,13 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         }
         if (hederaSelector_ == 0 || claimTimeout_ == 0) revert BadParams();
         if (relayGasLimit == 0) revert ZeroGasLimit();
+        if (relayGasLimit < MIN_GAS_LIMIT || relayGasLimit > MAX_GAS_LIMIT) revert BadParams();
         LINK = IERC20(link_);
         ARBITRATOR = IArbitratorV2(arbitrator_);
         TEMPLATE_REGISTRY = IDisputeTemplateRegistry(registry);
         HEDERA_SELECTOR = hederaSelector_;
         CLAIM_TIMEOUT = claimTimeout_;
-        _setParams(init.caseDeadline, init.maxOpenCases, init.resendGap, init.maxSends);
+        _setParams(init.caseDeadline, init.maxOpenCases, init.resendGap, init.maxSends, claimTimeout_);
         extraArgs_ = BridgeCodec.extraArgsFor(relayGasLimit);
         emit ExtraArgsSet(extraArgs_);
     }
@@ -214,11 +223,12 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         (bytes32 claimId, Case storage k) = _caseOfPayload(payload);
         if (k.state != CaseState.Received) revert WrongState(claimId, k.state);
         if (keccak256(payload) != k.payloadHash) revert HashMismatch();
-        if (block.timestamp >= uint256(k.receivedAt) + p.caseDeadline || block.timestamp >= k.expiresAt) {
+        if (_noRoundLeft(k)) {
             k.state = CaseState.Stale;
             emit ClaimStale(claimId);
             return 0;
         }
+        // A full cap or a short pool only makes the case wait: it can open once either clears.
         if (openCases >= p.maxOpenCases) revert CapReached();
         openCases += 1;
         disputeId = _open(claimId, k, payload, 1);
@@ -229,7 +239,7 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         (bytes32 claimId, Case storage k) = _caseOfPayload(payload);
         if (k.state != CaseState.RefilePending || k.attempts != 1) revert WrongState(claimId, k.state);
         if (keccak256(payload) != k.payloadHash) revert HashMismatch();
-        if (block.timestamp >= uint256(k.ruledAt) + p.caseDeadline || block.timestamp >= k.expiresAt) {
+        if (_noRoundLeft(k)) {
             k.state = CaseState.Stale;
             _releaseCap();
             emit ClaimStale(claimId);
@@ -249,6 +259,11 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         k.state = CaseState.Stale;
         if (s != CaseState.Received) _releaseCap();
         emit ClaimStale(claimId);
+    }
+
+    /// @dev True from `expiresAt - caseDeadline` on: a dispute opened now could not finish a court round in time.
+    function _noRoundLeft(Case storage k) internal view returns (bool) {
+        return block.timestamp + p.caseDeadline >= k.expiresAt;
     }
 
     /// @dev Pays exactly the live cost, registers the template and creates the dispute, then records it. The case
@@ -276,7 +291,9 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         emit CaseOpened(claimId, disputeId, attempt);
     }
 
-    /// @notice Called by KlerosCore with the ruling. Never reverts for one of our disputes, whatever the ruling.
+    /// @notice Called by KlerosCore with the ruling. Never reverts for one of our disputes, whatever the ruling. A
+    /// ruling at or after `expiresAt` is too late to reach Hedera within the relay budget: it is ignored and the case
+    /// goes Stale, freeing its slot.
     function rule(uint256 disputeID, uint256 ruling) external override {
         if (msg.sender != address(ARBITRATOR)) revert NotArbitrator();
         DisputeRef memory d = disputes[disputeID];
@@ -284,6 +301,13 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         Case storage k = cases[d.claimId];
         if (ruling > NUMBER_OF_CHOICES || k.state != CaseState.Opened || k.attempts != d.attempt) {
             emit RuleIgnored(disputeID, ruling);
+            return;
+        }
+        if (block.timestamp >= k.expiresAt) {
+            k.state = CaseState.Stale;
+            _releaseCap();
+            emit RuleIgnored(disputeID, ruling);
+            emit ClaimStale(d.claimId);
             return;
         }
         k.ruling = uint8(ruling);
@@ -407,11 +431,15 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
         onlyOwner
         beforeLock
     {
-        _setParams(caseDeadline, maxOpenCases, resendGap, maxSends);
+        _setParams(caseDeadline, maxOpenCases, resendGap, maxSends, CLAIM_TIMEOUT);
     }
 
-    function _setParams(uint64 caseDeadline, uint16 maxOpenCases, uint64 resendGap, uint8 maxSends) internal {
-        if (caseDeadline == 0 || maxOpenCases == 0 || maxSends == 0) revert BadParams();
+    /// @dev `caseDeadline` must leave room to open: a value at or above the claim timeout would make every case
+    /// Stale on arrival.
+    function _setParams(uint64 caseDeadline, uint16 maxOpenCases, uint64 resendGap, uint8 maxSends, uint64 timeout)
+        internal
+    {
+        if (caseDeadline == 0 || caseDeadline >= timeout || maxOpenCases == 0 || maxSends == 0) revert BadParams();
         p = Params({caseDeadline: caseDeadline, maxOpenCases: maxOpenCases, resendGap: resendGap, maxSends: maxSends});
         emit ParamsSet(caseDeadline, maxOpenCases, resendGap, maxSends);
     }
@@ -432,34 +460,36 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
 
     /// @inheritdoc IRecourseCase
     function lockConfig() external onlyOwner beforeLock {
+        if (templatePointer == address(0) || bytes(policyURI_).length == 0) revert TemplateNotSet();
+        if (peer == address(0)) {
+            // The no-CCIP claim path: the trusted relay is the only ingress and stays.
+            if (trustedRelay == address(0)) revert PeerNotSet();
+        } else if (trustedRelay != address(0)) {
+            // With CCIP live, a relay could store forged facts under a real claim id ahead of the CCIP copy.
+            trustedRelay = address(0);
+            emit TrustedRelaySet(address(0));
+        }
         locked = true;
         emit ConfigLocked();
     }
 
     /// @inheritdoc IRecourseCase
     function setExtraArgs(bytes calldata newExtraArgs) external onlyOwner {
-        if (_gasLimitOf(newExtraArgs) == 0) revert ZeroGasLimit();
+        if (newExtraArgs.length != EXTRA_ARGS_V2_LEN || bytes4(newExtraArgs[:4]) != BridgeCodec.GENERIC_EXTRA_ARGS_V2_TAG)
+        {
+            revert BadParams();
+        }
+        uint256 gasLimit = uint256(bytes32(newExtraArgs[4:36]));
+        if (gasLimit == 0) revert ZeroGasLimit();
+        if (gasLimit < MIN_GAS_LIMIT || gasLimit > MAX_GAS_LIMIT || uint256(bytes32(newExtraArgs[36:68])) != 1) {
+            revert BadParams();
+        }
         extraArgs_ = newExtraArgs;
         emit ExtraArgsSet(newExtraArgs);
     }
 
-    /// @dev Receive gas named by CCIP extra args (V1, GenericV2 or GenericV3); 0 for anything unreadable.
-    function _gasLimitOf(bytes calldata args) internal pure returns (uint256) {
-        if (args.length < 4) return 0;
-        bytes4 tag = bytes4(args[:4]);
-        if (tag == GENERIC_EXTRA_ARGS_V2_TAG || tag == EVM_EXTRA_ARGS_V1_TAG) {
-            if (args.length < 36) return 0;
-            return uint256(bytes32(args[4:36]));
-        }
-        if (tag == GENERIC_EXTRA_ARGS_V3_TAG) {
-            if (args.length < 8) return 0;
-            return uint256(uint32(bytes4(args[4:8])));
-        }
-        return 0;
-    }
-
     /// @inheritdoc IRecourseCase
-    function setPolicyURI(string calldata uri) external onlyOwner {
+    function setPolicyURI(string calldata uri) external onlyOwner beforeLock {
         bytes calldata b = bytes(uri);
         if (b.length <= 6 || bytes6(b[:6]) != bytes6("/ipfs/")) revert BadParams();
         policyURI_ = uri;
@@ -467,7 +497,7 @@ contract RecourseCase is IRecourseCase, CCIPReceiver, Ownable2Step, ReentrancyGu
     }
 
     /// @inheritdoc IRecourseCase
-    function setTemplateText(string[4] calldata parts) external onlyOwner {
+    function setTemplateText(string[4] calldata parts) external onlyOwner beforeLock {
         bytes memory encoded = abi.encode(parts);
         templatePointer = TextStore.write(encoded);
         emit TemplateTextSet(keccak256(encoded));

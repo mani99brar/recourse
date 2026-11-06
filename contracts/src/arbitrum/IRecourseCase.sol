@@ -27,19 +27,26 @@ struct CaseView {
 /// from a trusted relay), becomes one Kleros dispute paid from a team-funded fee pool, is refiled once if the court
 /// refuses, and its final ruling is sent back to Hedera over CCIP.
 ///
-/// State machine (no transition goes backwards; Stale, Ruled and Relayed are final for the court):
+/// State machine (no transition goes backwards; Stale, Ruled and Relayed are final for the court). `openBy` is
+/// `expiresAt - caseDeadline`, the last moment a full court round still fits:
 ///   None -> Received        `_ccipReceive` or `relayClaim` with a valid, new claim
-///   Received -> Opened      `openCase` before `receivedAt + caseDeadline` and `expiresAt` (attempt 1, openCases + 1)
-///   Received -> Stale       `openCase` at or after that deadline or `expiresAt`, or `markStale` (never counted)
-///   Opened -> RefilePending `rule` on attempt 1 with ruling 0
-///   Opened -> Ruled         `rule` on attempt 1 with ruling 1-3, or on attempt 2 with ruling 0-3 (openCases - 1)
-///   Opened -> Stale         `markStale` at or after `expiresAt`, no ruling yet (openCases - 1)
-///   RefilePending -> Opened `refile` before `ruledAt + caseDeadline` and before `expiresAt` (attempt 2)
-///   RefilePending -> Stale  `refile` at or after either, or `markStale` at or after `expiresAt` (openCases - 1)
+///   Received -> Opened      `openCase` before `openBy`, with a free slot and a funded pool (attempt 1, openCases + 1);
+///                           a full cap (`CapReached`) or a short pool (`FeePoolLow`) reverts and the case waits
+///   Received -> Stale       `openCase` at or after `openBy`, or `markStale` at or after `expiresAt` (never counted)
+///   Opened -> RefilePending `rule` on attempt 1 with ruling 0, before `expiresAt`
+///   Opened -> Ruled         `rule` before `expiresAt`, on attempt 1 with ruling 1-3, or on attempt 2 with ruling 0-3
+///                           (openCases - 1)
+///   Opened -> Stale         `rule` at or after `expiresAt` (the ruling is ignored), or `markStale` at or after
+///                           `expiresAt` (openCases - 1)
+///   RefilePending -> Opened `refile` before `openBy`, with a funded pool (attempt 2); a short pool reverts and waits
+///   RefilePending -> Stale  `refile` at or after `openBy`, or `markStale` at or after `expiresAt` (openCases - 1)
 ///   Ruled -> Relayed        first `relayRuling`; later sends keep Relayed
 ///
-/// `expiresAt = filedAt + claimTimeout`: from then on Hedera no longer takes a ruling for the claim, so the case
-/// spends nothing more and anyone may free its open-case slot. A ruling that arrives for a Stale case is ignored.
+/// `expiresAt = filedAt + claimTimeout`, and this contract's `claimTimeout` is Hedera's less a relay budget. From
+/// `expiresAt` on the case spends nothing more, a ruling for it is ignored, and anyone may free its open-case slot.
+/// Hedera counts its own expiry from `preCheckedAt` (`filedAt` for a claim never pre-checked) with the longer
+/// timeout, so every ruling accepted here has at least the relay budget to land there; a late pre-check shortens
+/// the court's time here, never Hedera's.
 ///
 /// `ClaimRejected` reasons: 1 wrong source chain selector, 2 sender is not the peer, 3 undecodable payload (bad
 /// length, dirty word or bad code), 4 unknown payload version.
@@ -107,19 +114,22 @@ interface IRecourseCase is IArbitrableV2 {
 
     /// @notice Opens attempt 1 for a Received claim. Anyone may call. Pays exactly the live arbitration cost from
     /// the fee pool, registers the template (`previewTemplate(payload)`), creates the dispute and emits
-    /// `DisputeRequest` and `CaseOpened` in this transaction. At or after `receivedAt + caseDeadline` or
-    /// `expiresAt` it marks the claim Stale, emits `ClaimStale`, spends nothing and returns 0.
+    /// `DisputeRequest` and `CaseOpened` in this transaction. At or after `expiresAt - caseDeadline` it marks the
+    /// claim Stale, emits `ClaimStale`, spends nothing and returns 0. Before that a full cap reverts `CapReached`
+    /// and a short pool `FeePoolLow`; the claim stays Received and can open once they clear.
     /// @param payload The exact `ClaimToCourt` bytes from `ClaimReceived`.
     function openCase(bytes calldata payload) external returns (uint256 disputeId);
 
-    /// @notice Opens attempt 2 for a RefilePending claim, with the template text and policy current now. Anyone
-    /// may call; at most once per claim. At or after `ruledAt + caseDeadline` or `expiresAt` it marks the claim
-    /// Stale, frees its slot, spends nothing and returns 0.
+    /// @notice Opens attempt 2 for a RefilePending claim. Anyone may call; at most once per claim. At or after
+    /// `expiresAt - caseDeadline` it marks the claim Stale, frees its slot, spends nothing and returns 0. Before
+    /// that a short pool reverts `FeePoolLow` and the claim keeps its slot and waits.
     function refile(bytes calldata payload) external returns (uint256 disputeId);
 
-    /// @notice Sends the final ruling to Hedera. Anyone may call, at most `maxSends` times, `resendGap` apart.
-    /// With no value attached the fee is paid in LINK held by this contract. With value attached the fee is paid
-    /// from `msg.value` and any surplus is returned to the caller; the fee pool is never used for relays.
+    /// @notice Sends the final ruling to Hedera. Anyone may call, at most `maxSends` times, `resendGap` apart, even
+    /// after a copy was delivered. With no value attached the fee is paid in LINK held by this contract. With value
+    /// attached the fee is paid from `msg.value` and any surplus is sent back to the caller; if the caller refuses
+    /// it, the surplus joins the fee pool (only the owner can withdraw it). The fee pool never pays a relay.
+    /// Only a case Ruled strictly before `expiresAt` can be relayed: `rule` makes a later ruling Stale.
     function relayRuling(bytes32 claimId) external payable returns (bytes32 messageId);
 
     /// @notice Marks a Received, Opened or RefilePending claim Stale once `expiresAt` has passed, frees its
@@ -138,28 +148,34 @@ interface IRecourseCase is IArbitrableV2 {
     function withdrawFeePool(uint256 amount) external;
     /// @notice Hedera peer (`RecourseClaims`). Before lock only.
     function setPeer(address peer_) external;
-    /// @notice Before lock only. `maxOpenCases`, `maxSends` and `caseDeadline` must be non-zero.
+    /// @notice Before lock only. `maxOpenCases` and `maxSends` must be non-zero. `caseDeadline` is the time one
+    /// court round needs (court 8's four periods plus a margin for the draw): a case opens or refiles only while
+    /// more than that is left before `expiresAt`. It must be non-zero and below `claimTimeout`.
     function setParams(uint64 caseDeadline, uint16 maxOpenCases, uint64 resendGap, uint8 maxSends) external;
     /// @notice Address allowed to call `relayClaim`; zero turns it off. Before lock only.
     function setTrustedRelay(address relay) external;
     /// @notice Sends all LINK held to `to`. Before lock only.
     function sweepLink(address to) external;
-    /// @notice Ends every before-lock power. One way.
+    /// @notice Ends every before-lock power. One way. Reverts `TemplateNotSet` without the template text and the
+    /// policy, and `PeerNotSet` with neither a peer nor a trusted relay. With a peer set it clears any trusted
+    /// relay (emitting `TrustedRelaySet(0)`), so CCIP is the only way in.
     function lockConfig() external;
-    /// @notice CCIP extra args for ruling relays (a non-zero gas limit). Always; affects later sends only.
+    /// @notice CCIP extra args for ruling relays: GenericExtraArgsV2 (68 bytes), a gas limit from 50,000 to
+    /// 3,000,000 and out-of-order execution on. Always; affects later sends only.
     function setExtraArgs(bytes calldata extraArgs_) external;
-    /// @notice `/ipfs/<cid>` of the court policy. Always; affects cases opened afterwards only.
+    /// @notice `/ipfs/<cid>` of the court policy. Before lock only; affects cases opened afterwards only.
     function setPolicyURI(string calldata uri) external;
-    /// @notice The four fixed template parts. Always; affects cases opened afterwards only.
+    /// @notice The four fixed template parts, which include what rulings 1, 2 and 3 mean. Before lock only;
+    /// affects cases opened afterwards only.
     function setTemplateText(string[4] calldata parts) external;
 
     // ---------------------------------------------------------------- views
 
     function caseOf(bytes32 claimId) external view returns (CaseView memory);
-    /// @notice `filedAt + claimTimeout` of a stored claim (0 when unknown): no dispute opens and no slot is held
-    /// from then on.
+    /// @notice `filedAt + claimTimeout` of a stored claim (0 when unknown): no ruling is taken and no slot is held
+    /// from then on, and no dispute opens from `expiresAt - caseDeadline` on.
     function expiresAt(bytes32 claimId) external view returns (uint64);
-    /// @notice Hedera's claim timeout after lock, fixed at deploy.
+    /// @notice Hedera's claim timeout after lock less the relay budget, fixed at deploy.
     function claimTimeout() external view returns (uint64);
     /// @notice Claim and attempt of one of our disputes; zero claim id when unknown.
     function claimOfDispute(uint256 disputeId) external view returns (bytes32 claimId, uint8 attempt);
