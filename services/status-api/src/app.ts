@@ -28,13 +28,15 @@ export function createApp(svc: StatusService): express.Express {
     next();
   });
 
-  // Every response carries how fresh each source is, which are late, and the token its vault
-  // amounts are in (the deployment's: Circle USDC, or the testnet mock mUSDC).
+  // Every response carries how fresh each source is, which are late, the token its vault amounts
+  // are in (the deployment's: Circle USDC, or the testnet mock mUSDC), and, until every contract
+  // is locked, what the owner can still change.
   const wrap = (fn: (req: Request) => Promise<object> | object) => async (req: Request, res: Response, next: NextFunction) => {
     try {
       if (svc.d.store.rebuilding) throw new ApiError(503, 'rebuilding');
       const body = await fn(req);
-      res.json({ ...body, asOf: svc.asOf(), degraded: svc.degraded(), vaultToken: svc.d.deployments.token });
+      const configLock = await svc.configLock();
+      res.json({ ...body, asOf: svc.asOf(), degraded: svc.degraded(), vaultToken: svc.d.deployments.token, configLock });
     } catch (e) {
       next(e);
     }

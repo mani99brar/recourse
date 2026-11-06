@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { PrecheckResult, VaultToken } from '@recourse/shared';
 import { Banner, Card, Loading, Pill, Row } from '../components.js';
-import { ApiFailure, getApi, usePoll } from '../lib/api.js';
+import { ApiFailure, getApi, usePoll, type Fresh } from '../lib/api.js';
 import { parseUsdc, usdc } from '../lib/format.js';
 import { precheckFromRecords, type ServedRecord, type PrecheckOutcome } from '../lib/precheck.js';
 import { KIND_WORDS, REASON_WORDS, SIDE_WORDS } from '../lib/words.js';
@@ -12,7 +12,7 @@ interface OrderRecords {
   claimId: string | null;
   records: ServedRecord[];
 }
-interface ParamsBody {
+interface ParamsBody extends Fresh {
   params: { claims: { courtFeeUsdc: string; contestWindow: string; handlingBase: string; handlingBps: string; handlingCap: string } };
   vaultToken?: VaultToken;
 }
@@ -79,7 +79,7 @@ export function FilePage() {
       <p className="lead">
         Load the records of an order and see what the pre-check would say. This page only checks. It does not sign, send or file anything; a shop files through its own service.
       </p>
-      <Banner error={params.error} token={token} />
+      <Banner fresh={params.data ?? undefined} error={params.error} token={token} />
       <Card title="1. The order">
         <label htmlFor="oid">Order id</label>
         <input id="oid" value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="0x…" spellCheck={false} />

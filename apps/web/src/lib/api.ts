@@ -25,6 +25,8 @@ export interface Fresh {
   degraded?: string[];
   /** The deployment's vault token: every vault amount in the body is in it. */
   vaultToken?: VaultToken;
+  /** Until every contract is locked, what the owner can still change (`notice`, plain words). */
+  configLock?: { allLocked: boolean | null; notice: string | null };
 }
 
 export interface PollState<T> {

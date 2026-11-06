@@ -231,6 +231,9 @@ export function fakeReader(over: Partial<Reader> = {}): Reader & { calls: string
     async party() {
       return { deposit: 100_000_000n, required: 10_000_000n, credit: 0n, topUpDeadline: 0n, inGoodStanding: true, openClaims: 0n, exitRequestedAt: 0n, shopEscrow: 0n };
     },
+    async locks() {
+      return { claims: false, vault: false, case: false };
+    },
     ...over,
   };
   return new Proxy(r, {

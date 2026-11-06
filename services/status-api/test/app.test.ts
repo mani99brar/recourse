@@ -105,6 +105,45 @@ describe('http api', () => {
     expect(s.hits[0].type).toBe('claim');
   });
 
+  it('says on every response what the owner can still change until all three contracts are locked', async () => {
+    const { url, b } = await boot();
+    for (const path of ['/params', '/claims', `/claims/${b.claimId}`, `/parties/${'0x' + '22'.repeat(20)}`, '/search?q=1']) {
+      const body = (await (await fetch(`${url}${path}`)).json()) as any;
+      expect(body.configLock, path).toMatchObject({ claims: false, vault: false, case: false, allLocked: false });
+      expect(body.configLock.notice, path).toMatch(/owner can .*decide rulings/);
+    }
+  });
+
+  it('drops the notice once every contract is locked, names only what is still open, and stops reading', async () => {
+    const locked = { claims: true, vault: true, case: false };
+    const reader = fakeReader({ locks: async () => ({ ...locked }) });
+    const sim = new Sim();
+    const b = buildClaim(sim, 'settled', 1);
+    const store = new Store();
+    ingest(store, sim);
+    const h = harness({ store, now: Number(b.now), reader });
+    const first = await h.svc.configLock();
+    expect(first.allLocked).toBe(false);
+    expect(first.notice).toMatch(/court-case contract/);
+    expect(first.notice).not.toMatch(/claims contract|on the vault/);
+    locked.case = true;
+    expect((await h.svc.configLock()).notice).not.toBeNull(); // read at most once a minute
+    h.clock.now += 61;
+    await h.svc.configLock(); // starts the refresh
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await h.svc.configLock()).toMatchObject({ allLocked: true, notice: null });
+    const reads = reader.calls.filter((c) => c.startsWith('locks')).length;
+    h.clock.now += 3600;
+    await h.svc.configLock();
+    expect(reader.calls.filter((c) => c.startsWith('locks')).length).toBe(reads);
+  });
+
+  it('with the locks unread, says so instead of claiming either way', async () => {
+    const reader = fakeReader({ locks: async () => Promise.reject(new Error('rpc down')) });
+    const h = harness({ reader });
+    expect(await h.svc.configLock()).toMatchObject({ allLocked: null, notice: expect.stringMatching(/could not be read/) });
+  });
+
   it('reports unreachable docket and precheck without failing the page', async () => {
     const { url, b } = await boot();
     const d = (await (await fetch(`${url}/claims/${b.claimId}`)).json()) as any;

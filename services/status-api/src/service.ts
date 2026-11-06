@@ -32,7 +32,7 @@ import {
   type FoldedClaim,
   type Money,
 } from './join.js';
-import { TtlCache, type CaseParams, type ClaimsParams, type PartyViews, type Reader, type VaultParams } from './live.js';
+import { TtlCache, type CaseParams, type ClaimsParams, type ConfigLocks, type PartyViews, type Reader, type VaultParams } from './live.js';
 import type { Store } from './store.js';
 import type { HcsRecord, IndexedEvent, SourceName } from './types.js';
 
@@ -96,6 +96,7 @@ export class StatusService {
   private facts$: TtlCache<Awaited<ReturnType<Reader['facts']>>>;
   private ext = new TtlCache<unknown>(10_000);
   private lastGood: LiveParamBundle | null = null;
+  private locks: { flags: ConfigLocks | null; at: number; pending: Promise<void> | null } = { flags: null, at: -Infinity, pending: null };
   private hcsOrder: { size: number; map: Map<string, HcsRecord[]> } = { size: -1, map: new Map() };
 
   constructor(readonly d: ServiceDeps) {
@@ -162,6 +163,31 @@ export class StatusService {
     }
     if (this.lastGood === null && this.d.reader !== null && this.d.store.claimIds().length > 0) out.push('params');
     return out;
+  }
+
+  /**
+   * Whether the owner can still change the rules. Read at most once a minute, in the background
+   * after the first read (a slow RPC never holds a response), and never again once all three
+   * contracts are locked: `lockConfig` cannot be undone.
+   */
+  async configLock(): Promise<ConfigLockView> {
+    const l = this.locks;
+    const r = this.d.reader;
+    if (!(l.flags && l.flags.claims && l.flags.vault && l.flags.case) && r && this.d.nowS() - l.at >= 60 && l.pending === null) {
+      const at = this.d.nowS();
+      l.pending = r
+        .locks()
+        .then((f) => {
+          l.flags = f;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          l.at = at;
+          l.pending = null;
+        });
+    }
+    if (l.flags === null && l.pending) await l.pending;
+    return configLockView(l.flags);
   }
 
   asOf(): { hedera: number | null; arbitrum: number | null; hcs: number | null } {
@@ -678,6 +704,47 @@ export const DISCLOSED_POWERS = [
   { name: 'setTemplateText', contract: 'case', effect: 'Changes the dispute template used for cases opened afterwards.' },
   { name: 'withdrawFeePool', contract: 'case', effect: 'Returns unused fee-pool money (team money) to the owner. It never touches shop or platform funds.' },
 ] as const;
+
+export interface ConfigLockView {
+  claims: boolean | null;
+  vault: boolean | null;
+  case: boolean | null;
+  /** True once all three are locked; null while not read. */
+  allLocked: boolean | null;
+  /** What the owner can still do, in plain words; null once every contract is locked. */
+  notice: string | null;
+}
+
+/** What each contract's owner can change until that contract's config is locked. */
+const OWNER_POWERS = {
+  claims:
+    'on the claims contract, change the contest window, the claim timeout, the court fee and the handling fee, replace the pre-check signer, and choose where rulings come from (the bridge peer, the bridge mode and the account that records rulings), which lets the owner decide rulings',
+  vault: 'on the vault, change the top-up window, the exit delay and the minimum deposit, and choose which claims contract can move deposits',
+  case: 'on the court-case contract, change the case deadline, the open-case limit and the resend rules, and replace the bridge peer and the trusted relay',
+} as const;
+
+export function configLockView(f: ConfigLocks | null): ConfigLockView {
+  if (f === null) {
+    return {
+      claims: null,
+      vault: null,
+      case: null,
+      allLocked: null,
+      notice: 'Whether the contracts are locked could not be read. Until it is, assume the owner can still change the claim rules and decide rulings.',
+    };
+  }
+  const open = (['claims', 'vault', 'case'] as const).filter((k) => !f[k]);
+  return {
+    claims: f.claims,
+    vault: f.vault,
+    case: f.case,
+    allLocked: open.length === 0,
+    notice:
+      open.length === 0
+        ? null
+        : `Not every contract is locked yet. Until it is, the owner can ${open.map((k) => OWNER_POWERS[k]).join('; and ')}. Once all three are locked, none of this can change.`,
+  };
+}
 
 const TERMINAL_KEYS: ReadonlySet<StatusKey> = new Set(['settled', 'closed_uncontested', 'closed_undrawn', 'expired']);
 const STATUS_SET: ReadonlySet<string> = new Set([

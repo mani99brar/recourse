@@ -5,6 +5,8 @@ import { mockNote } from './lib/format.js';
 
 export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; error?: ApiFailure | null; token?: VaultToken | undefined }) {
   const notes: string[] = [];
+  // The owner's remaining powers come first: they bear on every figure the page shows.
+  if (fresh?.configLock?.notice) notes.push(fresh.configLock.notice);
   const mock = mockNote(token ?? fresh?.vaultToken);
   if (mock) notes.push(mock);
   if (error) {

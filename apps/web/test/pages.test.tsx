@@ -83,6 +83,12 @@ describe('pages render', () => {
     expect(renderToString(<Banner token={mock} />)).toContain('worth nothing');
     expect(renderToString(<Banner fresh={{ vaultToken: CIRCLE_VAULT_TOKEN }} />)).toBe('');
   });
+  it('says what the owner can still change until the contracts are locked, and nothing after', () => {
+    const notice = 'Not every contract is locked yet. Until it is, the owner can change things.';
+    expect(renderToString(<Banner fresh={{ configLock: { allLocked: false, notice } }} />)).toContain('Not every contract is locked yet');
+    expect(renderToString(<Banner fresh={{ configLock: { allLocked: true, notice: null } }} />)).toBe('');
+    expect(renderToString(<CaseView d={detail('at_court')} />)).not.toContain('locked');
+  });
   it('degraded and unreachable states show a banner, not a crash', () => {
     expect(renderToString(<Banner fresh={{ degraded: ['hedera'] }} />)).toContain('running late');
     expect(renderToString(<Banner error={new ApiFailure(0, 'unreachable')} />)).toContain('cannot be reached');

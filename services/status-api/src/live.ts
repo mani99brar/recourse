@@ -79,6 +79,15 @@ export interface Reader {
   executionState(chain: 'hedera' | 'arbitrum', messageId: Hex): Promise<number>;
   kleros(disputeId: bigint): Promise<KlerosRead>;
   party(address: Address): Promise<PartyViews>;
+  /** The three config locks alone (three calls, against about fifteen for `facts`). */
+  locks(): Promise<ConfigLocks>;
+}
+
+/** Claims and vault `configLocked`, case `locked`. A lock is one-way: once true it stays true. */
+export interface ConfigLocks {
+  claims: boolean;
+  vault: boolean;
+  case: boolean;
 }
 
 export interface ViemReaderConfig {
@@ -193,6 +202,16 @@ export class ViemReader implements Reader {
       vault: { owner: await this.owner(h, this.cfg.vault, vaultAbi), configLocked: vaultLocked, totals: { deposits: totals[0], escrow: totals[1], credits: totals[2] } },
       case: { owner: await this.owner(a, ca, caseAbi), locked, peer: cpeer, trustedRelay, extraArgs: cextra, policyURI, feePool, openCases: Number(openCases) },
     };
+  }
+
+  async locks(): Promise<ConfigLocks> {
+    const blockNumber = await this.arbBlock();
+    const [claims, vault, kase] = await Promise.all([
+      this.hedera.readContract({ address: this.cfg.claims, abi: claimsAbi, functionName: 'configLocked' }),
+      this.hedera.readContract({ address: this.cfg.vault, abi: vaultAbi, functionName: 'configLocked' }),
+      this.arb.readContract({ address: this.cfg.caseAddress, abi: caseAbi, functionName: 'locked', blockNumber }),
+    ]);
+    return { claims, vault, case: kase };
   }
 
   async caseOf(claimId: Hex): Promise<RawCaseView> {
