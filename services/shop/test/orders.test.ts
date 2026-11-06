@@ -104,11 +104,13 @@ describe('order gate', () => {
 
   test('checks the platform standing when the check is on', async () => {
     let answer: boolean | Error = false;
+    let exitRequestedAt = 0n;
     const standing = {
       inGoodStanding: async () => {
         if (answer instanceof Error) throw answer;
         return answer;
       },
+      exitRequestedAt: async () => exitRequestedAt,
     };
     const shop = await startTestShop([fakeFacilitator()], { standingCheck: 'vault' }, { parties: PARTIES, standing });
     cleanup = shop.close;
@@ -123,6 +125,11 @@ describe('order gate', () => {
     expect((await unreadable.json()).error).toBe('standing_unreadable');
     answer = true;
     expect((await send()).status).toBe(402);
+    // A platform that asked to leave the vault is not sold to, though still in good standing.
+    exitRequestedAt = 1_800_000_000n;
+    const leaving = await send();
+    expect(leaving.status).toBe(403);
+    expect((await leaving.json()).error).toBe('platform_exit_requested');
   });
 });
 

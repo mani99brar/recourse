@@ -26,6 +26,7 @@ export function testConfig(overrides: Partial<ShopConfig> = {}): ShopConfig {
     mirrorUrl: 'http://127.0.0.1:9/api/v1',
     stateDir: mkdtempSync(join(tmpdir(), 'shop-test-')),
     standingCheck: 'off',
+    standingCheckSource: 'test',
     topicId: null,
     displayName: 'Test Shop',
     shopAddress: TEST_SHOP_ADDRESS,

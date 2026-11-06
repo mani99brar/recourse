@@ -84,8 +84,15 @@ export async function startShop(
     payToSource: config.payToSource,
     priceAsset: config.priceAsset,
     standingCheck: config.standingCheck,
+    standingCheckSource: config.standingCheckSource,
     topicId: config.topicId,
   });
+  if (config.standingCheck === 'off') {
+    log.warn('standing_check_off', {
+      source: config.standingCheckSource,
+      note: 'orders are taken from any party-map platform, whatever its deposit standing or exit request',
+    });
+  }
   const host = options.host ?? '127.0.0.1';
   const server = await new Promise<Server>((resolve, reject) => {
     const s = shop!.app.listen(config.port, host, () => resolve(s));

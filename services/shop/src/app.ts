@@ -358,9 +358,10 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
     }
     if (config.standingCheck === 'vault') {
       let ok: boolean;
+      let exitRequestedAt: bigint;
       try {
         if (!deps.standing) throw new Error('no standing reader');
-        ok = await deps.standing.inGoodStanding(headers.platform);
+        [ok, exitRequestedAt] = await Promise.all([deps.standing.inGoodStanding(headers.platform), deps.standing.exitRequestedAt(headers.platform)]);
       } catch (error) {
         log.warn('standing_unreadable', { platform: headers.platform, error: error instanceof Error ? error.message.slice(0, 200) : String(error) });
         res.status(503).json({ error: 'standing_unreadable' });
@@ -368,6 +369,12 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
       }
       if (!ok) {
         res.status(403).json({ error: 'platform_not_in_good_standing' });
+        return;
+      }
+      if (exitRequestedAt !== 0n) {
+        // Its deposit is on its way out: a claim filed once the exit is due would be refused.
+        log.warn('platform_exit_requested', { platform: headers.platform, exitRequestedAt: exitRequestedAt.toString() });
+        res.status(403).json({ error: 'platform_exit_requested' });
         return;
       }
     }

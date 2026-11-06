@@ -2,10 +2,12 @@
 // are passed on to the loaders by env var name.
 
 import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Address } from 'viem';
 import { addressBook, partyByRole, priceAssetOf, type PriceAsset } from '@recourse/shared';
 import { readParties } from '@recourse/shared/node';
 import { displayNameOf, hederaAccountOf, recordsTopicId } from '@recourse/records';
+import { deploymentsDir } from './chain.js';
 import { parseFacilitatorUrls } from './facilitators.js';
 
 type Env = Record<string, string | undefined>;
@@ -25,6 +27,8 @@ export interface ShopConfig {
   mirrorUrl: string;
   stateDir: string;
   standingCheck: StandingCheck;
+  /** Why the standing check is on or off: SHOP_STANDING_CHECK, or the default and its reason. */
+  standingCheckSource: string;
   topicId: string | null;
   displayName: string;
   /** The shop's EVM address (the order id's shop), from the party map; null until it exists. */
@@ -35,8 +39,7 @@ export function loadShopConfig(env: Env = process.env, defaults: { stateDir: str
   const port = Number(env.SHOP_PORT ?? '8720');
   if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('SHOP_PORT: not a port number');
   const priceAsset = priceAssetOf(env);
-  const standingCheck = (env.SHOP_STANDING_CHECK ?? 'off').toLowerCase();
-  if (standingCheck !== 'off' && standingCheck !== 'vault') throw new Error('SHOP_STANDING_CHECK: expected off or vault');
+  const { standingCheck, standingCheckSource } = standingCheckOf(env);
   const shop = hederaAccountOf('shop', env);
   return {
     port,
@@ -48,10 +51,29 @@ export function loadShopConfig(env: Env = process.env, defaults: { stateDir: str
     mirrorUrl: env.HEDERA_MIRROR_URL || addressBook.hedera.mirrorUrl,
     stateDir: defaults.stateDir,
     standingCheck,
+    standingCheckSource,
     topicId: topicIdOrNull(env),
     displayName: displayNameOf('shop', env),
     shopAddress: env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? partyByRole(readParties(env), 'shop').evmAddress : null,
   };
+}
+
+/**
+ * SHOP_STANDING_CHECK when set. Otherwise `vault` once the Hedera deployment is recorded
+ * (deployments/hedera.json) and HEDERA_RPC_URL_1 names a relay to read the vault through, so a
+ * deployed shop sells only to platforms in good standing; `off` before that.
+ */
+export function standingCheckOf(env: Env): { standingCheck: StandingCheck; standingCheckSource: string } {
+  const raw = env.SHOP_STANDING_CHECK;
+  if (raw !== undefined && raw !== '') {
+    const standingCheck = raw.toLowerCase();
+    if (standingCheck !== 'off' && standingCheck !== 'vault') throw new Error('SHOP_STANDING_CHECK: expected off or vault');
+    return { standingCheck, standingCheckSource: 'SHOP_STANDING_CHECK' };
+  }
+  const record = join(deploymentsDir(env), 'hedera.json');
+  if (!existsSync(record)) return { standingCheck: 'off', standingCheckSource: `default: ${record} does not exist` };
+  if (!env.HEDERA_RPC_URL_1) return { standingCheck: 'off', standingCheckSource: 'default: HEDERA_RPC_URL_1 is not set' };
+  return { standingCheck: 'vault', standingCheckSource: `default: ${record} exists` };
 }
 
 function topicIdOrNull(env: Env): string | null {

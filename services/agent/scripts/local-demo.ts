@@ -195,6 +195,7 @@ export async function runLocalDemo(options: DemoOptions): Promise<DemoResult & {
         mirrorUrl: `${mirrorUrl}/api/v1`,
         stateDir: join(options.stateDir, 'shop'),
         standingCheck: 'vault',
+        standingCheckSource: 'local demo',
         topicId: DEMO_TOPIC,
         displayName: MERCHANT,
         shopAddress,
