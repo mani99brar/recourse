@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Parties } from '@recourse/shared';
 import { loadKeyBytes, loadSigner, readParties } from '@recourse/shared/node';
 import { Journal, TopicReader, createLogger, hederaAccountOf, mirrorFromEnv, type Logger } from '@recourse/records';
 import { createShopApp, type ShopApp, type ShopJournalRow } from './app.js';
@@ -54,6 +55,18 @@ export function ladderRungs(config: ShopConfig, env: Env): RungSpec[] {
   );
 }
 
+/**
+ * The party map the shop checks platforms and payers against. A PARTIES_FILE that names no file is
+ * an error. With no PARTIES_FILE the shop does not start, unless SHOP_ALLOW_NO_PARTIES=1 says this
+ * is a local run that takes any platform and does not check payers.
+ */
+export function shopParties(env: Env, log: Logger): Parties | null {
+  if (env.PARTIES_FILE) return readParties(env);
+  if (env.SHOP_ALLOW_NO_PARTIES !== '1') throw new Error('PARTIES_FILE: not set (SHOP_ALLOW_NO_PARTIES=1 starts a local shop without it)');
+  log.warn('parties_missing', { note: 'any platform is accepted and payers are not checked: SHOP_ALLOW_NO_PARTIES=1' });
+  return null;
+}
+
 export interface RunningShop {
   config: ShopConfig;
   shop: ShopApp;
@@ -68,6 +81,8 @@ export async function startShop(
 ): Promise<RunningShop> {
   const env = options.env ?? process.env;
   const log = options.log ?? createLogger('shop');
+  // Before anything is opened or asked: a shop with a mistyped party map never starts.
+  const parties = shopParties(env, log);
   const config = loadShopConfig(env, { stateDir: DEFAULT_STATE_DIR });
   if (options.port !== undefined) config.port = options.port;
   log.info('shop_state', { stateDir: config.stateDir, source: env.SHOP_STATE_DIR ? 'SHOP_STATE_DIR' : 'default' });
@@ -83,8 +98,7 @@ export async function startShop(
   await ladder.select(Math.max(0, (options.firstRung ?? 1) - 1));
   // The order id's shop address: the party map's, else the address of the shop key.
   const shopAddress = config.shopAddress ?? loadSigner('SHOP_KEY_FILE', env).address;
-  const parties = env.PARTIES_FILE && existsSync(env.PARTIES_FILE) ? readParties(env) : null;
-  if (!parties) log.warn('parties_missing', { note: 'any platform is accepted and payers are not checked until the party map exists' });
+  if (!config.topicId) log.warn('topic_missing', { note: 'complaints are refused until HCS_RECORDS_TOPIC_ID names the records topic' });
   shop = createShopApp({
     config: { ...config, shopAddress },
     facilitator: ladder,

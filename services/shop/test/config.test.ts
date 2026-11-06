@@ -2,7 +2,8 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { DEFAULT_STATE_DIR, assertShopJournal, shopStateDir } from '../src/boot.js';
+import { memoryLogger } from '@recourse/records';
+import { DEFAULT_STATE_DIR, assertShopJournal, shopParties, shopStateDir } from '../src/boot.js';
 import { loadShopConfig } from '../src/config.js';
 
 const BASE = { HEDERA_ACCOUNT_IDS: 'shop=0.0.990100', X402_FACILITATOR_URLS: 'https://facilitator.invalid', HCS_RECORDS_TOPIC_ID: '0.0.7000001' };
@@ -50,5 +51,30 @@ describe('state folder', () => {
     expect(() => assertShopJournal(dir)).toThrow('set SHOP_STATE_DIR');
     writeFileSync(join(dir, 'journal.jsonl'), '');
     expect(() => assertShopJournal(dir)).not.toThrow();
+  });
+});
+
+describe('party map', () => {
+  const log = memoryLogger();
+
+  test('a PARTIES_FILE that names no file stops the shop', () => {
+    const missing = join(mkdtempSync(join(tmpdir(), 'shop-parties-')), 'parites.json');
+    expect(() => shopParties({ PARTIES_FILE: missing }, log)).toThrow('PARTIES_FILE');
+  });
+
+  test('no PARTIES_FILE stops the shop unless SHOP_ALLOW_NO_PARTIES=1 says it is a local run', () => {
+    expect(() => shopParties({}, log)).toThrow('SHOP_ALLOW_NO_PARTIES=1');
+    expect(() => shopParties({ SHOP_ALLOW_NO_PARTIES: 'yes' }, log)).toThrow('PARTIES_FILE: not set');
+    expect(shopParties({ SHOP_ALLOW_NO_PARTIES: '1' }, log)).toBeNull();
+  });
+
+  test('reads the party map it names', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'shop-parties-')), 'parties.json');
+    const parties = [
+      { role: 'platform', evmAddress: '0x00000000000000000000000000000000000000A1', hederaAccountId: '0.0.990001', hcsWriters: ['0.0.990300'], displayName: 'Demo Agent Co' },
+      { role: 'shop', evmAddress: '0x00000000000000000000000000000000000000b2', hederaAccountId: '0.0.990100', hcsWriters: ['0.0.990100'], displayName: 'Test Shop' },
+    ];
+    writeFileSync(path, JSON.stringify(parties));
+    expect(shopParties({ PARTIES_FILE: path }, log)?.map((p) => p.role)).toEqual(['platform', 'shop']);
   });
 });

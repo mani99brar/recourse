@@ -190,7 +190,8 @@ export function createPayments(options: PaymentsOptions): ShopPayments {
     const r = ctx.result as SettleResponse;
     const settled: SettledPayment = {
       transaction: r.transaction,
-      payer: r.payer ?? '',
+      // A facilitator may leave the payer out of its settle reply: the payload names the account debited.
+      payer: r.payer || payerOfPayload(ctx.paymentPayload, ctx.requirements) || '',
       amount: r.amount ?? ctx.requirements.amount,
       asset: ctx.requirements.asset,
       payTo: ctx.requirements.payTo,

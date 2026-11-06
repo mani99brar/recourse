@@ -262,4 +262,82 @@ describe('paid orders', () => {
     const view = (await (await fetch(`${shop.url}/orders/${req.orderId}`)).json()) as { order: { complaint: unknown } };
     expect(view.order.complaint).toEqual({ seq: String(seq), hash, cid });
   });
+
+  test('refuses every complaint while it has no topic reader to check one against', async () => {
+    const shop = await startTestShop([fakeFacilitator()], {}, { parties: PARTIES });
+    cleanup = shop.close;
+    const req = orderRequest(newOrderNonce());
+    expect((await payOrder(`${shop.url}${orderPath('cap-red', 1)}`, req)).second!.status).toBe(200);
+    const hash = H(55);
+    const res = await fetch(`${shop.url}/orders/${req.orderId}/complaint`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ orderId: req.orderId, seq: '9', hash, cid: cidOfHash(hash).toString() }),
+    });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe('complaint_check_unavailable');
+    const view = (await (await fetch(`${shop.url}/orders/${req.orderId}`)).json()) as { order: { complaint: unknown } };
+    expect(view.order.complaint).toBeNull();
+  });
+
+  test('takes the payer from the payment when the facilitator leaves it out of its settle reply', async () => {
+    const fake = fakeFacilitator();
+    const quiet: FakeFacilitator = {
+      ...fake,
+      settle: async (payload, requirements) => {
+        const settled = await fake.settle(payload, requirements);
+        delete (settled as { payer?: string }).payer;
+        return settled;
+      },
+    };
+    const shop = await startTestShop([quiet], {}, { parties: PARTIES });
+    cleanup = shop.close;
+    const req = orderRequest(newOrderNonce());
+    const { second } = await payOrder(`${shop.url}${orderPath('cap-red', 1)}`, req);
+    expect(second!.status).toBe(200);
+    expect(await second!.json()).toMatchObject({ status: 'paid', payer: BUYER });
+    const rows = readJournal<ShopJournalRow>(`${shop.config.stateDir}/journal.jsonl`).rows;
+    expect(rows.map((r) => r.type)).toEqual(['order_paid', 'order_confirmed']);
+  });
+
+  test('an order paid by another request while the standing was read is not settled again', async () => {
+    const fake = fakeFacilitator();
+    let hold: Promise<void> | null = null;
+    let release!: () => void;
+    let entered!: () => void;
+    const inStanding = new Promise<void>((r) => (entered = r));
+    const standing = {
+      inGoodStanding: async () => {
+        const h = hold;
+        hold = null;
+        if (h) {
+          entered();
+          await h;
+        }
+        return true;
+      },
+      exitRequestedAt: async () => 0n,
+    };
+    const shop = await startTestShop([fake], { standingCheck: 'vault' }, { parties: PARTIES, standing });
+    cleanup = shop.close;
+    const req = orderRequest(newOrderNonce());
+    const url = `${shop.url}${orderPath('cap-red', 1)}`;
+    const body = JSON.stringify(req.body);
+    const signed = async () => {
+      const http = buyer();
+      const unpaid = await fetch(url, { method: 'POST', headers: req.headers, body });
+      const required = http.getPaymentRequiredResponse((n) => unpaid.headers.get(n), await unpaid.json().catch(() => undefined));
+      return { ...req.headers, ...http.encodePaymentSignatureHeader(await http.createPaymentPayload(required)) };
+    };
+    const [a, b] = [await signed(), await signed()];
+    hold = new Promise<void>((r) => (release = r));
+    const slow = fetch(url, { method: 'POST', headers: a, body });
+    await inStanding;
+    expect((await fetch(url, { method: 'POST', headers: b, body })).status).toBe(200);
+    release();
+    const late = await slow;
+    expect(late.status).toBe(409);
+    expect((await late.json()).error).toBe('order_exists');
+    expect(fake.settled).toHaveLength(1);
+  });
 });

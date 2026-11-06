@@ -66,7 +66,7 @@ export interface ShopAppDeps {
   /** The party map. Without it (local runs only) any platform is accepted and payers are not checked. */
   parties?: Parties | null;
   standing?: StandingReader | null;
-  /** Topic reader, to check that a complaint points at a real arrived record. */
+  /** Topic reader, to check that a complaint points at a real arrived record. Without it complaints are refused. */
   reader?: TopicReader | null;
   /** Mirror node, to resolve settles of unknown outcome. Without it they stay open. */
   mirror?: MirrorTxReader | null;
@@ -414,6 +414,16 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
         res.status(400).json({ error: 'order_id_mismatch', orderId });
         return;
       }
+      // Another request may have paid for the order, or left a settle open, while the standing was read.
+      const paidMeanwhile = book.get(orderId);
+      if (paidMeanwhile) {
+        res.status(409).json({ error: 'order_exists', order: paidMeanwhile });
+        return;
+      }
+      if (book.openSettlements(orderId).length > 0) {
+        res.status(409).json({ error: 'order_settle_pending', orderId });
+        return;
+      }
       if (!book.begin(orderId)) {
         res.status(409).json({ error: 'order_in_flight', orderId });
         return;
@@ -546,21 +556,24 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
       res.json({ ok: true, orderId: order.orderId, complaint: order.complaint, duplicate: true });
       return;
     }
-    if (deps.reader) {
-      const records = await deps.reader.readOrderRecords(order.orderId);
-      const writers = parties ? partyByAddress(parties, order.platform)?.hcsWriters ?? [] : null;
-      const found = records.find(
-        (m) =>
-          m.kind === 5 &&
-          String(m.seq) === parsed.data.seq &&
-          m.hash === parsed.data.hash &&
-          m.cid === parsed.data.cid &&
-          (writers === null || (m.payer !== null && writers.includes(m.payer))),
-      );
-      if (!found) {
-        res.status(400).json({ error: 'complaint_not_on_topic' });
-        return;
-      }
+    // Without a topic reader the pointer cannot be checked, and the first one taken would stand.
+    if (!deps.reader) {
+      res.status(503).json({ error: 'complaint_check_unavailable' });
+      return;
+    }
+    const records = await deps.reader.readOrderRecords(order.orderId);
+    const writers = parties ? partyByAddress(parties, order.platform)?.hcsWriters ?? [] : null;
+    const found = records.find(
+      (m) =>
+        m.kind === 5 &&
+        String(m.seq) === parsed.data.seq &&
+        m.hash === parsed.data.hash &&
+        m.cid === parsed.data.cid &&
+        (writers === null || (m.payer !== null && writers.includes(m.payer))),
+    );
+    if (!found) {
+      res.status(400).json({ error: 'complaint_not_on_topic' });
+      return;
     }
     write({ type: 'complaint', at: now(), orderId: order.orderId, seq: parsed.data.seq, hash: parsed.data.hash, cid: parsed.data.cid });
     res.json({ ok: true, orderId: order.orderId, complaint: { seq: parsed.data.seq, hash: parsed.data.hash, cid: parsed.data.cid } });
