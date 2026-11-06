@@ -94,6 +94,8 @@ export class Docket {
   private readonly seen = new Set<string>();
   private readonly cursors = new Map<string, string>();
   private readonly reasons = new Map<Hex, string>();
+  /** When a reason pin that failed may be tried again (clock seconds); not journaled. */
+  private readonly pinRetryAt = new Map<Hex, number>();
   private readonly caseWrites = new Map<Hex, WriteState>();
   private readonly countWrites = new Map<string, WriteState>();
   private readonly retrySeconds: number;
@@ -269,22 +271,28 @@ export class Docket {
     this.replay(row);
   }
 
-  /** Settles every write that has an intent but no recorded result, by asking the store. */
+  /**
+   * Settles every write that has an intent but no recorded result, by asking the store. A write
+   * whose transaction is still pending, cannot be looked up, or landed but is not queryable yet is
+   * waited for: it is planned again only once nothing was sent, or what was sent is known failed.
+   */
   private async resolveIntents(): Promise<void> {
     for (const [target, map] of [['case', this.caseWrites], ['count', this.countWrites]] as const) {
       for (const [id, w] of map) {
         if (!w.intent) continue;
-        if (w.txHash !== null && (await this.deps.store.txState(w.txHash)) === 'pending') continue; // still on its way
+        const tx = w.txHash === null ? null : await this.deps.store.txState(w.txHash);
+        if (tx === 'pending' || tx === 'unknown') continue; // still on its way, or not known yet
         const found =
           target === 'case'
             ? await this.deps.store.findCase(id)
             : await this.deps.store.findCount(parseCountKey(id));
         if (found !== null) {
           this.journalW({ t: 'w', target, id, phase: 'done', entityKey: found.entityKey, row: found.row, at: this.deps.now() });
-        } else {
+        } else if (tx !== 'success') {
           // nothing landed: drop the intent so the write is planned again
           w.intent = false;
         }
+        // else it landed and the store does not show it yet: wait
       }
     }
   }
@@ -297,15 +305,19 @@ export class Docket {
 
   /**
    * After a failed create the entity may still have landed (a lost response), so look it up by
-   * owner and id before writing again; adopt what is found.
+   * owner and id before writing again; adopt what is found. False when the lookup itself failed:
+   * creating without knowing could write a second entity, so the write waits for the next pass.
    */
-  private async adoptIfLanded(target: Target, id: string, w: WriteState): Promise<void> {
-    if (w.entityKey !== null || w.attempts === 0) return;
+  private async adoptIfLanded(target: Target, id: string, w: WriteState): Promise<boolean> {
+    if (w.entityKey !== null || w.attempts === 0) return true;
     try {
       const found = target === 'case' ? await this.deps.store.findCase(id) : await this.deps.store.findCount(parseCountKey(id));
       if (found !== null) this.journalW({ t: 'w', target, id, phase: 'done', entityKey: found.entityKey, row: found.row, at: this.deps.now() });
-    } catch {
-      /* the lookup failing is treated like the write failing: try again next pass */
+      return true;
+    } catch (error) {
+      const err = classifyError(error);
+      this.deps.log.warn('lookup_failed', { target, id, kind: err.kind, error: err.message });
+      return false;
     }
   }
 
@@ -355,8 +367,11 @@ export class Docket {
       if (stop) break;
       const w = this.writeOf('case', c.claimId);
       if (!this.due(w)) continue;
-      await this.adoptIfLanded('case', c.claimId, w);
-      if (!this.reasons.has(c.claimId)) await this.pinReason(c);
+      if (!(await this.adoptIfLanded('case', c.claimId, w))) {
+        failed += 1;
+        continue;
+      }
+      if (!this.reasonPinned(c.claimId) && this.deps.now() >= (this.pinRetryAt.get(c.claimId) ?? 0)) await this.pinReason(c);
       const desired = caseRowOf(c, this.reasons.get(c.claimId) ?? '');
       if (w.entityKey !== null && w.written !== null && caseRowEquals(w.written as CaseRow, desired)) continue;
       const r = await this.attempt('case', c.claimId, w, desired);
@@ -369,7 +384,10 @@ export class Docket {
       for (const [key, row] of this.computedCounts()) {
         const w = this.writeOf('count', key);
         if (!this.due(w)) continue;
-        await this.adoptIfLanded('count', key, w);
+        if (!(await this.adoptIfLanded('count', key, w))) {
+          failed += 1;
+          continue;
+        }
         if (w.entityKey !== null && w.written !== null && countEquals(w.written as CountRow, row)) continue;
         const r = await this.attempt('count', key, w, row);
         if (r === 'ok') wrote += 1;
@@ -378,22 +396,39 @@ export class Docket {
       }
     }
 
+    // While pinning is configured, a case whose reason is not pinned (or whose patch carrying the
+    // CID has not landed) waits for its reviews, so every review names the reason document.
+    const cases = this.writtenCases();
     try {
-      await this.reviews.process(this.writtenCases());
+      await this.reviews.process(this.pinner === nullPinner ? cases : cases.filter(({ row }) => row.reasonCid !== ''));
     } catch (error) {
       this.deps.log.warn('reviews_failed', { error: error instanceof Error ? error.message : String(error) });
     }
     return { wrote, failed };
   }
 
+  /**
+   * True once the case's reason document has its CID, or pinning is off. An empty CID journaled
+   * while a pinner is configured (how a failed pin used to be recorded) is pinned again.
+   */
+  private reasonPinned(claimId: Hex): boolean {
+    const cid = this.reasons.get(claimId);
+    return cid !== undefined && (cid !== '' || this.pinner === nullPinner);
+  }
+
   private async pinReason(c: ClaimState): Promise<void> {
     const draft = caseRowOf(c);
-    let cid = '';
+    let cid: string;
     try {
       cid = (await this.pinner.pin(reasonDoc(draft).bytes)) ?? '';
     } catch (error) {
+      // Nothing is journaled: the case is written without the CID for now, and the pin is tried
+      // again after the retry interval and the case patched once it pins.
+      this.pinRetryAt.set(c.claimId, this.deps.now() + this.retrySeconds);
       this.deps.log.warn('reason_pin_failed', { claimId: c.claimId, error: error instanceof Error ? error.message : String(error) });
+      return;
     }
+    this.pinRetryAt.delete(c.claimId);
     const row: JournalRow = { t: 'reason', claimId: c.claimId, cid };
     this.deps.journal.append(row);
     this.replay(row);

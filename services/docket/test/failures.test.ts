@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { Hex } from 'viem';
+import type { ReviewPort } from '../src/docket.js';
+import type { CaseRow } from '../src/schema.js';
 import { E, NOV, cid, rig } from './helpers.js';
 
 const claim = [E.filed(1), E.precheck(1, 2, 1), E.ruling(1, 1)];
@@ -82,5 +85,71 @@ describe('write failures', () => {
     const out = await r.docket.flush();
     expect(out.failed).toBe(1);
     expect(r.docket.writeStatus(cid(2))?.writeStatus).toBe('pending');
+  });
+
+  it('does not create again when the "did it land?" lookup fails', async () => {
+    const r = rig();
+    r.docket.ingest(claim);
+    r.io.loseResponse = true; // the create lands, the response is lost
+    await r.docket.flush();
+    const cases = () => [...r.io.entities.values()].filter((e) => e.schema === 'case');
+    expect(cases()).toHaveLength(1);
+    expect(r.docket.writeStatus(cid(1))?.writeStatus).toBe('failed');
+
+    r.clock.t += 601;
+    r.io.failQueries.push(new Error('connection reset')); // the lookup before the retry fails
+    const out = await r.docket.flush();
+    expect(cases()).toHaveLength(1);
+    expect(out.failed).toBe(1);
+
+    await r.docket.flush(); // the next pass looks again and adopts it
+    expect(cases()).toHaveLength(1);
+    expect(r.docket.writeStatus(cid(1))?.writeStatus).toBe('written');
+  });
+});
+
+describe('reason pinning', () => {
+  function recordingReviews() {
+    const seen: { claimId: Hex; row: CaseRow }[][] = [];
+    const port: ReviewPort = { process: async (cases) => void seen.push([...cases]), statusOf: () => ({ platform: { status: 'none' }, shop: { status: 'none' } }) };
+    return { port, seen };
+  }
+
+  it('a failed pin is retried and the case patched with the CID; reviews wait for it', async () => {
+    let fails = 1;
+    const pinner = { pin: async () => (fails-- > 0 ? Promise.reject(new Error('pin service 502')) : 'bafyreason') };
+    const reviews = recordingReviews();
+    const r = rig({ pinner, reviews: reviews.port });
+    r.docket.ingest(claim);
+    await r.docket.flush();
+    const entity = () => [...r.io.entities.values()].find((e) => e.schema === 'case')!;
+    expect(r.docket.writeStatus(cid(1))?.writeStatus).toBe('written');
+    expect(entity().values.reasonCid).toBe('');
+    expect(reviews.seen.at(-1)).toEqual([]); // no review without the reason's CID
+
+    r.clock.t += 601;
+    await r.docket.flush();
+    expect(entity().values.reasonCid).toBe('bafyreason');
+    expect(reviews.seen.at(-1)?.map((c) => c.row.reasonCid)).toEqual(['bafyreason']);
+  });
+
+  it('pins again a reason an older docket journaled as empty after a failed pin', async () => {
+    const r = rig({ pinner: { pin: async () => Promise.reject(new Error('pin service down')) } });
+    r.docket.ingest(claim);
+    r.journal.append({ t: 'reason', claimId: cid(1), cid: '' });
+    const again = r.reopen({ pinner: { pin: async () => 'bafylater' } });
+    await again.flush();
+    expect([...r.io.entities.values()].find((e) => e.schema === 'case')!.values.reasonCid).toBe('bafylater');
+  });
+
+  it('with pinning off the case and its reviews carry no CID, and nothing is pinned again', async () => {
+    const reviews = recordingReviews();
+    const r = rig({ reviews: reviews.port });
+    r.docket.ingest(claim);
+    await r.docket.flush();
+    await r.docket.flush();
+    expect(reviews.seen.at(-1)?.map((c) => c.row.reasonCid)).toEqual(['']);
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync(r.journalPath, 'utf8').split('\n').filter((l) => l.includes('"t":"reason"'))).toHaveLength(1);
   });
 });

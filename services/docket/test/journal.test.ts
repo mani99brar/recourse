@@ -122,6 +122,34 @@ describe('docket journal', () => {
     expect(caseEntities(r.io)).toHaveLength(1);
   });
 
+  it('waits while the sent transaction cannot be looked up, or has landed but is not indexed yet', async () => {
+    const r = rig();
+    r.docket.ingest([E.filed(1), E.precheck(1, 2, 1), E.ruling(1, 1)]);
+    await r.docket.flush();
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    const lines = readFileSync(r.journalPath, 'utf8').trim().split('\n');
+    const sentLine = lines.find((l) => l.includes('"target":"case"') && l.includes('"phase":"sent"'))!;
+    const { txHash, entityKey } = JSON.parse(sentLine) as { txHash: string; entityKey: string };
+    // a crash between the store answering and the done row, then a restart while the node lags
+    writeFileSync(r.journalPath, `${lines.filter((l) => !(l.includes('"target":"case"') && l.includes('"phase":"done"'))).join('\n')}\n`);
+    const landed = new Map(r.io.entities);
+    r.io.entities.clear();
+    r.io.txStates.set(txHash, 'unknown'); // the receipt lookup errors
+    const restarted = r.reopen();
+    await restarted.flush();
+    expect(caseEntities(r.io)).toHaveLength(0);
+    expect(restarted.writeStatus(cid(1))?.writeStatus).toBe('pending');
+
+    r.io.txStates.set(txHash, 'success'); // it landed, but queries do not show it yet
+    await restarted.flush();
+    expect(caseEntities(r.io)).toHaveLength(0);
+
+    for (const [k, v] of landed) r.io.entities.set(k, v); // indexed now
+    await restarted.flush();
+    expect(caseEntities(r.io)).toHaveLength(1);
+    expect(restarted.writeStatus(cid(1))).toMatchObject({ writeStatus: 'written', entityKey });
+  });
+
   it('keeps counts in step with the claim set as write status changes', async () => {
     const r = rig();
     r.docket.ingest([E.filed(1), E.precheck(1, 2, 1), E.ruling(1, 1), E.filed(2)]);
