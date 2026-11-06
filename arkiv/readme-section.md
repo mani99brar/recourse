@@ -1,16 +1,16 @@
 ## Arkiv docket
 
-**Status, 6 Nov 2026: not on Arkiv yet.** The docket service runs on its local store
-(`DOCKET_STORE` unset, `GET /health` on port 8707 says `"store":"local"`), and no entity has been
-written to the Arkiv testnet. Until that changes, the query below returns no rows and the docket
-page, which reads Arkiv directly, shows an empty docket. `DOCKET_STORE=arkiv` with an
-`ARKIV_ACCESS_KEY` and a scheme wallet holding tGLM switches it on.
+**Status, 6 Nov 2026: on Arkiv testnet since 21:40 UTC.** The docket service runs with
+`DOCKET_STORE=arkiv` (`GET /health` on port 8707 says `"store":"arkiv"`). On switching it replayed the
+claims from Hedera and wrote dispute 212's ruled case as entity
+`0x53b34e252b3f329dbe2df1a45cb686f191b98a011fe1a0166db839296491bd02`, and November's counts as
+`monthly-count` entities, so the query below returns that case. Cases ruled later are written as they settle.
 
-Once it is on, every ruled claim becomes a public, de-identified `case` entity on the Arkiv testnet
-(Rabdi, chain id 7794095), and each month's filings are summarised in a `monthly-count` entity. The
-docket page reads these entities and works out fault rates in the browser.
+Every ruled claim becomes a public, de-identified `case` entity on the Arkiv testnet (Rabdi, chain id
+7794095), and each month's filings are summarised in a `monthly-count` entity. The docket page reads
+these entities and works out fault rates in the browser.
 
-**Writer wallet:** `0x54E4545AFcf8960884A750320e70aFE16b2b3CaE` (the scheme wallet). It will be the
+**Writer wallet:** `0x54E4545AFcf8960884A750320e70aFE16b2b3CaE` (the scheme wallet). It is the
 only writer, so reads filter on `$owner`.
 
 **Run the query** (case entities of this writer, newest settlement first):
