@@ -76,6 +76,61 @@ NAME="an allowed test vector passes"; expect_push_ok main
 printf "%s\n" "${L/SPEC/SPEC2}" > vec.ts; git commit -qam "vec changed"
 NAME="a changed allowed line is blocked again"; LABEL="hex key next to a key word"; expect_push_blocked main; reset_to_remote
 
+# Merges: both parents clean, the key only in the merge commit. Each case uses its own files, so a push the scan
+# under test lets through cannot change the next case.
+conflict_fork() { # <file>: pushes <file>, then side and main change the same line; the merge stops on the conflict
+  printf 'line one\nshared line\n' > "$1"; git add "$1"; git commit -qm "base $1"; push main
+  git checkout -qb side; sed -i 's/shared line/side line/' "$1"; git commit -qam side
+  git checkout -q main; sed -i 's/shared line/main line/' "$1"; git commit -qam main-side
+  git merge -q side -m merge >/dev/null 2>&1
+}
+clean_fork() { # <name>: side and main each add a file; the merge is left uncommitted
+  git checkout -qb side; echo s > "$1.side"; git add -A; git commit -qm side
+  git checkout -q main; echo t > "$1.main"; git add -A; git commit -qm main-side
+  git merge -q --no-commit --no-ff side >/dev/null 2>&1
+}
+merge_commit() { # commits the merge in progress; a test whose setup made no merge fails
+  if git rev-parse -q --verify MERGE_HEAD >/dev/null; then git commit -qm "merge side" --no-edit
+  else bad "$NAME (setup: no merge in progress)"; fi
+}
+done_fork() { reset_to_remote; git branch -qD side; }
+
+NAME="a key written only by a conflict resolution is blocked"; LABEL="hex key next to a key word"
+conflict_fork m1.txt; printf 'line one\nDEPLOYER_PRIVATE_KEY=0x%s\n' "$(hex)" > m1.txt; git add m1.txt; merge_commit
+expect_push_blocked main; done_fork
+
+NAME="a file added only by a merge commit is scanned"; LABEL="hex key next to a key word"
+clean_fork m2; echo "PLATFORM_KEY=0x$(hex)" > m2.evil; git add m2.evil; merge_commit
+expect_push_blocked main; done_fork
+
+NAME="a .pass file added by a merge and removed later in the push is blocked"; LABEL="forbidden path tracked"
+clean_fork m3; touch m3.json.pass; git add m3.json.pass; merge_commit; git rm -q m3.json.pass; git commit -qm "drop it"
+expect_push_blocked main; done_fork
+
+NAME="a clean conflict resolution passes"
+conflict_fork m4.txt; printf 'line one\nmain and side line\n' > m4.txt; git add m4.txt; merge_commit
+expect_push_ok main; git branch -qD side
+
+# Key shapes.
+K=$(hex)
+echo "cast send \$TO 'f()' --rpc-url \$RPC --private-key 0x$K" > send.sh; git add -A; git commit -qm pk
+NAME="--private-key 0x<64 hex> is blocked"; LABEL="private key on a command line"; expect_push_blocked main
+if grep -q "$K" "$W/out"; then bad "the --private-key value is printed"; else ok "the --private-key value is not printed"; fi
+reset_to_remote
+echo "cast send \$TO 'f()' --private-key \"\$PK\"   # placeholder, no literal" > send.sh; git add -A; git commit -qm pk2
+NAME="--private-key with a variable passes"; expect_push_ok main
+
+K=$(hex)
+echo "const operator = PrivateKey.fromStringDer('302e020100300506032b657004220420$K');" > op.ts; git add -A; git commit -qm der1
+NAME="a Hedera ED25519 DER private key is blocked"; LABEL="Hedera DER private key"; expect_push_blocked main
+if grep -q "$K" "$W/out"; then bad "the DER key value is printed"; else ok "the DER key value is not printed"; fi
+reset_to_remote
+echo "OPERATOR_KEY=3030020100300706052b8104000a04220420$(hex)" > op.txt; git add -A; git commit -qm der2
+NAME="a Hedera ECDSA DER private key is blocked"; LABEL="Hedera DER private key"; expect_push_blocked main; reset_to_remote
+printf "const pubEd = '302a300506032b6570032100%s';\nconst pubEc = '302d300706052b8104000a032200%s02';\n" "$(hex)" "$(hex)" > pubder.ts
+git add -A; git commit -qm pubder
+NAME="Hedera DER public keys pass"; expect_push_ok main
+
 echo "DEPLOYER_PRIVATE_KEY=0x$(hex)" > tree.txt; git add tree.txt
 NAME="by hand (--tree) the tracked files are scanned"
 if bash ops/scan/scan.sh --tree > "$W/out" 2>&1; then bad "$NAME"; else grep -q "hex key next to a key word" "$W/out" && ok "$NAME" || bad "$NAME"; fi

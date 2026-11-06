@@ -2,8 +2,9 @@
 # Secret scan. Exit 1 on a hit. Installed as the pre-push hook (.git/hooks/pre-push execs it).
 #   As the hook: git passes one "<local ref> <local sha> <remote ref> <remote sha>" line per pushed ref on stdin.
 #     Every line added by the commits being pushed is scanned, not the files as they are now, so a key committed
-#     and removed again in a later commit of the same push is still caught. The files those commits add and the
-#     tree of each pushed tip are checked against the forbidden paths.
+#     and removed again in a later commit of the same push is still caught. A merge commit is read as its diff
+#     against its first parent, so a line its resolution adds (in neither parent) is scanned too. The files those
+#     commits add, merges included, and the tree of each pushed tip are checked against the forbidden paths.
 #   By hand (no ref lines on stdin, or --tree): scans the tracked files of the working tree.
 # A hit prints its place (path:line, or commit and path) with keys, keyed URL paths and long tokens redacted.
 # A published test vector is allowed by a line "<path> <sha256 of the line>" in ops/scan/allow.txt.
@@ -23,6 +24,10 @@ pat 'keystore json' i '"ciphertext"[[:space:]]*:'
 pat 'hex key next to a key word' i "(key|secret|mnemonic|seed)${Q}?[[:space:]]*[:=][[:space:]]*${Q}?(0x)?[0-9a-f]{64}([^0-9a-f]|$)"
 pat 'api key literal' i "(api[_-]?key|access[_-]?key|token|secret)${Q}?[[:space:]]*[:=][[:space:]]*${Q}[A-Za-z0-9_\\-]{20,}"
 pat 'secret assigned in an env file' '' '^[[:space:]]*(export[[:space:]]+)?[A-Z0-9_]*(API_KEY|ACCESS_KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*=[^[:space:]$"'"'"'{]{12,}'
+pat 'private key on a command line' i "--private-key[[:space:]=]+${Q}?(0x)?[0-9a-f]{64}([^0-9a-f]|$)"
+# Hedera SDK private keys in DER (toStringDer): ED25519 (PKCS#8) and ECDSA secp256k1 (PKCS#8, and the SEC1 form).
+# The public-key DER prefixes (302a300506032b6570032100, 302d300706052b8104000a032200) are not secrets.
+pat 'Hedera DER private key' i '(302e020100300506032b657004220420|3030020100300706052b8104000a04220420|30740201010420)[0-9a-f]{64}'
 pat 'RPC url with key' i 'https?://[^ "]*(alchemy\.com/v2|infura\.io/v3|quiknode\.pro)/[A-Za-z0-9_-]{16,}'
 pat 'reference to an outside planning folder' i '(agent-workflow|recourse-prds|docs/prd|\bPRDs?\b|\b(SPEC|PLAN|CF|SM|TC|LS|RPT|I5|PR):[0-9]|round1[0-9]/|recourse-homepage)'
 FORBIDDEN='(^|/)(node_modules(/|$)|[^/]*\.env$|\.env\.[^e]|.*\.pass$)'
@@ -51,7 +56,7 @@ if [ ${#refs[@]} -gt 0 ]; then
     [ "$lsha" = "$ZERO" ] && continue                               # a branch deletion pushes nothing
     if [ "$rsha" != "$ZERO" ] && git cat-file -e "$rsha^{commit}" 2>/dev/null; then range=("$rsha..$lsha")
     else range=("$lsha" --not --remotes); fi                          # new branch: what no remote has yet
-    git log -p -U0 --no-color --no-ext-diff --format='@@@commit %h' "${range[@]}" -- . ":(exclude)$HERE" |
+    git log -p -U0 --no-color --no-ext-diff --diff-merges=first-parent --format='@@@commit %h' "${range[@]}" -- . ":(exclude)$HERE" |
       awk -v W="$T/where" -v X="$T/text" '
         /^@@@commit / { c = $2; hdr = 0; inh = 0; next }
         /^diff --git / { hdr = 1; inh = 0; p = ""; next }
@@ -59,7 +64,7 @@ if [ ${#refs[@]} -gt 0 ]; then
         hdr && /^@@ / { hdr = 0; inh = 1; next }
         hdr { next }
         inh && /^\+/ { if (p != "") { print c " " p >> W; print substr($0, 2) >> X }; next }'
-    git log --format= --name-only --diff-filter=A "${range[@]}" >> "$T/paths"
+    git log --format= --name-only --diff-filter=A --diff-merges=first-parent "${range[@]}" >> "$T/paths"
     git ls-tree -r --name-only "$lsha" >> "$T/paths"
   done
   for i in "${!RES[@]}"; do
