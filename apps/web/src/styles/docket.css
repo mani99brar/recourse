@@ -1,0 +1,205 @@
+/*
+ * The public pages: the docket (#/docket) and shops and agents (#/cast).
+ * Imported from pages/Docket.tsx and pages/Cast.tsx; every rule is scoped under .docket-page or
+ * .cast-page so it cannot reach another page. Colours come from tokens.css only.
+ */
+
+/* ---------- both pages: the head ---------- */
+.docket-page > .page-head,
+.cast-page > .page-head {
+  margin-bottom: var(--sp-6);
+}
+
+/* ---------- the docket ---------- */
+
+/* the method reads as a rule sheet on a wide screen: its name on the left, the words on the right */
+@media (min-width: 980px) {
+  .docket-page .method > .card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2.6fr);
+    column-gap: var(--sp-6);
+    align-items: start;
+  }
+  .docket-page .method > .card > h2 {
+    grid-row: 1 / span 4;
+    margin: 0;
+  }
+  .docket-page .method > .card > :not(h2) {
+    grid-column: 2;
+  }
+}
+.docket-page .method p {
+  max-width: 62ch;
+}
+.docket-page .method .mono {
+  white-space: nowrap; /* a short address never breaks at its ellipsis */
+}
+
+/* the rates: one table, shops and agent companies each under their own row-group head */
+.docket-page table.dk {
+  min-width: 640px; /* on a phone the table scrolls inside its card, never the page */
+  font-size: var(--fs-md);
+}
+.docket-page .dk tbody tr.grp:hover {
+  background: none;
+}
+.docket-page .dk tr.grp th {
+  padding: 22px 0 8px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--fg);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-stretch: 108%;
+}
+.docket-page .dk tbody:first-of-type tr.grp th {
+  padding-top: 14px;
+}
+.docket-page .dk td {
+  padding-block: 11px;
+}
+.docket-page .dk td.mono a {
+  font-weight: 600;
+}
+.docket-page .dk .fig {
+  font-weight: 600;
+  font-stretch: 108%;
+}
+.docket-page .dk td .pill + .pill {
+  margin-left: 6px;
+}
+
+/* a measured rate: a flat bar for its 95% interval and a tick at the rate. A picture, never a control. */
+.docket-page .rm {
+  display: block;
+  position: relative;
+  max-width: 220px;
+  height: 8px;
+  margin-top: 8px;
+  background: rgba(var(--t), 0.1);
+}
+.docket-page .rm i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(var(--t), 0.42);
+}
+.docket-page .rm i.at {
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--fg);
+}
+
+.docket-page .count {
+  margin-top: 14px;
+  color: var(--fg3);
+  font-size: var(--fs-sm);
+}
+.docket-page .card .empty {
+  margin: 0;
+}
+
+/* ---------- shops and agents ---------- */
+
+/* shops on the left and agent companies on the right, as the docket pairs them; one column on a narrow screen */
+.cast-page .cast-cols {
+  display: grid;
+  gap: var(--sp-6);
+  align-items: start;
+  margin-top: var(--sp-2);
+}
+@media (min-width: 980px) {
+  .cast-page .cast-cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.cast-page .cast-group > h2 {
+  margin: 0 0 var(--sp-4);
+  padding-bottom: 10px;
+  box-shadow: inset 0 -1px var(--rule2);
+}
+.cast-page .cast-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.cast-page .cast-list > .card {
+  margin-bottom: 0;
+}
+
+/* one member: its name and type on one line, what it is, its facts, its claims, the way to its worklist */
+.cast-page .member-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+.cast-page .member-head h3 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  font-stretch: 112%;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.cast-page .member-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cast-page .member .member-sum {
+  margin-bottom: 14px;
+  max-width: 60ch;
+}
+.cast-page .member dd .muted {
+  font-weight: 400;
+}
+
+/* its claims: the id and what happened on the left, the status on the right */
+.cast-page ul.claims {
+  margin-top: 16px;
+}
+.cast-page ul.claims li {
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cast-page .claim-main {
+  min-width: 0;
+}
+.cast-page .claim-main small {
+  display: block;
+  margin-top: 3px;
+  color: var(--fg3);
+  font-size: 13.5px;
+  line-height: 1.32;
+}
+
+/* the worklist: a reading link with the design's arrow */
+.cast-page a.read {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 8px;
+  font-weight: 600;
+  text-underline-offset: 4px;
+}
+.cast-page a.read svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  transition: transform var(--t-mid) var(--ease);
+}
+.cast-page a.read:hover svg {
+  transform: translateX(3px);
+}
+
+.cast-page .cast-src {
+  margin-top: var(--sp-6);
+  max-width: 70ch;
+}

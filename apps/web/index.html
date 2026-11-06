@@ -3,7 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#080808" />
     <title>Recourse: claim status and docket</title>
+    <script>
+      // Colour mode before first paint: dark unless this browser chose light (see src/lib/theme.ts).
+      try {
+        if (localStorage.getItem('recourse-theme') === 'light') document.documentElement.dataset.theme = 'light';
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

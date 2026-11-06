@@ -1,11 +1,12 @@
 import { recordHash, utf8ToBytes } from '@recourse/shared';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { ClaimActions, EvidenceAction, anyoneAction } from '../actions/forms.js';
-import { Banner, Card, ExtLink, Loading, Pill, Row } from '../components.js';
-import { READS, usePoll, type Fresh } from '../lib/api.js';
+import { Banner, Card, ExtLink, Loading, Pill, Row, SideWords } from '../components.js';
+import { READS, usePoll, type ApiFailure, type Fresh } from '../lib/api.js';
 import { short, usdc, when, whenS } from '../lib/format.js';
-import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, SIDE_WORDS, STATUS_WORDS, deadlineLabel, statusPlain } from '../lib/words.js';
+import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, STATUS_WORDS, deadlineLabel, statusPlain } from '../lib/words.js';
 import type { NextActor, NextCall, StatusKey } from '@recourse/shared';
+import '../styles/case.css';
 
 export interface CaseDetail extends Fresh {
   claimId: string;
@@ -70,20 +71,26 @@ const STEPS: { label: string; events: string[] }[] = [
 
 const FINAL_KEYS: StatusKey[] = ['settled', 'closed_uncontested', 'closed_undrawn', 'expired', 'unresolved'];
 
-export function Timeline({ events, statusKey }: { events: CaseDetail['events']; statusKey?: StatusKey }) {
+/**
+ * The seven steps from filing to the money, one row each. `facts` holds an optional line per step,
+ * read from the claim itself (who contested, the dispute, the ruling, what was paid).
+ */
+export function Timeline({ events, statusKey, facts = [] }: { events: CaseDetail['events']; statusKey?: StatusKey; facts?: readonly ReactNode[] }) {
   const final = statusKey !== undefined && FINAL_KEYS.includes(statusKey);
   let reachedCurrent = final;
   return (
     <ol className="timeline">
-      {STEPS.map((s) => {
+      {STEPS.map((s, i) => {
         const hit = events.find((e) => s.events.includes(e.name));
         const cls = hit ? 'done' : !reachedCurrent ? 'current' : 'todo';
         if (!hit) reachedCurrent = true;
+        const fact = facts[i] ?? null;
         return (
-          <li key={s.label} className={cls}>
+          <li key={s.label} className={cls} aria-current={cls === 'current' ? 'step' : undefined}>
             <span className="dot" aria-hidden />
             <span className="tl-text">
               <span className="tl-label">{s.label}</span>
+              {fact && <span className="tl-fact">{fact}</span>}
               <span className="tl-when">{hit ? when(hit.time) : cls === 'current' ? 'next' : final ? 'did not happen' : ''}</span>
             </span>
           </li>
@@ -93,16 +100,84 @@ export function Timeline({ events, statusKey }: { events: CaseDetail['events']; 
   );
 }
 
-export function CaseView({ d }: { d: CaseDetail }) {
-  const word = STATUS_WORDS[d.statusKey];
-  const tone = ['settled', 'closed_uncontested', 'closed_undrawn'].includes(d.statusKey) ? 'ok' : ['stuck', 'expired', 'unresolved'].includes(d.statusKey) ? 'bad' : 'wait';
+/** Which side contested, matched without regard to letter case; null when the address is neither party's. */
+export function contestedBy(d: Pick<CaseDetail, 'contest' | 'shop' | 'platform'>): string | null {
+  const by = d.contest.by?.toLowerCase();
+  if (!by) return null;
+  return by === d.platform.toLowerCase() ? 'the agent company' : by === d.shop.toLowerCase() ? 'the shop' : null;
+}
+
+/** What the court decided; the side it names (rulings 1 and 2) in the fault red. */
+function RulingWords({ ruling }: { ruling: string }) {
+  const side = ruling === '1' ? 'platform' : ruling === '2' ? 'shop' : null;
+  if (!side) return <>{rulingWord(ruling)}</>;
   return (
     <>
+      {ruling === '1' ? 'for the shop' : 'against the claim'}: <SideWords side={side} suffix={ruling === '1' ? ' pays' : ' at fault'} />
+    </>
+  );
+}
+
+/**
+ * One line per step, from what the claim read says; null where it says nothing more than the step's name.
+ * The contest window's end is not repeated here: the head states it once.
+ */
+export function stepFacts(d: CaseDetail): ReactNode[] {
+  const closed = d.events.some((e) => e.name === 'ClosedUncontested');
+  const paid = d.money.paid !== null && d.money.paid !== '0' ? `${usdc(d.money.paid, d.vaultToken)} paid from the deposit` : null;
+  const by = contestedBy(d);
+  return [
+    null,
+    d.precheck ? (
+      <>
+        At fault: <SideWords side={d.precheck.side} />
+      </>
+    ) : null,
+    by ? `Contested by ${by}` : d.contest.by ? 'Contested' : closed ? 'Closed with no contest' : null,
+    d.court.attempts > 1 ? `Attempt ${d.court.attempts}` : null,
+    d.court.disputeIds.length > 0 ? `Dispute ${d.court.disputeIds.map((id) => `#${id}`).join(', ')}` : null,
+    d.court.ruling !== null ? (
+      <>
+        Ruling: <RulingWords ruling={String(d.court.ruling)} />
+      </>
+    ) : null,
+    paid,
+  ];
+}
+
+/** A party named as the claim read names it, linked to its own page. */
+function PartyLink({ address, name, role }: { address: string; name: string | null; role: string }) {
+  return (
+    <a className="party" href={`#/party/${address}`}>
+      <span className="party-name">{name ?? <span className="mono">{short(address)}</span>}</span>
+      <span className="party-role">{role}</span>
+    </a>
+  );
+}
+
+export function CaseView({ d, error = null }: { d: CaseDetail; error?: ApiFailure | null }) {
+  const word = STATUS_WORDS[d.statusKey];
+  const windowOpen = d.statusKey === 'finding_made' || d.statusKey === 'no_finding';
+  const tone = ['settled', 'closed_uncontested', 'closed_undrawn'].includes(d.statusKey) ? 'ok' : ['stuck', 'expired', 'unresolved'].includes(d.statusKey) ? 'bad' : 'wait';
+  return (
+    <div className="case-page">
       <header className="case-head">
-        <p className="eyebrow">Claim {short(d.claimId)}</p>
+        <p className="eyebrow">
+          Order <span className="mono">{short(d.orderId)}</span>
+        </p>
         <h1>
+          <span className="case-id">
+            Claim <span className="mono">{short(d.claimId)}</span>
+          </span>{' '}
           <Pill tone={tone}>{word.title}</Pill>
         </h1>
+        <p className="case-parties">
+          <PartyLink address={d.shop} name={d.shopName} role="the shop" />
+          <span className="case-v" aria-hidden>
+            v
+          </span>
+          <PartyLink address={d.platform} name={d.platformName} role="the agent company" />
+        </p>
         <p className="lead">{statusPlain(d.statusKey, d.nextCall, d.court.state)}</p>
         {d.nextCall && (
           <p className="next">
@@ -116,11 +191,13 @@ export function CaseView({ d }: { d: CaseDetail }) {
           </p>
         )}
       </header>
+      {/* the page opens on its title; what the page knows about its sources follows it */}
+      <Banner fresh={d} error={error} />
+      <Card title="Timeline">
+        <Timeline events={d.events} statusKey={d.statusKey} facts={stepFacts(d)} />
+      </Card>
       <ClaimActions key={d.claimId} d={d} />
       <div className="grid">
-        <Card title="Timeline">
-          <Timeline events={d.events} statusKey={d.statusKey} />
-        </Card>
         <Card title="Money">
           <dl>
             <Row label="Basket">{usdc(d.basketUsdc, d.vaultToken)}</Row>
@@ -141,8 +218,11 @@ export function CaseView({ d }: { d: CaseDetail }) {
             <Row label="Filed">{when(d.filedAt)}</Row>
             {d.precheck ? (
               <>
-                <Row label="Pre-check says">At fault: {SIDE_WORDS[d.precheck.side] ?? d.precheck.side}</Row>
-                <Row label={d.statusKey === 'finding_made' || d.statusKey === 'no_finding' ? 'Contest window ends' : 'Contest window closed'}>{when(d.contest.windowEndsAt)}</Row>
+                <Row label="Pre-check says">
+                  At fault: <SideWords side={d.precheck.side} />
+                </Row>
+                {/* while the window is open the head states its end once; this row then says nothing new */}
+                {!(windowOpen && d.deadline) && <Row label={windowOpen ? 'Contest window ends' : 'Contest window closed'}>{when(d.contest.windowEndsAt)}</Row>}
                 <Row label="Result document">
                   {d.precheck.packHashOk === true ? 'matches the hash on chain' : d.precheck.packHashOk === false ? 'does NOT match the hash on chain' : 'not available'}
                 </Row>
@@ -150,7 +230,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
             ) : (
               <Row label="Pre-check">not run yet</Row>
             )}
-            {d.contest.by && <Row label="Contested by">{d.contest.by === d.platform ? 'the agent company' : 'the shop'}</Row>}
+            {d.contest.by && <Row label="Contested by">{contestedBy(d) ?? <span className="mono">{short(d.contest.by)}</span>}</Row>}
           </dl>
         </Card>
         <Card title="Court">
@@ -170,7 +250,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
                 })}
               </Row>
               <Row label="Stage">{d.court.periodName ? (COURT_PERIODS[d.court.periodName] ?? d.court.periodName) : d.court.ruling !== null ? 'Finished' : 'not read yet'}</Row>
-              <Row label={d.court.ruling !== null ? 'Ruling' : 'Current ruling'}>{d.court.ruling !== null ? rulingWord(String(d.court.ruling)) : d.court.currentRuling === null ? 'none yet' : rulingWord(d.court.currentRuling)}{d.court.tied ? ' (tied)' : ''}{d.court.overridden ? ' (overridden by appeal)' : ''}</Row>
+              <Row label={d.court.ruling !== null ? 'Ruling' : 'Current ruling'}>{d.court.ruling !== null ? <RulingWords ruling={String(d.court.ruling)} /> : d.court.currentRuling === null ? 'none yet' : rulingWord(d.court.currentRuling)}{d.court.tied ? ' (tied)' : ''}{d.court.overridden ? ' (overridden by appeal)' : ''}</Row>
               <Row label="Evidence">
                 {d.court.evidence.length === 0 ? 'none seen yet' : d.court.evidence.map((e) => <ExtLink key={e.tx} href={e.explorer}>attempt {e.attempt}, {when(e.time)}</ExtLink>)}
               </Row>
@@ -205,7 +285,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
           Each record document is fetched by its content id and checked against the hash on the records topic. A record that could not be fetched yet reads as unchecked, never as verified. Buyer details inside the documents appear only as salted hashes.
         </p>
         <div className="table-wrap">
-          <table>
+          <table className="records">
             <thead>
               <tr>
                 <th>Record</th>
@@ -223,7 +303,7 @@ export function CaseView({ d }: { d: CaseDetail }) {
                     {r.held === true ? <Pill tone="ok">verified</Pill> : r.held === null ? <Pill tone="wait">unchecked</Pill> : <Pill tone="bad">not held</Pill>}{' '}
                     <span className="muted small">{r.hashOk === false ? 'content differs from its hash; ' : ''}{!r.payerOk && r.cid ? 'wrong payer; ' : ''}{r.cid && !r.refsMatch ? 'not the one the shop referenced' : ''}</span>
                   </td>
-                  <td className="mono">{r.cid ?? '-'}</td>
+                  <td className="mono hash">{r.cid ?? '-'}</td>
                 </tr>
               ))}
             </tbody>
@@ -235,12 +315,12 @@ export function CaseView({ d }: { d: CaseDetail }) {
         <ul className="plain events">
           {d.events.map((e) => (
             <li key={`${e.tx}-${e.name}-${e.time}`}>
-              <span className="mono">{whenS(e.time)}</span> {e.name} <span className="muted small">on {e.chain}</span> <ExtLink href={e.explorer}>{short(e.tx, 4)}</ExtLink>
+              <span className="mono ev-time">{whenS(e.time)}</span> <span className="ev-name">{e.name}</span> <span className="muted small ev-chain">on {e.chain}</span> <ExtLink href={e.explorer}>{short(e.tx, 4)}</ExtLink>
             </li>
           ))}
         </ul>
       </Card>
-    </>
+    </div>
   );
 }
 
@@ -259,10 +339,9 @@ export function RecordCheck({ hashes }: { hashes: string[] }) {
       <label htmlFor="rc">Paste the exact text of a record document. It is hashed here in your browser and nothing is sent anywhere.</label>
       <textarea id="rc" rows={4} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
       {hash && (
-        <p className="mono small">
-          SHA-256: {hash}
-          <br />
-          {idx >= 0 ? <strong>Matches the {KIND_WORDS[idx]} record on this claim.</strong> : 'Does not match any record on this claim.'}
+        <p className="proof">
+          <span className="proof-k">SHA-256</span> <span className="mono">{hash}</span>
+          <span className="proof-says">{idx >= 0 ? <strong>Matches the {KIND_WORDS[idx]} record on this claim.</strong> : 'Does not match any record on this claim.'}</span>
         </p>
       )}
     </div>
@@ -273,11 +352,11 @@ export function CasePage({ id }: { id: string }) {
   const { data, error } = usePoll<CaseDetail>(READS.claim(id));
   return (
     <>
-      <Banner fresh={data ?? undefined} error={error} />
+      {!data && <Banner error={error} />}
       {error?.status === 404 && <p>No claim with that id. Check the id, or search by order, transaction or message.</p>}
       {error?.status === 400 && <p>That does not look like a claim id (0x followed by 64 hex characters).</p>}
       {!data && !error && <Loading what="claim" />}
-      {data && <CaseView d={data} />}
+      {data && <CaseView d={data} error={error} />}
     </>
   );
 }

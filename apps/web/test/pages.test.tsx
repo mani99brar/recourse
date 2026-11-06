@@ -6,8 +6,8 @@ import { Shell, route } from '../src/App.js';
 import { Banner, lateWords } from '../src/components.js';
 import { ApiFailure, READS, failureFrom, fromV1, isRebuilding } from '../src/lib/api.js';
 import { mockNote, parseUsdc, usdc } from '../src/lib/format.js';
-import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS } from '../src/lib/words.js';
-import { CaseView, type CaseDetail } from '../src/pages/Case.js';
+import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS, statusPlain } from '../src/lib/words.js';
+import { CaseView, contestedBy, type CaseDetail } from '../src/pages/Case.js';
 import { Finding, chainNote, standingWords } from '../src/pages/File.js';
 import { ClaimList } from '../src/pages/Party.js';
 import { LocalStoreNote, RateTable } from '../src/pages/Docket.js';
@@ -97,6 +97,27 @@ describe('pages render', () => {
     expect(renderToString(<Banner fresh={{ configLock: { allLocked: true, notice: null } }} />)).toBe('');
     expect(renderToString(<CaseView d={detail('at_court')} />)).not.toContain('locked');
   });
+  it('opens the claim on its title, with the notice after the head', () => {
+    const notice = 'Not every contract is locked yet. Until it is, the owner can change things.';
+    const html = renderToString(<CaseView d={{ ...detail('finding_made'), configLock: { allLocked: false, notice } }} />);
+    expect(html.indexOf('class="case-head"')).toBeGreaterThanOrEqual(0);
+    expect(html.indexOf('class="banner"')).toBeGreaterThan(html.indexOf('</header>'));
+  });
+  it('marks a side named at fault in red, never "neither"', () => {
+    const platform = renderToString(<CaseView d={detail('finding_made')} />);
+    expect(platform).toContain('<span class="fault">the agent company</span>');
+    const neither = renderToString(<CaseView d={detail('finding_made', { findingSide: 'neither', precheck: { gap: 0, answer: 3, side: 'neither', packHash: '0x' + '55'.repeat(32), packHashOk: true } })} />);
+    expect(neither).not.toContain('class="fault"');
+    const court = detail('settled').court;
+    expect(renderToString(<CaseView d={detail('settled', { court: { ...court, ruling: 1 } })} />)).toContain('<span class="fault">the agent company pays</span>');
+    expect(renderToString(<CaseView d={detail('settled', { court: { ...court, ruling: 2 } })} />)).toContain('<span class="fault">the shop at fault</span>');
+  });
+  it('names who contested whatever the letter case of the address', () => {
+    const d = detail('contested', { platform: '0x' + 'ab'.repeat(20) });
+    expect(contestedBy({ ...d, contest: { ...d.contest, by: '0x' + 'AB'.repeat(20) } })).toBe('the agent company');
+    expect(contestedBy({ ...d, contest: { ...d.contest, by: d.shop } })).toBe('the shop');
+    expect(contestedBy({ ...d, contest: { ...d.contest, by: '0x' + '99'.repeat(20) } })).toBeNull();
+  });
   it('names each late source and how far behind it is', () => {
     const now = 1_700_000_000_000;
     const asOf = { hedera: 1_700_000_000 - 240, arbitrum: 1_700_000_000 - 30, hcs: null };
@@ -104,6 +125,15 @@ describe('pages render', () => {
     expect(lateWords('arbitrum', asOf, now)).toBe('Arbitrum (30 s behind)');
     expect(lateWords('hcs', asOf, now)).toBe('the records topic (not read through yet)');
     expect(renderToString(<Banner fresh={{ degraded: ['hcs'], asOf }} />)).toContain('the records topic (not read through yet)');
+    const stale = [{ read: 'params', ageS: 40 }, { read: 'vault', ageS: null }];
+    expect(lateWords('params', asOf, now, stale)).toBe('the contract parameters (last read 40 s ago)');
+    expect(lateWords('vault', asOf, now, stale)).toBe('the deposit and credit figures (not read yet)');
+    expect(lateWords('identity', asOf, now, stale)).toBe('the ERC-8004 registrations');
+  });
+  it('a court case that can no longer move does not offer a retry', () => {
+    expect(statusPlain('stuck', null)).toContain('nothing to send');
+    expect(statusPlain('stuck', null)).not.toContain('retry');
+    expect(statusPlain('stuck', 'relayRuling')).toContain('send it again');
   });
   it('degraded and unreachable states show a banner, not a crash', () => {
     expect(renderToString(<Banner fresh={{ degraded: ['hedera'] }} />)).toContain('running late');

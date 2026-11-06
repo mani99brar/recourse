@@ -2,7 +2,7 @@
 // confirms, their wallet signs each transaction in order, and the page reads the new state back.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { VaultToken } from '@recourse/shared';
-import { Card, ExtLink, Pill, Row } from '../components.js';
+import { ExtLink, Pill, Row } from '../components.js';
 import { ApiFailure } from '../lib/api.js';
 import {
   ACTION_WORDS, amountName, amountText, errorWords, feeWords, mockLabelled, movementWords, postAction, sameAddress, sameCallGas, signingProblems,
@@ -13,6 +13,7 @@ import { freshSteps, readBack, signAll, type Step, type StepState } from '../lib
 import { short, usdc, when, whenS } from '../lib/format.js';
 import { STATUS_WORDS } from '../lib/words.js';
 import { WalletStop, connectWallet, injectedProvider, stopWords, useWallet, walletOps, type WalletState } from '../lib/wallet.js';
+import '../styles/case.css';
 
 export interface Problem {
   text: string;
@@ -142,6 +143,42 @@ export interface ActionFlowViewProps extends ActionFlowProps {
   onBack?: () => void;
 }
 
+const STAGES = ['Preview', 'Sign', 'Read the result'] as const;
+
+/** Which of the three stages a phase is in: 0 preview, 1 sign, 2 read back; 3 once all are done. */
+export function stageOf(phase: Phase): number {
+  switch (phase.kind) {
+    case 'form':
+    case 'building':
+    case 'refused':
+      return 0;
+    case 'preview':
+    case 'signing':
+    case 'stopped':
+      return 1;
+    case 'reading':
+      return 2;
+    case 'done':
+      return 3;
+  }
+}
+
+/** The three stages of every action, the one it is in marked. */
+function Stages({ at }: { at: number }) {
+  return (
+    <ol className="act-stages" aria-label="Stages">
+      {STAGES.map((s, i) => (
+        <li key={s} className={i < at ? 'done' : i === at ? 'now' : 'later'} aria-current={i === at ? 'step' : undefined}>
+          <span className="act-n" aria-hidden>
+            {i + 1}
+          </span>
+          {s}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 /** What the action shows in each phase; no effects, so every phase renders on its own. */
 export function ActionFlowView(v: ActionFlowViewProps) {
   const { phase, wallet } = v;
@@ -149,8 +186,10 @@ export function ActionFlowView(v: ActionFlowViewProps) {
   const editing = phase.kind === 'form' || phase.kind === 'building' || phase.kind === 'refused';
   if (v.offered === false && (phase.kind === 'form' || phase.kind === 'refused')) return null;
   return (
-    <Card title={v.title ?? ACTION_WORDS[v.name]}>
-      {v.intro && <p>{v.intro}</p>}
+    <section className="card act">
+      <h2>{v.title ?? ACTION_WORDS[v.name]}</h2>
+      <Stages at={stageOf(phase)} />
+      {v.intro && <p className="act-intro">{v.intro}</p>}
       <WalletLine wallet={wallet} onConnect={v.onConnect} />
       {v.signer && wrongSigner && (
         <p className="error" role="alert">
@@ -211,7 +250,7 @@ export function ActionFlowView(v: ActionFlowViewProps) {
           )}
         </>
       )}
-    </Card>
+    </section>
   );
 }
 

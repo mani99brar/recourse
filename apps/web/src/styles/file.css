@@ -1,0 +1,367 @@
+/*
+ * The check-and-file page: one downward path. The facts (the order, the amounts) sit on the ground;
+ * the records, the band under them and the filing action sit on the sheet. On a wide screen the facts
+ * take the left column and the sheet the right; below 1100px it is one column in reading order.
+ * Shared pieces (cards, fields, .kv rows, buttons, the preview) come from components.css.
+ */
+
+.file-page .page-head {
+  margin-bottom: var(--sp-5);
+}
+.file-page .page-head h1 {
+  max-width: 16em;
+}
+
+/* ---------- the path ---------- */
+.file-page .file-path {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-4);
+  align-items: start;
+}
+.file-page .file-path > .card {
+  margin-bottom: 0;
+}
+
+/* the facts: on the ground, not on a sheet, as the design's left column */
+.file-page #file-order,
+.file-page #file-amounts {
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+.file-page #file-amounts {
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--line);
+}
+.file-page #file-order .with {
+  margin-bottom: 4px;
+}
+.file-page #file-order .next {
+  margin-top: 14px;
+}
+.file-page #file-order .loading,
+.file-page #file-order p.error {
+  margin-top: 12px;
+}
+.file-page #file-amounts .fields {
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+}
+
+/* before any order is loaded the sheet's column says what will appear there */
+.file-page .file-wait {
+  display: none;
+}
+
+/* ---------- the records, side by side ---------- */
+.file-page #file-records {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.file-page #file-records > h2 {
+  font-size: var(--fs-h2);
+  font-weight: 600;
+  font-stretch: var(--semi);
+  letter-spacing: -0.016em;
+}
+.file-page .mx {
+  min-width: 560px;
+  table-layout: fixed;
+  font-size: 14.5px;
+  line-height: 1.25;
+}
+.file-page .mx thead td,
+.file-page .mx tbody th {
+  width: 118px;
+}
+.file-page .mx thead th,
+.file-page .mx thead td {
+  padding: 0 8px 8px;
+  vertical-align: bottom;
+  white-space: normal;
+}
+.file-page .mx thead td {
+  border-bottom: 1px solid var(--rule2);
+}
+.file-page .mx-why {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg3);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  font-stretch: 100%;
+  line-height: 1.25;
+}
+.file-page .mx-used {
+  color: var(--fg3);
+}
+.file-page .mx tbody th {
+  padding: 8px 8px 8px 0;
+  white-space: nowrap;
+}
+.file-page .mx tbody td {
+  padding: 8px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  box-shadow: inset 1px 0 var(--line);
+}
+.file-page .mx tbody td:first-child {
+  white-space: normal;
+}
+/* a cell behind the finding: the sheet's one red surface, white words on it (AA) */
+.file-page .mx tbody td.bad {
+  background: var(--r);
+  color: var(--r-ink);
+  box-shadow: none;
+}
+.file-page .mx-nil {
+  color: var(--fg3);
+}
+.file-page .mx td.bad .mx-nil {
+  color: var(--r-ink);
+}
+.file-page .mx tbody tr:hover {
+  background: none;
+}
+
+/* ---------- the band: the finding across the sheet ---------- */
+.file-page .finding {
+  margin: 22px -24px 0;
+}
+.file-page .band {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 3fr) minmax(0, 1.3fr);
+  min-height: 116px;
+  box-shadow: inset 0 1px var(--line), inset 0 -1px var(--line);
+}
+.file-page .band-side {
+  position: relative;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 12px 16px 12px 24px;
+}
+.file-page .band-agent {
+  padding: 12px 24px 12px 16px;
+}
+.file-page .band-side i {
+  position: absolute;
+  inset: 0;
+  background: var(--r);
+  transform: scaleX(0);
+  transform-origin: 100% 50%;
+}
+.file-page .band-agent i {
+  transform-origin: 0 50%;
+}
+.file-page .band-side b {
+  position: relative;
+  color: var(--r-ink);
+  font: 800 16px/1.1 var(--font);
+  font-stretch: var(--wide);
+  letter-spacing: -0.012em;
+  text-transform: uppercase;
+  opacity: 0;
+  visibility: hidden;
+}
+.file-page .band-mid {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 20px;
+  color: var(--fg);
+}
+.file-page .card .band-mid p {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.35;
+}
+.file-page .card .band-mid .band-title {
+  font-size: var(--fs-lead);
+  font-weight: 600;
+  font-stretch: 112%;
+  line-height: 1.2;
+}
+/* a finding against a side fills that side and the middle: one red surface, white words */
+.file-page .band[data-who='shop'] .band-shop i,
+.file-page .band[data-who='agent'] .band-agent i {
+  transform: none;
+  animation: file-band-fill var(--t-slow) var(--ease) both;
+}
+.file-page .band[data-who='shop'] .band-shop b,
+.file-page .band[data-who='agent'] .band-agent b {
+  opacity: 1;
+  visibility: visible;
+  animation: fadein var(--t-mid) ease 0.16s both;
+}
+.file-page .band[data-who='shop'] .band-mid,
+.file-page .band[data-who='agent'] .band-mid {
+  background: var(--r);
+  color: var(--r-ink);
+  animation: fadein var(--t-mid) ease both;
+}
+.file-page .band[data-who='shop'],
+.file-page .band[data-who='agent'] {
+  box-shadow: none;
+}
+@keyframes file-band-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: none;
+  }
+}
+.file-page .finding-notes {
+  padding: 14px 24px 0;
+}
+.file-page .finding-notes:empty {
+  display: none;
+}
+.file-page .card .finding-notes p {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.42;
+}
+.file-page .card .finding-notes p + p {
+  margin-top: 6px;
+}
+.file-page #file-records > .muted.small {
+  margin: 0 -24px;
+  padding: 14px 24px 22px;
+}
+
+/* ---------- how the check reads the records (the rule, stated once) ---------- */
+.file-page .file-rule {
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--line);
+}
+.file-page .file-rule h2 {
+  margin-bottom: 12px;
+  font-weight: 600;
+  font-stretch: 108%;
+}
+.file-page .rlines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 56ch;
+  color: var(--fg2);
+  font-size: var(--fs-md);
+  line-height: 1.42;
+}
+.file-page .rlines li + li {
+  margin-top: 10px;
+}
+.file-page .rlines b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* ---------- wide: facts on the left, the sheet on the right ---------- */
+@media (min-width: 1100px) {
+  .file-page .file-path {
+    grid-template-columns: minmax(0, 32fr) minmax(0, 68fr);
+    grid-template-areas:
+      'order records'
+      'amounts records'
+      'rule act';
+    column-gap: var(--sp-6);
+    row-gap: var(--sp-5);
+  }
+  .file-page #file-order {
+    grid-area: order;
+  }
+  .file-page #file-amounts {
+    grid-area: amounts;
+  }
+  .file-page #file-records,
+  .file-page .file-wait {
+    grid-area: records;
+  }
+  .file-page #file-records {
+    align-self: stretch;
+  }
+  .file-page .file-rule {
+    grid-area: rule;
+  }
+  .file-page .file-act {
+    grid-area: act;
+  }
+  .file-page .file-wait {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 360px;
+    padding: var(--sp-6);
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    color: var(--mute);
+    text-align: center;
+  }
+  .file-page .file-wait p {
+    max-width: 30ch;
+    font-size: var(--fs-lead);
+    line-height: 1.38;
+  }
+}
+
+/* ---------- phone ---------- */
+@media (max-width: 720px) {
+  .file-page .finding {
+    margin: 18px -16px 0;
+  }
+  .file-page .finding-notes {
+    padding: 12px 16px 0;
+  }
+  .file-page #file-records > .muted.small {
+    margin: 0 -16px;
+    padding: 12px 16px 18px;
+  }
+  /* the band stacks: the side it points to as a strip over the words, the other side out of sight */
+  .file-page .band {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .file-page .band-side {
+    display: none;
+    padding: 12px 16px;
+  }
+  .file-page .band[data-who='shop'] .band-shop,
+  .file-page .band[data-who='agent'] .band-agent {
+    display: flex;
+  }
+  .file-page .band-mid {
+    padding: 14px 16px;
+  }
+  .file-page .band[data-who='shop'] .band-mid,
+  .file-page .band[data-who='agent'] .band-mid {
+    padding-top: 0;
+  }
+  .file-page .band-side b {
+    font-size: 17px;
+  }
+  .file-page .band-agent {
+    order: -1;
+  }
+  .file-page .mx thead td,
+  .file-page .mx tbody th {
+    width: 96px;
+  }
+  .file-page .mx tbody th {
+    white-space: normal;
+  }
+  .file-page .mx {
+    min-width: 520px;
+  }
+}
+@media (max-width: 480px) {
+  .file-page #file-order .with {
+    flex-wrap: wrap;
+  }
+  .file-page #file-order .with button {
+    width: 100%;
+  }
+}

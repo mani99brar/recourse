@@ -1,0 +1,189 @@
+/*
+ * Archivo, self-hosted: one variable file, weight 100-900 and width 62-125%.
+ * Archivo is Copyright 2019 The Archivo Project Authors (https://github.com/Omnibus-Type/Archivo),
+ * licensed under the SIL Open Font License, Version 1.1 (https://openfontlicense.org).
+ */
+@font-face {
+  font-family: Archivo;
+  src: url('../assets/archivo-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-style: normal;
+  font-display: swap;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--k);
+  scrollbar-color: var(--scrollbar) var(--k);
+  scrollbar-width: thin;
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+  scroll-padding-top: calc(var(--nav) + 12px);
+}
+
+body {
+  margin: 0;
+  background: var(--k);
+  color: var(--s);
+  font: 400 var(--fs-base) / 1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+  caret-color: var(--s);
+  transition: background-color var(--t-mid) ease, color var(--t-mid) ease;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+dl,
+dd,
+ol,
+ul,
+figure,
+blockquote {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  font-stretch: var(--semi);
+  letter-spacing: -0.016em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+h1 {
+  font-size: var(--fs-h1);
+  font-weight: 800;
+  font-stretch: var(--wide);
+  letter-spacing: -0.028em;
+  line-height: 0.98;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+h2 {
+  font-size: var(--fs-h2);
+}
+h3 {
+  font-size: var(--fs-h3);
+  font-stretch: 108%;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+p + p {
+  margin-top: var(--sp-3);
+}
+
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(var(--t), 0.55);
+  transition: text-decoration-color var(--t-fast) ease;
+}
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+code {
+  font: 500 13px/1.45 var(--font);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+::selection {
+  background: var(--s);
+  color: var(--k);
+}
+
+/* focus: visible only for the keyboard, in the ink colour, on every control */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--s);
+  outline-offset: 2px;
+  /* no radius here: the outline follows each control's own shape, so a pill button stays a pill */
+}
+
+/* first focusable on every page, and on screen only with focus */
+.skip {
+  position: fixed;
+  left: var(--pad);
+  top: 8px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: var(--round);
+  background: var(--s);
+  color: var(--k);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-300%);
+}
+.skip:focus {
+  transform: none;
+}
+
+/* screen-reader only */
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
