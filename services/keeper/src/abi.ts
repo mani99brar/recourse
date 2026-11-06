@@ -87,6 +87,7 @@ export const vaultAbi = parseAbi([
   'error BelowMinDeposit(uint256 amount, uint256 minDeposit)',
   'error ClaimsNotBound()',
   'error ConfigIsLocked()',
+  'error EarlierClaimOpen(bytes32 oldestOpen)',
   'error EscrowExists(bytes32 claimId)',
   'error ExitDue()',
   'error ExitNotRequested()',

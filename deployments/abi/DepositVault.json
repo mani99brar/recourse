@@ -87,6 +87,25 @@
   },
   {
     "type": "function",
+    "name": "availableTo",
+    "inputs": [
+      {
+        "name": "claimId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "bindClaims",
     "inputs": [
       {
@@ -316,6 +335,25 @@
   },
   {
     "type": "function",
+    "name": "exposureOf",
+    "inputs": [
+      {
+        "name": "platform",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "inGoodStanding",
     "inputs": [
       {
@@ -339,6 +377,44 @@
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "maxPayoutOf",
+    "inputs": [
+      {
+        "name": "claimId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "oldestOpenClaimOf",
+    "inputs": [
+      {
+        "name": "platform",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1069,6 +1145,17 @@
     "type": "error",
     "name": "ConfigIsLocked",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EarlierClaimOpen",
+    "inputs": [
+      {
+        "name": "oldestOpen",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",
