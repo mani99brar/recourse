@@ -9,7 +9,7 @@ The code, tests, scripts and documentation in this repository were written by Cl
 | Who | Model | Role |
 |---|---|---|
 | Area agents | Claude Opus 5.5 | Wrote the shared core (types, codecs, the fault rule, address book) and the Hedera contracts and their tests, as separate coding-agent sessions each owning a set of folders |
-| Operations agent | Claude Sonnet 5.5 | Wrote the funding, wiring, service-unit and check scripts under `ops/`, the root `README.md` and this file |
+| Operations agent | Claude Sonnet 5.5; Claude Opus 5.5 from 6 Nov | Wrote the funding, wiring, service-unit and check scripts under `ops/`, the root `README.md` and this file. From 6 Nov an Opus 5.5 session ran the testnet deploys, funding moves and service bring-up, and wrote the fixes those runs needed |
 | Other area agents | Claude (Anthropic) coding agents; the model is named in the area's note when one exists | Wrote the Arbitrum contract, the services, the web app, the court package, the records package and the Arkiv notes |
 
 Each agent ran with a fixed list of folders it may edit and committed only through `ops/scripts/commit.sh`, which stages named paths, so one area's commits do not carry another's files.
@@ -17,8 +17,8 @@ Each agent ran with a fixed list of folders it may edit and committed only throu
 ## What people did
 
 - Decided the product rules and the open choices (the decision table is in [decisions.md](decisions.md)); each default there is a person's call and can be changed.
-- Created every key (the agents only ever use keystores through `--keystore`/`--password-file`; no key or password was printed or passed on a command line), and are responsible for getting testnet funds, which need a human check at the faucets (none has been funded yet).
-- Run or approve every transaction that touches a testnet. No testnet transaction has been sent yet.
+- Created every key (the agents only ever use keystores through `--keystore`/`--password-file`; no key or password was printed or passed on a command line), and got the testnet funds, which need a human check at the faucets: the HBAR, Arbitrum Sepolia ETH and LINK the roles hold came from public faucets through the team.
+- Approved testnet transactions. Since 6 Nov the agents send them from this host's role keystores under that standing approval: the deploys, the wiring steps, funding moves between roles, the ERC-8004 registrations, and the demo orders and claims. Every one is on a testnet, none on a mainnet; the README lists the notable ones with their hashes.
 - Review: read the interface file, the diffs the agents produce and the test results, and run the wiring and lock steps by hand. Review has not been line by line for every file; the per-area notes say where it has not.
 - Own the submission: what is claimed, what is shown in the video, and the disclosures in the README.
 
@@ -49,10 +49,6 @@ Keys: the loaders were tested with keystores generated inside the tests. The rea
 decrypted once to confirm each one yields its expected address. Only the match result was printed,
 never a key or a password.
 
-Keys: the loaders were tested with keystores generated inside the tests. The real keystores were
-decrypted once to confirm each one yields its expected address. Only the match result was printed,
-never a key or a password.
-
 ### Hedera contracts (`ops/workflows/02-hedera/ai-use.md`)
 
 | Files | How it was made | Checked by |
@@ -65,13 +61,9 @@ never a key or a password.
 | `contracts/script/hedera/Deploy.s.sol`, `Wire.s.sol`, `Lock.s.sol`, `Check.s.sol`, `hedera.sh` | Written by the agent | `hedera.sh rehearse <port>` runs every step on anvil with throwaway keystores (made in a temp directory and deleted); `Deploy.s.sol` was also simulated against Hedera testnet with only the deployer's public address (no key, no broadcast) |
 | `deployments/abi/RecourseClaims.json`, `DepositVault.json` | The `abi` arrays of the forge build output, copied with `jq` | compared with the build output after each contract change |
 
-Keys: no real keystore was decrypted for this area. Local runs sign with anvil's unlocked accounts
-or with throwaway keystores whose password is passed through the environment, never the command
-line.
-
-Keys: no real keystore was decrypted for this area. Local runs sign with anvil's unlocked accounts
-or with throwaway keystores whose password is passed through the environment, never the command
-line.
+Keys: writing and testing this area decrypted no real keystore. Local runs sign with anvil's
+unlocked accounts or with throwaway keystores whose password is passed through the environment,
+never the command line. The testnet deploys (operations, below) sign with the deployer's keystore.
 
 ### Operations (`ops/fund`, `ops/wire`, `ops/units`, `ops/checks`, `ops/lib`, `README.md`, `docs/keys.md`, `docs/checks.md`, `docs/ai-use.md`)
 
@@ -81,13 +73,13 @@ Written by Claude Sonnet 5.5 as a coding agent.
 |---|---|---|
 | `ops/wire/*.sh` | Written by the agent. Dry run is the default; `--send` broadcasts; every step reads its result back and stops on a mismatch | `ops/wire/rehearse.sh` runs the whole order on two local anvil nodes with throwaway keystores (made in a temp directory, password through the environment, deleted on exit) and the local mock stacks; it passed before the scripts took the vault token from the deployment record, and has not been rerun since. The new `Vault.usdc()` check in `00-readback.sh` and `07-deposit.sh` and their mock-mode branches are checked by `bash -n` only; a read-only `eth_call` on the live vault read `usdc()` equal to the recorded mock and `usdcAssociated()` true |
 | `ops/wire/order.md` | Written by the agent from the Hedera deploy runbook and the Arbitrum deploy script | read against the scripts it names |
-| `ops/units/*.service`, `install.sh`, `ctl.sh` | Written by the agent from each service's `package.json` and entry point | `install.sh --verify` runs `systemd-analyze --user verify` on the rendered units; nothing is installed or started |
+| `ops/units/*.service`, `install.sh`, `ctl.sh` | Written by the agent from each service's `package.json` and entry point | `install.sh --verify` runs `systemd-analyze --user verify` on the rendered units. Since 6 Nov they are installed and running on the host: `ctl.sh health` answers for each, and the memory caps were raised after the journal showed three services OOM-killed at start-up under the first ones |
 | `ops/units/web-server.mjs` | Written by the agent | run against a stand-in API on loopback: health, a file, a client-side route, the `/api` forward and a path-escape attempt |
 | `ops/fund/*`, `ops/checks/readonly.sh` | Written by the agent | dry-run output by default; the read-only checks were run against public endpoints, and again with the live mock record and with a record that has no `usdc` key: the USDC rows passed in both modes. `04-associate-usdc.sh` was dry-run on the live mock record (it exits 0, nothing to associate) and on a refused record (it stops); `has_usdc` and `balances.sh` in mock mode are checked by `bash -n` only |
 | `ops/lib/vault-token.sh` | Written by the agent. Reads the vault's token from the Hedera deployment record with `jq`, with the checks of `vaultTokenOf` in `packages/shared`; sourced by `ops/fund`, `ops/wire` and `ops/checks/readonly.sh` | a parity run over 24 hand-made records (no `usdc` key, circle, mock, and refused shapes: a string or missing `tokenId`, `decimals` as text, Circle's facade or the zero address under mock, a bad mode, a non-object) gave the same verdict as `vaultTokenOf` on every record, and so did `ops/fund/associate-usdc.mjs`; `bash -n` |
 | `README.md`, `docs/keys.md`, `docs/checks.md` | Written by the agent from the code and from values it read | the README's claims about contract powers were checked against the contract source; `docs/checks.md` holds only values read by `ops/checks/readonly.sh` |
 
-Keys: the rehearsal signs only with throwaway keystores. Real keystores were not used for any signing.
+Keys: the rehearsal signs only with throwaway keystores. The testnet runs since 6 Nov sign with the real role keystores, through `--keystore`/`--password-file` in the scripts and `loadSigner` in the services; no key or password was printed.
 
 ### Areas without a note yet
 
