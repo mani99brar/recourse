@@ -7,6 +7,7 @@
 #   ctl.sh health [service...]    GET /health on each service's local port
 #   ctl.sh logs <service> [n]     last n journal lines (default 100)
 #   ctl.sh urls                   the current public https name of each tunnel
+#   ctl.sh keeper <args>          keeper-ctl with the unit's port and state dir (status, pause, resume, ...)
 # Services: keeper precheck shop status-api docket intake web tunnel-web tunnel-shop
 set -euo pipefail
 ORDER=(keeper precheck shop status-api docket intake web tunnel-web tunnel-shop)
@@ -40,5 +41,9 @@ case "$cmd" in
         --no-pager -o cat 2>/dev/null | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 || true)
       printf '%-12s %s\n' "$s" "${u:-none (not running, or no name yet)}"
     done ;;
+  # keeper-ctl reads these two from the environment; outside the unit nothing sets them.
+  keeper)
+    cd "$(dirname "$0")/../../services/keeper"
+    KEEPER_STATE_DIR="$HOME/.local/state/recourse/keeper" KEEPER_PORT=${PORT[keeper]} exec node_modules/.bin/tsx src/ctl.ts "$@" ;;
   *) sed -n '2,/^set -/p' "$0" | sed '$d'; exit 1 ;;
 esac

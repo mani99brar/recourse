@@ -48,6 +48,7 @@ bash ops/units/ctl.sh restart status-api
 bash ops/units/ctl.sh status                # active state and memory per unit
 bash ops/units/ctl.sh health                # GET /health on each local port
 bash ops/units/ctl.sh logs keeper 200       # last 200 journal lines
+bash ops/units/ctl.sh keeper status         # keeper-ctl: claims by phase, balances, pauses
 
 systemctl --user start recourse-keeper
 systemctl --user stop recourse-keeper
@@ -71,7 +72,7 @@ Only the web server and the shop are tunnelled. The keeper, precheck, intake and
 
 ## Updating
 
-Stop the units in reverse order (keeper last), `git pull --ff-only`, `pnpm install --frozen-lockfile` if the lockfile changed, rebuild `apps/web` if it changed, start in order, then `ctl.sh health`. Do not stop the keeper near a claim deadline: check `keeper-ctl status` (in `services/keeper`, `pnpm ctl status`) first.
+Stop the units in reverse order (keeper last), `git pull --ff-only`, `pnpm install --frozen-lockfile` if the lockfile changed, rebuild `apps/web` if it changed, start in order, then `ctl.sh health`. Do not stop the keeper near a claim deadline: check `bash ops/units/ctl.sh keeper status` first (keeper-ctl with the unit's port and state directory; plain `pnpm ctl status` in `services/keeper` fails because nothing outside the unit sets them).
 
 ## Checks
 
