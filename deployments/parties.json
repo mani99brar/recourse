@@ -23,7 +23,8 @@
     "role": "precheck-signer",
     "evmAddress": "0x1036Ba3820ab816e142eB1D7D84fbaAF8351Cc8D",
     "hcsWriters": [],
-    "displayName": "Recourse Pre-check"
+    "displayName": "Recourse Pre-check",
+    "hederaAccountId": "0.0.11335197"
   },
   {
     "role": "platform",
@@ -54,7 +55,8 @@
     "role": "scheme",
     "evmAddress": "0x54E4545AFcf8960884A750320e70aFE16b2b3CaE",
     "hcsWriters": [],
-    "displayName": "Recourse Docket"
+    "displayName": "Recourse Docket",
+    "hederaAccountId": "0.0.11335198"
   },
   {
     "role": "buyer",
