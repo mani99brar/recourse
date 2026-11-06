@@ -99,14 +99,36 @@ function addressParam(v: unknown, field: string): Address {
   return getAddress(v);
 }
 
-/** The action under /v1/actions that builds a claim's next call; null when there is none. */
-export function nextActionOf(row: { nextCall: string | null; nextActor: string; deadline: bigint | null }) {
+type NextRow = { nextCall: string | null; nextActor: string; deadline: bigint | null; shop: Address; platform: Address };
+
+/**
+ * The action under /v1/actions that builds a claim's next call; null when there is none. A
+ * withdrawCredit only while the account that would sign it has credit (`credit` read and above
+ * zero): a settled or closed claim whose credit was already taken out has nothing left to do.
+ */
+export function nextActionOf(row: { nextCall: string | null; nextActor: string; deadline: bigint | null }, credit?: bigint | null) {
   if (!isActionName(row.nextCall)) return null;
+  if (row.nextCall === 'withdrawCredit' && !(typeof credit === 'bigint' && credit > 0n)) return null;
   return { action: row.nextCall, actor: row.nextActor, path: `/v1/actions/${row.nextCall}`, deadline: row.deadline };
 }
 
-function withNextAction<T extends { nextCall: string | null; nextActor: string; deadline: bigint | null }>(row: T): T & { nextAction: ReturnType<typeof nextActionOf> } {
-  return { ...row, nextAction: nextActionOf(row) };
+/** Each row with its next action; the credit of an account that may withdraw is read once per request. */
+async function withNextActions<T extends NextRow>(svc: StatusService, rows: T[]): Promise<(T & { nextAction: ReturnType<typeof nextActionOf> })[]> {
+  const credits = new Map<Address, Promise<bigint | null>>();
+  const creditOf = (a: Address) => {
+    let p = credits.get(a);
+    if (!p) {
+      p = svc.partyBlock(a).then((b) => b.credit, () => null);
+      credits.set(a, p);
+    }
+    return p;
+  };
+  return Promise.all(
+    rows.map(async (row) => {
+      const signer = row.nextCall === 'withdrawCredit' ? (row.nextActor === 'platform' ? row.platform : row.shop) : null;
+      return { ...row, nextAction: nextActionOf(row, signer ? await creditOf(signer) : undefined) };
+    }),
+  );
 }
 
 export function createV1Router(svc: StatusService, opts: V1Options): Router {
@@ -156,9 +178,9 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
         if (status !== undefined && !STATUS_SET.has(status)) throw invalid('status', `expected one of ${STATUS_KEYS.join(', ')}`);
         const addr = party === undefined ? undefined : addressParam(party, 'party');
         const out = await svc.claimsResponse(addr, status);
-        const p = out as { rows: Parameters<typeof withNextAction>[0][]; standing?: unknown; groups?: unknown };
+        const p = out as { rows: NextRow[]; standing?: unknown; groups?: unknown };
         res.json({
-          claims: p.rows.map(withNextAction),
+          claims: await withNextActions(svc, p.rows),
           party: addr === undefined ? null : { standing: p.standing, groups: p.groups },
           meta: await meta(),
         });
@@ -172,7 +194,7 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
       read('claim', async (req) => {
         const id = claimIdParam(req.params.claimId, 'claimId');
         try {
-          return withNextAction(await svc.claimDetail(id));
+          return (await withNextActions(svc, [await svc.claimDetail(id)]))[0];
         } catch (e) {
           if (e instanceof ApiError && e.code === 'unknown') throw notFound('claim', id);
           throw e;

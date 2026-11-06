@@ -80,6 +80,8 @@ function main(): void {
   }
 
   const svc = new StatusService({ store, cfg, deployments, reader, parties: () => parties, docs, fetch: realFetch, nowS });
+  // Not awaited: the server listens at once, and /health stops saying `params` when this lands.
+  void svc.warmParams();
   const indexer = new Indexer({ store, cfg, deployments, fetch: realFetch, arbRpc, reader, parties: () => parties, docs, nowS });
   indexer.start();
   const server = createApp(svc, { chain }).listen(cfg.port, '127.0.0.1', () => {

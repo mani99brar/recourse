@@ -3,7 +3,7 @@ import { Indexer } from '../src/indexer.js';
 import { DocFetcher } from '../src/ipfs.js';
 import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
-import { CLAIMS, TOPIC, VAULT, buildClaim } from './helpers/fixtures.js';
+import { CLAIMS, TOPIC, VAULT, buildClaim, fakeReader, ingest } from './helpers/fixtures.js';
 import type { FetchLike } from '../src/http.js';
 import { FakeMirror } from './helpers/mirror.js';
 import { harness, testConfig, testDeployments, testParties } from './helpers/service.js';
@@ -107,5 +107,29 @@ describe('the rebuild gate', () => {
     r.m.failNext = 100;
     await r.indexer.pollOnce();
     expect(r.store.rebuilding).toBe(true);
+  });
+});
+
+describe('the live parameters at start-up', () => {
+  function started(reader = fakeReader()) {
+    const sim = new Sim(1_700_000_000n);
+    buildClaim(sim, 'finding_made', 1);
+    const store = new Store();
+    ingest(store, sim);
+    for (const s of ['hedera', 'arbitrum', 'hcs'] as const) store.status[s].indexedThrough = 1_700_000_100;
+    return harness({ store, now: 1_700_000_100, reader });
+  }
+
+  it('a fresh start is not degraded once the read at start-up lands, before any request reads them', async () => {
+    const h = started();
+    expect(h.svc.degraded()).toEqual(['params']);
+    await h.svc.warmParams();
+    expect(h.svc.degraded()).toEqual([]);
+  });
+
+  it('stays degraded when that read fails, and never throws', async () => {
+    const h = started(fakeReader({ claimsParams: async () => { throw new Error('the relay did not answer'); } }));
+    await expect(h.svc.warmParams()).resolves.toBeUndefined();
+    expect(h.svc.degraded()).toEqual(['params']);
   });
 });

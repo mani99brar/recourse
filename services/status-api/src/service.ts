@@ -152,6 +152,18 @@ export class StatusService {
     };
   }
 
+  /**
+   * Reads the live parameters once, in the background: started at boot, so a fresh start is not
+   * reported degraded (`params`) until the first request happens to read them. A failed read leaves
+   * it degraded, as it should be; the next read tries again.
+   */
+  warmParams(): Promise<void> {
+    return this.liveParams().then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
   private sourceConfigured(name: SourceName): boolean {
     const dep = this.d.deployments;
     if (name === 'hedera') return Boolean(dep.claims || dep.vault);

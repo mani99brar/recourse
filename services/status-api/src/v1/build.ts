@@ -48,8 +48,8 @@ export const GAS_FLOORS: Partial<Record<string, bigint>> = {
  * deployed pair's fileClaim used 559,974 and 559,986 gas (the shop's last two, signed at its x1.3
  * margin as 764,630 and 764,645). The current contracts also freeze the claim's terms and reserve
  * the deposit at filing, four more new storage slots (about 90k), so about 650k. 800k covers both.
- * Hedera bills at least 80% of the limit (640k gas); a fileClaim that runs out of gas is billed too,
- * and has to be sent again.
+ * Hedera testnet bills the gas a call uses (the mirror shows 559,986 used for one of those), so the
+ * limit only bounds the fee; a fileClaim that runs out of gas is billed too, and has to be sent again.
  */
 export const FILE_CLAIM_BUDGET = 800_000n;
 

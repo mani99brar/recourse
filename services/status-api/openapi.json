@@ -4718,6 +4718,9 @@
           "claimId": {
             "$ref": "#/components/schemas/Bytes32"
           },
+          "derivedOrderId": {
+            "$ref": "#/components/schemas/Bytes32"
+          },
           "derived": {
             "$ref": "#/components/schemas/Uint"
           },
@@ -5107,7 +5110,7 @@
           "gasPrice",
           "basis"
         ],
-        "description": "The network fee the signer pays, an upper bound at the build's gas price. Hedera charges at least 80% of the gas limit."
+        "description": "The network fee the signer pays, an upper bound from the gas limit at the build's gas price. Hedera charges for the gas the call uses, so the fee is at most this."
       },
       "Preview": {
         "type": "object",
@@ -5970,7 +5973,7 @@
       "code": "order_id_mismatch",
       "status": 422,
       "family": "input",
-      "meaning": "orderNonce, platform and from do not hash to the orderId sent."
+      "meaning": "orderNonce, platform and from do not hash to the orderId sent; details.derivedOrderId is the one they hash to."
     },
     {
       "code": "order_nonce_unknown",

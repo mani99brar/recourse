@@ -116,8 +116,18 @@ describe('/v1 reads', () => {
     const byId = Object.fromEntries(r.body.claims.map((c: any) => [c.claimId, c]));
     expect(byId[built[0]!.claimId].nextAction).toMatchObject({ action: 'closeUncontested', path: '/v1/actions/closeUncontested', actor: 'anyone' });
     expect(byId[built[1]!.claimId].nextAction).toMatchObject({ action: 'sendToCourt', path: '/v1/actions/sendToCourt' });
-    // settled: what is left is the shop taking its credit out of the vault
-    expect(byId[built[2]!.claimId].nextAction).toMatchObject({ action: 'withdrawCredit', path: '/v1/actions/withdrawCredit', actor: 'shop', deadline: null });
+    // settled, and the shop has no credit left in the vault: nothing is left to build
+    expect(byId[built[2]!.claimId].nextCall).toBe('withdrawCredit');
+    expect(byId[built[2]!.claimId].nextAction).toBeNull();
+    expect((await get(`/v1/claims/${built[2]!.claimId}`)).body.claim.nextAction).toBeNull();
+    // with credit in the vault, what is left is the shop taking it out
+    const party0 = { deposit: 100_000_000n, required: 10_000_000n, credit: 2_500_000n, topUpDeadline: 0n, inGoodStanding: true, openClaims: 0n, exitRequestedAt: 0n, shopEscrow: 0n };
+    const credited = await boot({ reader: fakeReader({ party: async () => party0 }) });
+    const settledId = credited.built[2]!.claimId;
+    const rows = Object.fromEntries((await credited.get('/v1/claims')).body.claims.map((c: any) => [c.claimId, c]));
+    expect(rows[settledId].nextAction).toMatchObject({ action: 'withdrawCredit', path: '/v1/actions/withdrawCredit', actor: 'shop', deadline: null });
+    expect((await credited.get(`/v1/claims/${settledId}`)).body.claim.nextAction).toMatchObject({ action: 'withdrawCredit' });
+    expect((await credited.get(`/v1/claims?party=${SHOP}`)).body.claims.find((c: any) => c.claimId === settledId).nextAction).toMatchObject({ action: 'withdrawCredit' });
     const party = await get(`/v1/claims?party=${SHOP}`);
     expect(party.body.party).toHaveProperty('standing');
     expect(party.body.party).toHaveProperty('groups');
@@ -127,6 +137,10 @@ describe('/v1 reads', () => {
   it('has no next action for calls it does not build', () => {
     for (const nextCall of ['recordPreCheck', 'manualExecute', null]) expect(nextActionOf({ nextCall, nextActor: 'precheck', deadline: null })).toBeNull();
     expect(nextActionOf({ nextCall: 'settle', nextActor: 'anyone', deadline: 5n })).toEqual({ action: 'settle', actor: 'anyone', path: '/v1/actions/settle', deadline: 5n });
+    // withdrawCredit only for credit read and above zero
+    const settled = { nextCall: 'withdrawCredit', nextActor: 'shop', deadline: null };
+    for (const credit of [undefined, null, 0n]) expect(nextActionOf(settled, credit)).toBeNull();
+    expect(nextActionOf(settled, 1n)).toMatchObject({ action: 'withdrawCredit', actor: 'shop' });
   });
 
   it('shows the contest window the claim was filed under, not the current one', async () => {
