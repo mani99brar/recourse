@@ -4,7 +4,7 @@
 
 import type { Hex } from 'viem';
 import type { JournalRecord } from './journal.js';
-import { postJson, type FetchLike } from './net.js';
+import { PermanentError, postJson, type FetchLike } from './net.js';
 
 export const ALERT_KINDS = [
   // stalls
@@ -205,11 +205,18 @@ export class Alerter {
     return [...this.outbox.values()];
   }
 
-  /** Sends what is waiting. Failures stay queued for the next flush. */
-  async flush(): Promise<{ sent: number; failed: number }> {
+  /**
+   * Sends what is waiting, oldest first. An endpoint that is down (network error, timeout, 429,
+   * 5xx) stops the flush and everything stays queued in order. One the endpoint refuses for good
+   * (another 4xx) is passed over, so it never holds back the alerts behind it; once the endpoint
+   * has taken another alert in the same flush, the refused one is journaled as dropped and
+   * leaves the outbox. While nothing is taken (a wrong URL refuses everything) all stay queued.
+   */
+  async flush(): Promise<{ sent: number; failed: number; dropped?: number }> {
     let sent = 0;
     let failed = 0;
     if (this.o.url === undefined || this.o.url === '') return { sent, failed: this.outbox.size };
+    const refused: { rec: AlertRecord; error: string }[] = [];
     for (const rec of [...this.outbox.values()]) {
       const body = {
         service: rec.service,
@@ -226,11 +233,24 @@ export class Alerter {
         this.o.append({ t: 'alertSent', id: rec.id });
         this.outbox.delete(rec.id);
         sent += 1;
-      } catch {
+      } catch (err) {
         failed += 1;
+        if (err instanceof PermanentError) {
+          refused.push({ rec, error: err.message });
+          continue; // this payload is refused, not the endpoint down: go on to the next
+        }
         break; // endpoint down: keep order, try again next flush
       }
     }
-    return { sent, failed };
+    let dropped = 0;
+    if (sent > 0) {
+      for (const { rec, error } of refused) {
+        this.o.append({ t: 'alertSent', id: rec.id, dropped: error });
+        this.outbox.delete(rec.id);
+        this.o.log?.(`alert ${rec.kind}${rec.claimId ? ` ${rec.claimId}` : ''} dropped: the endpoint refused it (${error}); it stays in the journal as ${rec.id}`);
+        dropped += 1;
+      }
+    }
+    return dropped > 0 ? { sent, failed, dropped } : { sent, failed };
   }
 }
