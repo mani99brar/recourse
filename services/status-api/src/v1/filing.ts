@@ -20,6 +20,7 @@ import {
 } from '@recourse/shared';
 import { getAddress, isAddress, type Address, type Hex } from 'viem';
 import { getJson, HttpError } from '../http.js';
+import { within } from '../lastgood.js';
 import type { HcsRecord } from '../types.js';
 import { answer, buildTx, FILE_CLAIM_BUDGET, type ActionAnswer } from './build.js';
 import type { ActionEnv } from './actions.js';
@@ -39,12 +40,12 @@ interface ShopOrder {
   txId: string;
 }
 
-/** The shop service's own record of an order: its nonce, platform and the payment it settled. */
+/** The shop service's own record of an order: its nonce, platform and the payment it settled. Waited on readWaitMs at most. */
 async function shopOrderOf(env: ActionEnv, orderId: Hex): Promise<ShopOrder> {
   const cfg = env.svc.d.cfg;
   let body: unknown;
   try {
-    body = await getJson(env.svc.d.fetch, `${cfg.shopUrl}/orders/${orderId}`, cfg.sourceTimeoutMs);
+    body = await getJson(env.svc.d.fetch, `${cfg.shopUrl}/orders/${orderId}`, cfg.readWaitMs);
   } catch (e) {
     if (e instanceof HttpError && e.status === 404) {
       throw new V1Error('order_nonce_unknown', 'The shop service does not know this order: send orderNonce and platform.', {});
@@ -97,13 +98,17 @@ function topicFresh(env: ActionEnv): boolean {
   return !st.failing && st.indexedThrough !== null && d.nowS() - st.indexedThrough <= d.cfg.lagWarnS.hcs;
 }
 
-/** The fault rule on the records the refs name, as the pre-check runs it; null while a document is unavailable. */
+/**
+ * The fault rule on the records the refs name, as the pre-check runs it; null while a document is
+ * unavailable. The documents are fetched together, each waited on readWaitMs at most.
+ */
 async function expectedFinding(env: ActionEnv, orderId: Hex, messages: (HcsRecord | null)[]) {
+  const d = env.svc.d;
+  const docs = await Promise.all(messages.map((m) => (m ? within(d.docs.get(m.cid, m.hash), d.cfg.readWaitMs, null) : undefined)));
   let input: RuleInput = {};
   for (let k = 0; k < 6; k++) {
-    const m = messages[k];
-    if (!m) continue;
-    const doc = await env.svc.d.docs.get(m.cid, m.hash);
+    const doc = docs[k];
+    if (doc === undefined) continue;
     if (doc === null) return null;
     if (!doc.ok || !doc.canonical || doc.doc === null) continue;
     const slot = ruleSlotFromDoc(k as RecordKind, canonicalBytes(doc.doc as CanonicalValue), orderId);
@@ -162,7 +167,7 @@ export async function fileClaim(env: ActionEnv, raw: unknown): Promise<ActionAns
     if (!fresh) throw upstream('index', { reason: 'the records topic is behind or failing' });
     throw new V1Error('no_ordered_record', "The records topic holds no ordered record for this order from the order's own platform.", {});
   }
-  const doc = await d.docs.get(ordered.cid, ordered.hash);
+  const doc = await within(d.docs.get(ordered.cid, ordered.hash), d.cfg.readWaitMs, null);
   if (doc === null) throw upstream('ipfs');
   if (!doc.ok || !doc.canonical || doc.doc === null || typeof doc.doc !== 'object') {
     throw new V1Error('ordered_unreadable', "The ordered record's document does not match its hash or is not a record document.", {});

@@ -18,7 +18,11 @@ import { StatusService } from './service.js';
 import { viemArbRpc } from './sources/viem-arb.js';
 import { Store, identityOf } from './store.js';
 
-/** How often the live values a request may wait on are read again in the background (about 20 eth_calls a run). */
+/**
+ * How often the live values a request may wait on are read again in the background. A run is about
+ * 27 eth_calls (15 of them on the Hedera relay: parameters, facts and, once a minute until locked, the
+ * config locks) and 8 more on the Hedera relay for each party it reads (warm in service.ts).
+ */
 const WARM_EVERY_MS = 30_000;
 
 function main(): void {

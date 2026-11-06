@@ -151,7 +151,9 @@ by simulating the call carries `details.revert = { contract, name, args }`.
 
 An action reads the chain at the latest block and never from a cache: a read that does not answer within 3 s
 (a simulation within 6 s) fails as `upstream_unavailable` with `details.upstream` `hedera_rpc` or `arbitrum_rpc`,
-so a hanging relay is answered in seconds, not at the 12-second deadline.
+so a hanging relay is answered in seconds, not at the 12-second deadline. fileClaim's other reads wait 3 s each
+too: the shop's order (`shop`) and the ordered record's document (`ipfs`); the other record documents, read
+together, only leave `expectedFinding` null.
 
 `openapi.json` holds the same list with each code's meaning (`x-recourse-error-codes`), which codes each
 action can return (`x-recourse-errors`), and which contract custom error maps to which code
@@ -177,11 +179,11 @@ Hedera transfer for it with its own key and sends the same request with `PAYMENT
 
 ## What serving this needs
 
-1. `ops/units/web-server.mjs` forwards only `accept` today, so a POST reaches the status API without its
-   type: forward `content-type` and `content-length` on `/api`, send its own 429 and 502 in the error shape
-   (`rate_limited`; `upstream_unavailable` with upstream `status_api`), and every action must answer inside its
-   15-second upstream timeout. Until it forwards them, the status API reads an action body as JSON whatever
-   its type, and every client behind it shares one rate limit.
+1. `ops/units/web-server.mjs` forwards `accept`, `content-type` and `content-length` on `/api`, with the client
+   it counted as `cf-connecting-ip`, and sends its own 429 `rate_limited` and 502 `upstream_unavailable` in the
+   error shape on `/api/v1` (the 502 as in the table above: message `status API unreachable`, no `details`).
+   Every action must answer inside its 15-second upstream timeout. The status API reads an action body as JSON
+   whatever its type.
 2. The status API takes POST on `/v1/actions/*` with a 64 KB JSON limit, adds POST and `content-type` to the
    CORS reply on `/v1`, and uses the error shape on every `/v1` answer. Actions are limited per client
    (`cf-connecting-ip` when the request comes from the local proxy): 30 a minute with a burst of 10, at most

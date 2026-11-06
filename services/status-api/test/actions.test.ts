@@ -501,9 +501,9 @@ function topic(opts: { skip?: number[]; ordered?: Record<string, string> } = {})
   return { store, fetch, hashes };
 }
 
-async function filing(opts: { topic?: Parameters<typeof topic>[0]; chain?: Partial<FakeState>; fetch?: FetchLike } = {}) {
+async function filing(opts: { topic?: Parameters<typeof topic>[0]; chain?: Partial<FakeState>; fetch?: FetchLike; cfg?: Partial<Config> } = {}) {
   const t = topic(opts.topic);
-  const r0 = await rig({ store: t.store, fetch: opts.fetch ?? t.fetch, chain: opts.chain, now: 1_700_000_100n, extra: () => undefined });
+  const r0 = await rig({ store: t.store, fetch: opts.fetch ?? t.fetch, chain: opts.chain, now: 1_700_000_100n, extra: () => undefined, ...(opts.cfg ? { cfg: opts.cfg } : {}) });
   return { ...r0, t };
 }
 
@@ -603,6 +603,20 @@ describe('fileClaim', () => {
     expectError('fileClaim', await r0.post('fileClaim', { from: SHOP, orderId: ORDER }), 422, 'ordered_tx_mismatch');
     r0 = await filing({ fetch: shopSays(null) });
     expect(expectError('fileClaim', await r0.post('fileClaim', { from: SHOP, orderId: ORDER }), 503, 'upstream_unavailable').details.upstream).toBe('shop');
+  });
+
+  it('a shop or gateway that hangs answers upstream_unavailable naming it once readWaitMs has passed, not at the deadline', async () => {
+    const base = topic();
+    const hangs = (prefix: string): FetchLike => (url, init) =>
+      url.startsWith(prefix) ? new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))) : base.fetch(url, init);
+    let r0 = await filing({ fetch: hangs('http://127.0.0.1:8720/orders/'), cfg: { readWaitMs: 150 } });
+    let t = Date.now();
+    expect(expectError('fileClaim', await r0.post('fileClaim', { from: SHOP, orderId: ORDER }), 503, 'upstream_unavailable').details.upstream).toBe('shop');
+    expect(Date.now() - t).toBeLessThan(600);
+    r0 = await filing({ fetch: hangs('http://gateway.test/ipfs/'), cfg: { readWaitMs: 150 } });
+    t = Date.now();
+    expect(expectError('fileClaim', await r0.post('fileClaim', { from: SHOP, platform: PLATFORM, orderNonce: N }), 503, 'upstream_unavailable').details.upstream).toBe('ipfs');
+    expect(Date.now() - t).toBeLessThan(600);
   });
 
   it('refuses before building: records, basket and net loss', async () => {
