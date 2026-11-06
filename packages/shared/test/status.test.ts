@@ -197,12 +197,55 @@ describe('at court', () => {
       nextCall: 'relayRuling',
       deadline: null,
     });
-    // Nothing on its way: a failed return message, one Hedera ignored, or a case still open.
-    expect(deriveStatus(atCourt, relayed, back(ExecutionState.Failure), LOCKED, after).nextCall).toBe('expireClaim');
+    // Nothing on its way: a return message Hedera took (recorded or ignored), or a case still being decided.
     expect(deriveStatus(atCourt, relayed, back(ExecutionState.Success), LOCKED, after).nextCall).toBe('expireClaim');
     expect(deriveStatus(atCourt, kase({ state: CaseState.Opened, attempts: 1 }), [msg({})], LOCKED, after).nextCall).toBe('expireClaim');
+    expect(deriveStatus(atCourt, kase({ state: CaseState.Opened, attempts: 1, period: 3 }), [msg({})], LOCKED, after).nextCall).toBe('expireClaim');
     // Before the timeout nothing changes.
     expect(deriveStatus(atCourt, relayed, back(ExecutionState.Untouched), LOCKED, expiry)).toMatchObject({ statusKey: 'at_court', nextActor: 'none' });
+  });
+
+  it('past the timeout, a failed return message is still run by hand, not thrown away', () => {
+    const after = expiry + 1n;
+    const relayed = kase({ state: CaseState.Relayed, attempts: 1 });
+    const failedBack = [msg({}), msg({ direction: 'toHedera', executionState: ExecutionState.Failure, sentAt: after - 300n })];
+    // The same advice one second before and one second after the timeout; only the deadline goes.
+    expect(deriveStatus(atCourt, relayed, failedBack, LOCKED, expiry)).toEqual({
+      statusKey: 'stuck',
+      nextActor: 'anyone',
+      nextCall: 'manualExecute',
+      deadline: expiry,
+    });
+    expect(deriveStatus(atCourt, relayed, failedBack, LOCKED, after)).toEqual({
+      statusKey: 'stuck',
+      nextActor: 'anyone',
+      nextCall: 'manualExecute',
+      deadline: null,
+    });
+    // The message counts on its own, before the case has been read.
+    expect(deriveStatus(atCourt, null, failedBack, LOCKED, after).nextCall).toBe('manualExecute');
+    // A resend that failed beside an earlier copy Hedera took: nothing is on its way.
+    const tookFirst = [msg({}), msg({ direction: 'toHedera', sendNo: 1 }), msg({ direction: 'toHedera', sendNo: 2, executionState: ExecutionState.Failure })];
+    expect(deriveStatus(atCourt, relayed, tookFirst, LOCKED, after).nextCall).toBe('expireClaim');
+  });
+
+  it('past the timeout, a dispute in its execution period waits for executeRuling, not expiry', () => {
+    const after = expiry + 1n;
+    const executing = kase({ state: CaseState.Opened, attempts: 1, disputeIds: [212n, 0n], period: 4 });
+    expect(deriveStatus(atCourt, executing, [msg({})], LOCKED, after)).toEqual({
+      statusKey: 'at_court',
+      nextActor: 'court',
+      nextCall: null,
+      deadline: null,
+    });
+    expect(deriveStatus(atCourt, { ...executing, attempts: 2, disputeIds: [211n, 212n] }, [msg({})], LOCKED, after)).toEqual({
+      statusKey: 'refused_once',
+      nextActor: 'court',
+      nextCall: null,
+      deadline: null,
+    });
+    // Before the timeout it reads as it always did.
+    expect(deriveStatus(atCourt, executing, [msg({})], LOCKED, expiry)).toEqual({ statusKey: 'at_court', nextActor: 'court', nextCall: null, deadline: null });
   });
 
   it('a failed return leg beside a successful outbound one is stuck', () => {

@@ -162,17 +162,24 @@ function caseDead(c: CaseView | null, p: LiveParams, now: bigint): boolean {
 }
 
 /**
- * True while a ruling can still reach Hedera and settle an AtCourt claim: the case is Ruled on
- * Arbitrum and not yet relayed, or it was relayed and the latest return message is not read yet,
- * Untouched or InProgress. A ruling that lands before `expireClaim` applies even after the
- * timeout, so expiry would throw it away (the keeper waits in the same state). A failed return
- * message, or one that succeeded while the claim stayed AtCourt (Hedera ignored it), is not pending.
+ * True while a ruling can still reach Hedera and settle an AtCourt claim. Hedera applies a ruling
+ * to an AtCourt claim whenever it lands, timeout or not, so expiry would throw it away; the keeper
+ * waits in the same states (machine.ts pendingRuling):
+ * - the case is Ruled on Arbitrum and not yet relayed;
+ * - a return message is Untouched or InProgress, or it failed on the Hedera OffRamp, where anyone
+ *   can still execute it by hand; a Relayed case whose message is not read yet counts too;
+ * - the case is Opened and its Kleros dispute is in the execution period: the ruling is final and
+ *   executeRuling delivers it (the deployed RecourseCase takes a ruling at any time while Opened).
+ * Not pending: any return message that succeeded (Hedera recorded or ignored it), or a case that is
+ * still being decided.
  */
-function rulingOnItsWay(c: CaseView | null, back: BridgeView | undefined): boolean {
-  if (back !== undefined && (back.executionState === ExecutionState.Untouched || back.executionState === ExecutionState.InProgress)) return true;
+function rulingOnItsWay(c: CaseView | null, views: readonly BridgeView[]): boolean {
+  if (c !== null && c.state === CaseState.Ruled) return true;
+  const backs = views.filter((v) => v.direction === 'toHedera');
+  if (backs.length > 0) return !backs.some((v) => v.executionState === ExecutionState.Success);
   if (c === null) return false;
-  if (c.state === CaseState.Ruled) return true;
-  return c.state === CaseState.Relayed && back === undefined;
+  if (c.state === CaseState.Relayed) return true;
+  return c.state === CaseState.Opened && c.attempts > 0 && c.period === 4;
 }
 
 /** Status of one claim. First matching row wins. */
@@ -210,10 +217,12 @@ export function deriveStatus(
     const dead = caseDead(caseView, p, now);
     // Past the timeout with a ruling still on its way: never advise expiry, which would discard it.
     // No deadline either: the timeout has passed, and showing it reads as "can be ended after".
-    if (expired && !dead && rulingOnItsWay(caseView, lastBack)) {
+    if (expired && !dead && rulingOnItsWay(caseView, bridgeViews)) {
+      if (back === 'failed') return view('stuck', 'anyone', 'manualExecute');
       if (back === 'waiting') return view('stuck', 'anyone', 'relayRuling');
       const key: StatusKey = caseView !== null && caseView.attempts === 2 ? 'refused_once' : 'at_court';
       if (caseView !== null && caseView.state === CaseState.Ruled) return view(key, 'keeper', 'relayRuling');
+      if (caseView !== null && caseView.state === CaseState.Opened) return view(key, 'court', null);
       return view(key, 'none', null);
     }
     if (back || out || dead || expired) {

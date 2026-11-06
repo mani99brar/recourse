@@ -101,6 +101,9 @@ export function statusPlain(key: StatusKey, call: NextCall | null, courtState?: 
       ? "The court has ruled, but the ruling has not arrived on Hedera. Anyone can send it again. Ending the claim instead would throw the ruling away."
       : 'The court has ruled. The ruling is being sent back to Hedera, where it decides the claim.';
   }
+  if (call === 'manualExecute' && courtState === 'relayed') {
+    return 'The court has ruled, but the message carrying the ruling failed on Hedera. Anyone can run it by hand. Ending the claim instead would throw the ruling away.';
+  }
   if ((key === 'at_court' || key === 'refused_once') && call === null && courtState === 'relayed') {
     return 'The court has ruled and the ruling is on its way back to Hedera, where it decides the claim.';
   }

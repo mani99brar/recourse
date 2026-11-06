@@ -60,6 +60,10 @@ describe('pages render', () => {
     const inFlight = renderToString(<CaseView d={detail('at_court', { nextActor: 'none', nextCall: null, court: { ...court, state: 'relayed' } })} />);
     expect(inFlight).toContain('on its way back to Hedera');
     expect(inFlight).not.toContain('end the claim');
+    const failedBack = renderToString(<CaseView d={detail('stuck', { nextCall: 'manualExecute', court: { ...court, state: 'relayed' } })} />);
+    expect(failedBack).toContain('run the failed message by hand');
+    expect(failedBack).toContain('throw the ruling away');
+    expect(failedBack).not.toContain('end the claim after the timeout');
   });
   it('a referenced record the topic has not been read to yet is unchecked, not "not on the topic"', () => {
     const base = detail('at_court');
