@@ -40,15 +40,30 @@ export function redactUrl(url: string): string {
   return q < 0 ? url : url.slice(0, q);
 }
 
-async function request(url: string, init: RequestInit, opts: HttpOptions): Promise<Response> {
+/**
+ * Sends the request and hands the answer to `read` while the timeout still runs, so a server that
+ * sends its headers and then stalls in the body is cut off as well.
+ */
+async function request<T>(url: string, init: RequestInit, opts: HttpOptions, read: (res: Response) => Promise<T>): Promise<T> {
   const f = opts.fetch ?? (globalThis.fetch as FetchLike);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new TransientError(`timeout on ${redactUrl(url)}`));
+      controller.abort();
+    }, opts.timeoutMs ?? 15_000);
+  });
   try {
-    return await f(url, { ...init, signal: controller.signal });
-  } catch (err) {
-    const what = err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error';
-    throw new TransientError(`${what} on ${redactUrl(url)}`);
+    let res: Response;
+    try {
+      res = await Promise.race([f(url, { ...init, signal: controller.signal }), timedOut]);
+    } catch (err) {
+      if (err instanceof TransientError) throw err;
+      const what = err instanceof Error && err.name === 'AbortError' ? 'timeout' : 'network error';
+      throw new TransientError(`${what} on ${redactUrl(url)}`);
+    }
+    return await Promise.race([read(res), timedOut]);
   } finally {
     clearTimeout(timer);
   }
@@ -62,36 +77,38 @@ function classify(res: Response, url: string): void {
 
 /** GET JSON. Returns null on 404; throws TransientError or PermanentError otherwise. */
 export async function getJson<T>(url: string, opts: HttpOptions = {}): Promise<T | null> {
-  const res = await request(url, { method: 'GET', headers: { accept: 'application/json' } }, opts);
-  if (res.status === 404) return null;
-  classify(res, url);
-  try {
-    return (await res.json()) as T;
-  } catch {
-    throw new TransientError(`bad JSON from ${redactUrl(url)}`);
-  }
+  return request(url, { method: 'GET', headers: { accept: 'application/json' } }, opts, async (res) => {
+    if (res.status === 404) return null;
+    classify(res, url);
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new TransientError(`bad JSON from ${redactUrl(url)}`);
+    }
+  });
 }
 
 /** GET raw bytes. Returns null on 404. */
 export async function getBytes(url: string, opts: HttpOptions = {}): Promise<Uint8Array | null> {
-  const res = await request(url, { method: 'GET' }, opts);
-  if (res.status === 404) return null;
-  classify(res, url);
-  try {
-    return new Uint8Array(await res.arrayBuffer());
-  } catch {
-    throw new TransientError(`body read failed on ${redactUrl(url)}`);
-  }
+  return request(url, { method: 'GET' }, opts, async (res) => {
+    if (res.status === 404) return null;
+    classify(res, url);
+    try {
+      return new Uint8Array(await res.arrayBuffer());
+    } catch {
+      throw new TransientError(`body read failed on ${redactUrl(url)}`);
+    }
+  });
 }
 
 /** POST JSON; throws on any non-2xx. */
 export async function postJson(url: string, body: unknown, opts: HttpOptions = {}): Promise<void> {
-  const res = await request(
+  return request(
     url,
     { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
     opts,
+    async (res) => classify(res, url),
   );
-  classify(res, url);
 }
 
 /** Exponential backoff: `base * 2^n`, capped. */
