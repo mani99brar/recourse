@@ -1,11 +1,13 @@
-// Read-only HTTP surface on 127.0.0.1: GET /health and GET /claims/:claimId, both answered from
-// the keeper's memory. Nothing here changes state; keeper-ctl writes the control file instead.
+// Read-only HTTP surface on 127.0.0.1: GET /health (503 while the keeper is unhealthy) and GET
+// /claims/:claimId, both answered from the keeper's memory. Nothing here changes state; keeper-ctl writes the control file instead.
 
 import type { Server } from 'node:http';
 import express, { type Express } from 'express';
 
 export interface KeeperHttpSource {
   health(): Record<string, unknown>;
+  /** HTTP status for GET /health: 200 when healthy, 503 otherwise (200 when absent). */
+  healthStatus?(): number;
   claim(claimId: string): Record<string, unknown> | undefined;
 }
 
@@ -15,7 +17,7 @@ export function createKeeperApp(source: KeeperHttpSource): Express {
   const app = express();
   app.disable('x-powered-by');
   app.get('/health', (_req, res) => {
-    res.json(source.health());
+    res.status(source.healthStatus?.() ?? 200).json(source.health());
   });
   app.get('/claims/:claimId', (req, res) => {
     const id = req.params.claimId.toLowerCase();

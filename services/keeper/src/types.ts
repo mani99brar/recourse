@@ -287,6 +287,8 @@ export interface KeeperClaim {
   /** Last read of the dispute's ruling. */
   lastRuling?: { attempt: number; ruling: string; tied: boolean; overridden: boolean; at: number };
   lastError?: string;
+  /** Keeper clock (unix s) when lastError was set: an old one is history, not a current fault. */
+  lastErrorAt?: number;
 }
 
 export function newClaim(claimId: Hex): KeeperClaim {

@@ -113,7 +113,12 @@ const DEFAULT_LINKS: Links = {
 
 export interface KeeperHealth {
   lastTickAt?: number;
+  /** The latest error, while it is current: a tick that runs without one clears it. */
   lastError?: string;
+  /** When the latest error happened (keeper clock, unix s); kept after lastError clears. */
+  lastErrorAt?: number;
+  /** The last few errors, oldest first. */
+  recentErrors: { at: number; what: string }[];
   paused: boolean;
   windowsActive: string[];
   mode?: BridgeMode;
@@ -138,7 +143,9 @@ export interface KeeperHealth {
 
 export class Keeper {
   readonly book: ClaimBook;
-  readonly health: KeeperHealth = { paused: false, windowsActive: [], cursors: {}, claimsByPhase: {} };
+  readonly health: KeeperHealth = { paused: false, windowsActive: [], cursors: {}, claimsByPhase: {}, recentErrors: [] };
+  /** Errors noted in the tick that is running. */
+  private tickErrors = 0;
   private readonly timing: Timing;
   private readonly links: Links;
   private control: Control = emptyControl();
@@ -218,10 +225,11 @@ export class Keeper {
   async tick(): Promise<void> {
     const now = this.now();
     this.health.lastTickAt = now;
+    this.tickErrors = 0;
     try {
       this.control = readControl(this.o.stateDir);
     } catch (err) {
-      this.health.lastError = `control file unreadable: ${msg(err)}`;
+      this.noteError(`control file unreadable: ${msg(err)}`);
     }
     const extra = controlWindows(this.control);
     this.windows = [...(this.o.windows ?? []), ...extra.windows];
@@ -247,7 +255,8 @@ export class Keeper {
         await this.step(c, now);
       } catch (err) {
         c.lastError = msg(err);
-        this.health.lastError = `${c.claimId}: ${msg(err)}`;
+        c.lastErrorAt = now;
+        this.noteError(`${c.claimId}: ${msg(err)}`);
         this.log(`claim ${c.claimId}: ${msg(err)}`);
       }
     }
@@ -258,6 +267,30 @@ export class Keeper {
     await this.o.alerter.flush();
     // Only after both sources committed: every event ingested so far sits behind a saved cursor.
     if (hederaOk && arbitrumOk) this.maybeCompact();
+    // A tick without an error means the last one is over (lastErrorAt and recentErrors keep it).
+    if (this.tickErrors === 0) this.health.lastError = undefined;
+  }
+
+  private noteError(what: string): void {
+    const at = this.now();
+    this.tickErrors += 1;
+    this.health.lastError = what;
+    this.health.lastErrorAt = at;
+    this.health.recentErrors.push({ at, what });
+    if (this.health.recentErrors.length > 10) this.health.recentErrors.splice(0, this.health.recentErrors.length - 10);
+  }
+
+  /**
+   * Whether the keeper is doing its job: it ticked within `staleAfterS` and can read the contract
+   * params (without them every timed action waits). GET /health answers 503 when not.
+   */
+  status(staleAfterS: number): { ok: boolean; problems: string[] } {
+    const problems: string[] = [];
+    const last = this.health.lastTickAt;
+    if (last === undefined) problems.push('no tick yet');
+    else if (this.now() - last > staleAfterS) problems.push(`last tick ${this.now() - last} s ago`);
+    if (this.health.paramsError !== undefined) problems.push(`params unreadable: ${this.health.paramsError}`);
+    return { ok: problems.length === 0, problems };
   }
 
   private maybeCompact(): void {
@@ -266,7 +299,7 @@ export class Keeper {
     try {
       this.compact();
     } catch (err) {
-      this.health.lastError = `journal compaction: ${msg(err)}`;
+      this.noteError(`journal compaction: ${msg(err)}`);
       this.alert({ kind: 'journal_error', hint: `journal compaction failed (${msg(err)}); the old journal is untouched and still in use` });
     }
   }
@@ -276,7 +309,7 @@ export class Keeper {
       await fn();
       return true;
     } catch (err) {
-      this.health.lastError = `${what}: ${msg(err)}`;
+      this.noteError(`${what}: ${msg(err)}`);
       this.log(`${what}: ${msg(err)}`);
       this.alert({ kind: 'rpc_down', hint: `${what} failed: ${msg(err)}` });
       return false;
@@ -430,6 +463,7 @@ export class Keeper {
       this.log(`claim ${c.claimId}: ${call.fn} reverted with ${r.error} (a timing race, not counted)`);
     } else if (r.kind === 'reverted') {
       c.lastError = `${call.fn} reverted${r.error ? ` with ${r.error}` : ''}${r.message ? `: ${r.message}` : ''}`;
+      c.lastErrorAt = now;
       this.log(`claim ${c.claimId}: ${c.lastError}`);
       const max = opts.maxTries ?? row.maxTries;
       if (max !== undefined && c.tries[key]!.count >= max) {
@@ -834,6 +868,7 @@ export class Keeper {
       return 'ok';
     }
     c.lastError = `evidence ${attempt}: ${r.message}`;
+    c.lastErrorAt = now;
     if (r.kind === 'transient') {
       this.book.save(c);
       if (now - (milestoneOf(c) ?? now) >= 600) this.alertClaim(c, 'evidence_failed', `evidence for attempt ${attempt} not ready: ${r.message}`);
@@ -1205,6 +1240,7 @@ export class Keeper {
       lastRuling: c.lastRuling,
       tries: c.tries,
       lastError: c.lastError,
+      lastErrorAt: c.lastErrorAt,
       lastAlert: lastAlert ? { kind: lastAlert.kind, at: new Date(lastAlert.raisedAt).toISOString() } : undefined,
     };
   }

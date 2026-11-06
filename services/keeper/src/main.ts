@@ -218,9 +218,12 @@ async function main(): Promise<void> {
   });
   keeper.start();
 
+  // A tick that has not come back in four poll intervals (two minutes at least) is a stuck keeper.
+  const staleAfterS = Math.max(120, Math.ceil((4 * cfg.pollMs) / 1000));
   const health = () =>
     jsonSafe({
       service: 'keeper',
+      ...keeper.status(staleAfterS),
       dryRun,
       hederaFile: hed.file,
       arbitrumFile: arb.file,
@@ -249,7 +252,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const server = await listenKeeper(createKeeperApp({ health, claim: (id) => keeper.view(id) as Record<string, unknown> | undefined }), cfg.port);
+  const server = await listenKeeper(
+    createKeeperApp({
+      health,
+      healthStatus: () => (keeper.status(staleAfterS).ok ? 200 : 503),
+      claim: (id) => keeper.view(id) as Record<string, unknown> | undefined,
+    }),
+    cfg.port,
+  );
   log(JSON.stringify({ event: 'started', port: cfg.port, dryRun, hederaFile: hed.file, arbitrumFile: arb.file }));
   let stopping = false;
   const stop = () => {

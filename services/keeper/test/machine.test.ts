@@ -1140,3 +1140,57 @@ describe('view and health', () => {
     expect(r.k.health.levels?.feePool).toBeDefined();
   });
 });
+
+describe('health', () => {
+  it('clears lastError after a clean tick and keeps when it happened', async () => {
+    const r = rig();
+    const poll = r.fake.pollHedera.bind(r.fake);
+    r.fake.pollHedera = async () => {
+      throw new Error('HTTP request failed');
+    };
+    await run(r, 15);
+    expect(r.k.health.lastError).toBe('hedera events: HTTP request failed');
+    const at = r.k.health.lastErrorAt;
+    expect(at).toBe(r.fake.t);
+    r.fake.pollHedera = poll;
+    await run(r, 15);
+    expect(r.k.health.lastError).toBeUndefined();
+    expect(r.k.health.lastErrorAt).toBe(at);
+    expect(r.k.health.recentErrors).toEqual([{ at, what: 'hedera events: HTTP request failed' }]);
+  });
+
+  it('keeps only the last ten errors', async () => {
+    const r = rig();
+    r.fake.pollHedera = async () => {
+      throw new Error('down');
+    };
+    await run(r, 15 * 12);
+    expect(r.k.health.recentErrors).toHaveLength(10);
+  });
+
+  it('is unhealthy before the first tick, when ticks stop and while params cannot be read', async () => {
+    const r = rig();
+    expect(r.k.status(120)).toEqual({ ok: false, problems: ['no tick yet'] });
+    await run(r, 15);
+    expect(r.k.status(120)).toEqual({ ok: true, problems: [] });
+    r.fake.t += 121;
+    expect(r.k.status(120).problems).toEqual(['last tick 121 s ago']);
+    r.fake.paramsFail = true;
+    await run(r, 15);
+    expect(r.k.status(120).ok).toBe(false);
+    expect(r.k.status(120).problems[0]).toContain('params unreadable');
+    r.fake.paramsFail = false;
+    await run(r, 15);
+    expect(r.k.status(120).ok).toBe(true);
+  });
+
+  it('dates a claim error, so an old one reads as history', async () => {
+    const r = rig();
+    r.fake.overrides.set('sendToCourt', () => ({ kind: 'reverted', error: 'NativeShort' }));
+    const id = await toCourt(r);
+    await run(r, 30);
+    const v = r.k.view(id)!;
+    expect(v.lastError).toContain('sendToCourt reverted with NativeShort');
+    expect(typeof v.lastErrorAt).toBe('number');
+  });
+});

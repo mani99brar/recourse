@@ -90,4 +90,20 @@ describe('http', () => {
       server.close();
     }
   });
+
+  it('answers /health with the status the source gives, and still sends the body', async () => {
+    let status = 503;
+    const app = createKeeperApp({ health: () => ({ ok: status === 200 }), healthStatus: () => status, claim: () => undefined });
+    const server = await listenKeeper(app, 0);
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ ok: false });
+      status = 200;
+      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+    } finally {
+      server.close();
+    }
+  });
 });
