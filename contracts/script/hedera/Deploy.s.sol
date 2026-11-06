@@ -99,12 +99,4 @@ contract Deploy is HederaScript {
         );
         return given;
     }
-
-    function _mode(string memory name) internal pure returns (BridgeMode) {
-        bytes32 h = keccak256(bytes(name));
-        if (h == keccak256("Both")) return BridgeMode.Both;
-        if (h == keccak256("OutOnly")) return BridgeMode.OutOnly;
-        if (h == keccak256("None")) return BridgeMode.None;
-        revert("Deploy: HEDERA_BRIDGE_MODE must be Both, OutOnly or None");
-    }
 }

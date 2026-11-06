@@ -23,6 +23,11 @@ contract Lock is HederaScript {
         (RecourseClaims claims, DepositVault vault,) = _loadDeployed();
         require(!claims.configLocked() && !vault.configLocked(), "Lock: already locked");
         require(claims.bridgeMode() == BridgeMode.None || claims.peer() != address(0), "Lock: peer not set");
+        // The mode is locked for good, so it must be the one intended, when that is named.
+        string memory intended = vm.envOr("HEDERA_BRIDGE_MODE", string(""));
+        require(
+            bytes(intended).length == 0 || claims.bridgeMode() == _mode(intended), "Lock: mode is not HEDERA_BRIDGE_MODE"
+        );
         require(claims.preCheckSigner() != address(0), "Lock: pre-check signer not set");
         require(vault.claims() == address(claims) && claims.vault() == address(vault), "Lock: not bound");
         require(vault.usdcAssociated(), "Lock: vault not associated");

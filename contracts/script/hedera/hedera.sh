@@ -3,7 +3,7 @@
 #
 #   hedera.sh mock-usdc [--broadcast] [--again]  mock mode only, first: deploy MockUsdc and keep its address (deployer)
 #   hedera.sh preflight                       read-only: chain id, deployer HBAR, USDC token, router code, inputs
-#   hedera.sh deploy    [--broadcast] [--again]  deploy both, bind, pre-lock config (deployer)
+#   hedera.sh deploy    [--broadcast] [--again] [--resume]  deploy both, bind, pre-lock config (deployer)
 #   hedera.sh associate [--broadcast]         circle: associateUsdc(false), else (true), then the mirror row;
 #                                             mock: associateUsdc(true), then usdcAssociated() (deployer)
 #   hedera.sh record                          write deployments/$HEDERA_FILE from the broadcast and read-backs
@@ -11,12 +11,18 @@
 #   hedera.sh mint <role|0xaddr> <micro-usdc> [--broadcast] mock mode only: mint mUSDC (deployer, the mock's owner)
 #   hedera.sh deposit <micro-usdc> [--broadcast]            platform: USDC approve + postDeposit (platform)
 #   hedera.sh required <platform> <micro-usdc> [--broadcast] setRequired (deployer)
-#   hedera.sh lock      [--broadcast]         locked params and lockConfig on both, read-backs (deployer)
+#   hedera.sh lock      [--broadcast] [--resume]  locked params and lockConfig on both, read-backs (deployer)
 #   hedera.sh check                           read-only checks plus the mirror association row (mock: the token)
-#   hedera.sh rehearse <port>                 every step above on a local anvil, with throwaway keystores (circle)
+#   hedera.sh rehearse <port>                 every step above on a local anvil, with throwaway keystores;
+#                                             HEDERA_USDC_MODE=mock rehearses the mock steps (mock-usdc, mint)
 #
 # Without --broadcast a step is a dry run: it simulates or calls and sends nothing. No USDC moves before
 # `associate` has seen the vault's token row on the mirror node (mock: usdcAssociated() reads true).
+#
+# --resume (with --broadcast; mock-usdc, deploy, wire, lock): a forge broadcast that stopped part way (a relay
+# error, a price move, a timeout) is finished from its own broadcast/<script>/<chain>/run-latest.json: only the
+# transactions not yet mined are sent, so no second pair is deployed and `deploy` does not need --again for it.
+# Then carry on with the next step as usual (associate, record).
 #
 # USDC mode, HEDERA_USDC_MODE: circle is Circle's testnet USDC 0.0.429274; mock is MockUsdc ("mUSDC"), a testnet
 # stand-in that is not Circle's token. Unset, it is the usdc.mode recorded in $HEDERA_FILE (circle for a file
@@ -27,7 +33,8 @@
 # <role>.json.pass); no key or password is ever passed on the command line.
 #
 # Env: KEYSTORE_DIR (signing steps), HEDERA_RPC_URL_1, HEDERA_MIRROR_URL, POOL_ADDRESS,
-# PRECHECK_SIGNER_ADDRESS, RULING_RELAYER_ADDRESS, HEDERA_BRIDGE_MODE (Both, OutOnly or None),
+# PRECHECK_SIGNER_ADDRESS, RULING_RELAYER_ADDRESS, HEDERA_BRIDGE_MODE (Both, OutOnly or None; record and check
+# compare the chain to it, lock refuses another), EXTRA_ARGS_HEDERA (check: the intended Claims extra args),
 # RECOURSE_CASE_ADDRESS (wire), HEDERA_FILE (default hedera.json), HEDERA_USDC_MODE, USDC_ADDRESS (mock: the
 # mock to deploy on, default the one mock-usdc kept; once a mock deployment is recorded, mint takes only its
 # vault's token), HEDERA_ASSOC_GAS (default 1000000, mock 150000),
@@ -53,6 +60,10 @@ MOCK_SYMBOL=mUSDC
 ROUTER=0x802C5F84eAD128Ff36fD6a3f8a418e339f467Ce4
 PARAMS="$ROOT/packages/shared/vectors/params.json"
 PARAM_KEYS='["contestWindow","claimTimeout","courtFeeUsdc","handlingBase","handlingBps","handlingCap","resendGap","maxSends","topUpWindow","exitDelay","minDeposit","gasClaimToCourt","gasRulingBack"]'
+
+# A view call pays no gas, so it never takes the ETH_GAS_PRICE set for sends: a node that checks the caller's
+# balance against it (anvil does, the Hedera relay does not) would refuse the call from an empty account.
+cast() { if [ "${1:-}" = call ]; then env -u ETH_GAS_PRICE "$(type -P cast)" "$@"; else command cast "$@"; fi; }
 
 die() { echo "hedera.sh: $*" >&2; exit 1; }
 log() { echo "hedera.sh: $*"; }
@@ -228,17 +239,28 @@ kept_assoc_tx() {
     || true
 }
 
-BROADCAST=0; AGAIN=0
+BROADCAST=0; AGAIN=0; RESUME=0
 ARGS=()
 for a in "$@"; do
   case "$a" in
     --broadcast) BROADCAST=1 ;;
     --again) AGAIN=1 ;;
+    --resume) RESUME=1 ;;
     *) ARGS+=("$a") ;;
   esac
 done
 set -- "${ARGS[@]+"${ARGS[@]}"}"
 cmd=${1:-}; shift || true
+if [ "$RESUME" = 1 ]; then
+  case "$cmd" in mock-usdc|deploy|wire|lock) ;; *) die "--resume is for mock-usdc, deploy, wire and lock" ;; esac
+  [ "$BROADCAST" = 1 ] || die "--resume finishes a broadcast; pass --broadcast with it"
+fi
+
+# broadcast_flags: --broadcast when sending, and --resume with it to finish the last run of the script.
+broadcast_flags() {
+  [ "$BROADCAST" = 1 ] || return 0
+  flags+=(--broadcast); [ "$RESUME" = 0 ] || flags+=(--resume)
+}
 
 case "$cmd" in
   mock-usdc)
@@ -246,7 +268,7 @@ case "$cmd" in
     [ "$USDC_MODE" = mock ] || die "mock-usdc is for mock mode; set HEDERA_USDC_MODE=mock"
     f=$(mock_file); kept=""
     if [ -f "$f" ]; then kept=$(cat "$f"); elif [ "$RECORDED_MODE" = mock ]; then kept=$(recorded .usdc.address); fi
-    if [ -n "$kept" ] && [ "$AGAIN" = 0 ] && [ "$(code_bytes "$kept")" -gt 0 ]; then
+    if [ -n "$kept" ] && [ "$AGAIN" = 0 ] && [ "$RESUME" = 0 ] && [ "$(code_bytes "$kept")" -gt 0 ]; then
       [ "$BROADCAST" = 0 ] || die "a mock USDC already exists at $kept; deploy on it, or pass --again to deploy another"
       log "a mock USDC already exists at $kept; --broadcast would need --again to deploy another"
     fi
@@ -258,7 +280,7 @@ case "$cmd" in
       [ -n "$from" ] || die "a dry run without KEYSTORE_DIR needs HEDERA_DEPLOYER_ADDRESS"
       flags=(--sender "$from"); log "dry run from $from (no keystore)"
     fi
-    flags+=(--slow); [ "$BROADCAST" = 1 ] && flags+=(--broadcast)
+    flags+=(--slow); broadcast_flags
     gas_price
     forge_script DeployMockUsdc.s.sol "${flags[@]}"
     if [ "$BROADCAST" = 1 ]; then
@@ -302,7 +324,7 @@ case "$cmd" in
 
   deploy)
     require_chain; keystore deployer
-    if [ "$BROADCAST" = 1 ] && [ -f "$OUT" ] && [ "$AGAIN" = 0 ] && [ "${HEDERA_REDEPLOY:-0}" != 1 ]; then
+    if [ "$BROADCAST" = 1 ] && [ "$RESUME" = 0 ] && [ -f "$OUT" ] && [ "$AGAIN" = 0 ] && [ "${HEDERA_REDEPLOY:-0}" != 1 ]; then
       die "$OUT exists (claims $(jq -r '.contracts.claims.address // "none"' "$OUT")); pass --again (or set HEDERA_REDEPLOY=1) to deploy another pair"
     fi
     if [ "$USDC_MODE" = mock ]; then
@@ -316,7 +338,7 @@ case "$cmd" in
       die "a mock USDC is kept at $(cat "$(mock_file)"); set HEDERA_USDC_MODE=mock to deploy on it, or =circle for Circle's USDC"
     fi
     export HEDERA_USDC_MODE=$USDC_MODE
-    flags=("${KS[@]}" --slow); [ "$BROADCAST" = 1 ] && flags+=(--broadcast)
+    flags=("${KS[@]}" --slow); broadcast_flags
     forge_script Deploy.s.sol "${flags[@]}"
     if [ "$BROADCAST" = 1 ]; then
       # The kept association tx is the previous vault's; the new one gets its own at associate.
@@ -393,6 +415,14 @@ case "$cmd" in
       [ "$vid" != null ] && [ "$cid" != null ] && [ -n "$start" ] || die "mirror has not indexed both contracts yet; retry"
     fi
     mode=$(cast call "$claims" 'bridgeMode()(uint8)' --rpc-url "$RPC")
+    # The record must hold the mode intended, not whatever the chain has: check reads it when the env is unset.
+    if [ -n "${HEDERA_BRIDGE_MODE:-}" ]; then
+      case "$HEDERA_BRIDGE_MODE" in Both) want=0 ;; OutOnly) want=1 ;; None) want=2 ;;
+        *) die "HEDERA_BRIDGE_MODE must be Both, OutOnly or None" ;; esac
+      [ "$mode" = "$want" ] || die "claims bridgeMode() is $mode but HEDERA_BRIDGE_MODE=$HEDERA_BRIDGE_MODE ($want); do not lock this pair"
+    else
+      log "HEDERA_BRIDGE_MODE is unset: recording bridgeMode() $mode as read, unchecked"
+    fi
     extra=$(cast call "$claims" 'extraArgs()(bytes)' --rpc-url "$RPC")
     csize=$(cast codesize "$claims" --rpc-url "$RPC"); vsize=$(cast codesize "$vault" --rpc-url "$RPC")
     owner=$(cast call "$claims" 'owner()(address)' --rpc-url "$RPC")
@@ -450,7 +480,7 @@ case "$cmd" in
   wire)
     require_chain; same_mode_as_recorded; keystore deployer
     [ -n "${RECOURSE_CASE_ADDRESS:-}" ] || die "RECOURSE_CASE_ADDRESS is not set"
-    flags=("${KS[@]}" --slow); [ "$BROADCAST" = 1 ] && flags+=(--broadcast)
+    flags=("${KS[@]}" --slow); broadcast_flags
     RECOURSE_CASE_ADDRESS="$RECOURSE_CASE_ADDRESS" forge_script Wire.s.sol "${flags[@]}" ;;
 
   mint)
@@ -502,7 +532,7 @@ case "$cmd" in
 
   lock)
     require_chain; same_mode_as_recorded; keystore deployer
-    flags=("${KS[@]}" --slow); [ "$BROADCAST" = 1 ] && flags+=(--broadcast)
+    flags=("${KS[@]}" --slow); broadcast_flags
     forge_script Lock.s.sol "${flags[@]}" ;;
 
   check)
@@ -523,9 +553,11 @@ case "$cmd" in
 
   rehearse)
     port=${1:-}; [ -n "$port" ] || die "rehearse needs the port of a running anvil"
-    # The rehearsal runs in circle mode, on the HTS USDC test double at Circle's facade address.
-    [ "${HEDERA_USDC_MODE:-circle}" = circle ] || die "rehearse runs in circle mode only"
-    export HEDERA_USDC_MODE=circle
+    # Circle mode runs on the HTS USDC test double at Circle's facade address; mock mode deploys a MockUsdc first,
+    # as the testnet replacement does, and mints it.
+    rmode=${HEDERA_USDC_MODE:-circle}
+    case "$rmode" in circle|mock) ;; *) die "rehearse runs in circle or mock mode" ;; esac
+    export HEDERA_USDC_MODE=$rmode
     export HEDERA_RPC_URL_1="http://127.0.0.1:$port" HEDERA_REHEARSAL=1
     RPC=$HEDERA_RPC_URL_1; REHEARSAL=1; require_chain
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -554,19 +586,33 @@ case "$cmd" in
     export REHEARSAL_PLATFORM=$platform REHEARSAL_SHOP=0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65 # shop: anvil 4
     rm -f "$DEPLOY_DIR/$HEDERA_FILE"
     self=("$0")
+    shop=$REHEARSAL_SHOP
 
+    if [ "$rmode" = mock ]; then
+      "${self[@]}" mock-usdc --broadcast
+      # A second run without --again is refused, as on testnet.
+      if "${self[@]}" mock-usdc --broadcast >/dev/null 2>&1; then die "rehearsal: mock-usdc deployed a second mock"; fi
+    fi
     "${self[@]}" deploy --broadcast
     "${self[@]}" associate --broadcast
     "${self[@]}" record
     "${self[@]}" wire --broadcast
     "${self[@]}" check
 
-    # Mock-only setup: the platform's token association and test USDC.
     usdc=$(jq -r .usdc.address "$DEPLOY_DIR/$HEDERA_FILE")
-    keystore platform
-    cast send "$usdc" "associate()" --rpc-url "$RPC" "${KS[@]}" >/dev/null
-    cast send "$usdc" "mint(address,uint256)" "$platform" 10000000000 --rpc-url "$RPC" --unlocked \
-      --from 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 >/dev/null
+    [ "$(jq -r .usdc.mode "$DEPLOY_DIR/$HEDERA_FILE")" = "$rmode" ] || die "rehearsal: record wrote another usdc.mode"
+    if [ "$rmode" = mock ]; then
+      # The deployer owns the mock and mints it, to the platform and to the shop the proofs file claims as.
+      [ "$(jq -r .usdc.tokenId "$DEPLOY_DIR/$HEDERA_FILE")" = null ] || die "rehearsal: a mock record names a token id"
+      "${self[@]}" mint "$platform" 10000000000 --broadcast
+      "${self[@]}" mint "$shop" 1000000000 --broadcast
+    else
+      # Test-double setup: the platform's token association and test USDC.
+      keystore platform
+      cast send "$usdc" "associate()" --rpc-url "$RPC" "${KS[@]}" >/dev/null
+      cast send "$usdc" "mint(address,uint256)" "$platform" 10000000000 --rpc-url "$RPC" --unlocked \
+        --from 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 >/dev/null
+    fi
     "${self[@]}" deposit 5000000000 --broadcast
     "${self[@]}" required "$platform" 5000000000 --broadcast
 
@@ -585,7 +631,7 @@ case "$cmd" in
 
     "${self[@]}" lock --broadcast
     CHECK_EXPECT_LOCKED=1 "${self[@]}" check
-    log "rehearsal complete: $DEPLOY_DIR/$HEDERA_FILE" ;;
+    log "rehearsal complete ($rmode): $DEPLOY_DIR/$HEDERA_FILE" ;;
 
-  *) sed -n '2,36p' "$0"; exit 1 ;;
+  *) sed -n "2,$(( $(grep -n '^set -euo pipefail' "$0" | cut -d: -f1) - 1 ))p" "$0"; exit 1 ;;
 esac

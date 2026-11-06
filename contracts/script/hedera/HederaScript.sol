@@ -7,6 +7,8 @@ import {console2} from "forge-std/console2.sol";
 import {DepositVault} from "../../src/hedera/DepositVault.sol";
 import {RecourseClaims} from "../../src/hedera/RecourseClaims.sol";
 import {IRecourseClaims} from "../../src/hedera/interfaces/IRecourseClaims.sol";
+import {BridgeCodec} from "../../src/shared/BridgeCodec.sol";
+import {BridgeMode} from "../../src/shared/RecourseTypes.sol";
 
 /// @notice Shared pieces of the Hedera scripts: the parameter file, the two parameter stages, the
 ///         deployments file, read-backs and small JSON writers.
@@ -100,6 +102,32 @@ abstract contract HederaScript is Script {
         v.topUpWindow = _u64(_num(json, stage, "topUpWindow"));
         v.exitDelay = _u64(_num(json, stage, "exitDelay"));
         v.minDeposit = _num(json, stage, "minDeposit");
+    }
+
+    /// @dev The bridge mode named by HEDERA_BRIDGE_MODE (Both, OutOnly or None).
+    function _mode(string memory name) internal pure returns (BridgeMode) {
+        bytes32 h = keccak256(bytes(name));
+        if (h == keccak256("Both")) return BridgeMode.Both;
+        if (h == keccak256("OutOnly")) return BridgeMode.OutOnly;
+        if (h == keccak256("None")) return BridgeMode.None;
+        revert("HEDERA_BRIDGE_MODE must be Both, OutOnly or None");
+    }
+
+    /// @dev Whether `args` are extra args RecourseClaims.setExtraArgs takes: GenericExtraArgsV2, 68 bytes, a gas
+    ///      limit from 100,000 to 3,000,000 and out-of-order execution on. A deployment from before that check could
+    ///      hold anything, so a read-back is checked here too.
+    function _laneArgs(bytes memory args) internal pure returns (bool) {
+        if (args.length != 68) return false;
+        bytes4 tag;
+        uint256 gasLimit;
+        uint256 outOfOrder;
+        assembly ("memory-safe") {
+            tag := mload(add(args, 32))
+            gasLimit := mload(add(args, 36))
+            outOfOrder := mload(add(args, 68))
+        }
+        return tag == BridgeCodec.GENERIC_EXTRA_ARGS_V2_TAG && gasLimit >= 100_000 && gasLimit <= 3_000_000
+            && outOfOrder == 1;
     }
 
     function _gasClaimToCourt(string memory stage) internal view returns (uint256) {

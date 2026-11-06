@@ -64,7 +64,10 @@ contract Proofs is HederaScript {
         string memory json = vm.readFile(string.concat(DEPLOYMENTS_DIR, "/", file));
         s.claims = RecourseClaims(vm.parseJsonAddress(json, ".contracts.claims.address"));
         s.vault = DepositVault(vm.parseJsonAddress(json, ".contracts.vault.address"));
-        s.usdc = MockHtsUsdc(vm.parseJsonAddress(json, ".local.usdc"));
+        // The deployment's own token (a rehearsal on the mock records it there); DeployLocal's file has only .local.
+        s.usdc = MockHtsUsdc(
+            vm.parseJsonAddress(json, vm.keyExistsJson(json, ".usdc.address") ? ".usdc.address" : ".local.usdc")
+        );
         s.router = CCIPLocalRouter(vm.parseJsonAddress(json, ".local.router"));
         s.arbSelector = uint64(vm.parseUint(vm.parseJsonString(json, ".local.arbSelector")));
         s.peer = vm.parseJsonAddress(json, ".local.casePeer");

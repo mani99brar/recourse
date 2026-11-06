@@ -126,6 +126,11 @@ pre-check signer, the bridge mode with the relayer, and the send extra args.
 - No USDC moves.
 - It refuses to run if `deployments/hedera.json` already exists. Pass `--again` (or set
   `HEDERA_REDEPLOY=1`) for a new pair.
+- If the broadcast stops part way (the relay refuses a transaction, the price moves past
+  `ETH_GAS_PRICE`, a timeout), run `hedera.sh deploy --broadcast --resume`. It finishes the same
+  run from `contracts/broadcast/Deploy.s.sol/296/run-latest.json`: only the transactions not yet
+  mined are sent, so it deploys no second pair and needs no `--again`. `wire`, `lock` and
+  `mock-usdc` take `--resume` the same way.
 - Mock mode: it checks that the deployer owns the mock, passes it as `USDC_ADDRESS` and sets
   `ETH_GAS_PRICE` if unset. The script logs `usdcMode` and `usdc`.
 - After a broadcast it deletes the kept association tx
@@ -219,9 +224,16 @@ mode it checks instead that the vault's token is the recorded mock and reads bac
 - code at both addresses, and the binding in both directions;
 - one owner for both;
 - association;
-- signer, relayer, mode, peer and extra args as recorded;
+- signer and relayer set, and the peer (unless the mode is None);
+- the mode against `HEDERA_BRIDGE_MODE`. Unset, against the recorded mode: `record` refuses to
+  write a mode other than `HEDERA_BRIDGE_MODE`, and `lock` refuses to lock one;
+- the extra args against `EXTRA_ARGS_HEDERA`, else against the last value `ops/wire` step 06
+  wrote to `deployments/wiring.json` for these contracts, else against the args `deploy` set
+  (`gasClaimToCourt`). They must also be ones the lane takes: GenericExtraArgsV2, a gas limit from
+  100,000 to 3,000,000, out-of-order execution on;
 - the parameters for the current lock state;
-- `totals()` equals the vault's USDC balance;
+- the vault's USDC balance covers `totals()`. USDC sent to the vault directly is reported, not
+  failed;
 - Claims holds no USDC.
 
 It also prints the LINK balance of Claims.
@@ -303,8 +315,11 @@ cast call 0x90a386d59b9A6a4795a011e8f032Fc21ED6FEFb6 'balanceOf(address)(uint256
 ## Rehearsal and local stack
 
 `hedera.sh rehearse <port>` runs steps 2-9 on a running anvil, using test mocks for HTS, the PRNG
-and the USDC facade, the chainlink-local router, and throwaway keystores. It runs in circle mode
-only, on the facade test double. The keystores are made in
+and the USDC facade, the chainlink-local router, and throwaway keystores. By default it runs in
+circle mode, on the facade test double. With `HEDERA_USDC_MODE=mock` it runs the mock steps as the
+replacement does: `mock-usdc` (and checks a second one is refused), `deploy` on it, `associate`
+with `associateUsdc(true)`, the mock `record` (`usdc.mode` `mock`, `tokenId` null) and `check`,
+then `mint` to the platform and the shop. The keystores are made in
 a temp directory and deleted on exit. The claim proofs run through `Proofs.s.sol`. It writes only
 `deployments/*.local.json`, never `hedera.json`.
 
