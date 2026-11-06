@@ -2,7 +2,7 @@ import { cidOfHash } from '@recourse/records';
 import { addressBook, canonicalBytes, claimIdOf, encodeClaimToCourt, externalIdUint, orderIdOf, recordHash, type CanonicalValue } from '@recourse/shared';
 import { decodeFunctionData, keccak256, type Address, type Hex } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
-import { signingProblems, type BuiltAction, type IntendedCall } from '../../agent/src/status-api.js';
+import { looksBuilt, signingProblems, type BuiltAction, type IntendedCall } from '../../agent/src/status-api.js';
 import { CLAIMS_ABI, EVIDENCE_ABI, TOKEN_ABI, VAULT_ABI, type ContractLabel } from '../src/abi/deployed.js';
 import { createApp } from '../src/app.js';
 import { FILE_CLAIM_BUDGET } from '../src/v1/build.js';
@@ -707,9 +707,11 @@ describe('every contract error in the revert map', () => {
 // ------------------------------------------------------------------ what the commands check
 
 describe('the agent and shop commands take these answers as the calls they mean', () => {
-  /** The commands' own check (services/agent/src/status-api.ts), at the answer's chain time. */
-  const problems = (a: BuiltAction, calls: IntendedCall[]) =>
-    signingProblems(a, { action: a.action, from: a.from, chainId: a.chainId, claimId: a.claimId, calls }, Number(a.builtAt));
+  /** The commands' own checks (services/agent/src/status-api.ts): the answer's shape, then its calls, at its chain time. */
+  const problems = (a: BuiltAction, calls: IntendedCall[]) => {
+    expect(looksBuilt(a), JSON.stringify(a).slice(0, 300)).toBe(true);
+    return signingProblems(a, { action: a.action, from: a.from, chainId: a.chainId, claimId: a.claimId, calls }, Number(a.builtAt));
+  };
   const onClaims = (functionName: string, claimId: Hex): IntendedCall => ({ contract: 'RecourseClaims', to: CLAIMS, abi: CLAIMS_ABI, functionName, args: [claimId] });
 
   it('contest, closeUncontested, expireClaim and withdrawCredit', async () => {

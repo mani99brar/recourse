@@ -43,7 +43,8 @@ own `servers` entry.
 | `GET /v1/search?q=` | `search: { q, hits[] }` |
 
 Each claim carries `statusKey`, `nextActor`, `nextCall`, `deadline` and `nextAction: { action, actor, path, deadline }`:
-the action under `/v1/actions` that builds the next call, or null when nothing is due or the call is not one of them.
+the action under `/v1/actions` that builds the next call, or null when nothing is due or the call is not one of them
+(and for `withdrawCredit`, when the account that would sign it has no credit left in the vault).
 
 ## Actions
 
