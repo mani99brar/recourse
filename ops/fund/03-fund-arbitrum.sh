@@ -5,4 +5,7 @@
 source "$(dirname "$0")/lib.sh"; need_tools; parse_send_flag "$@"
 bal=$(cast balance "$(addr deployer)" --rpc-url "$ARB_RPC_URL" --ether)
 echo "deployer holds $bal ETH on Arbitrum Sepolia; sending $ARB_ETH_TO_OPS to ops-arb"
-send_cast deployer "$ARB_RPC_URL" "$(addr ops-arb)" --value "$(cast to-wei "$ARB_ETH_TO_OPS")"
+# send_cast signs legacy, and eth_gasPrice on Arbitrum Sepolia can sit just under the next block's
+# base fee ("max fee per gas less than block base fee"), so bid twice the quoted price.
+gas_price=$(( $(cast gas-price --rpc-url "$ARB_RPC_URL") * 2 ))
+send_cast deployer "$ARB_RPC_URL" "$(addr ops-arb)" --value "$(cast to-wei "$ARB_ETH_TO_OPS")" --gas-price "$gas_price"
