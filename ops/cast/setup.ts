@@ -8,11 +8,13 @@
 //   node --import tsx ops/cast/setup.ts [--send] [--only <shop or company id>]
 //
 // Idempotent: each step is journaled in CAST_STATE_DIR (default ~/.local/state/recourse/cast) and
-// read back before it is sent again (the key file, the account on the mirror node, the identity's
-// owner, balances, the deposit and the requirement over HEDERA_RPC_URL_1), so a rerun skips what
-// exists. While HEDERA_RPC_URL_1 does not answer, a dry run says so and still prints the plan, and
-// a send makes the keys and accounts (mirror node and the Hedera SDK only) and stops before the EVM
-// steps.
+// read back before it is sent again (the key file, the account on the mirror node; over
+// HEDERA_RPC_URL_1 the registration, balances, the deposit and the requirement), so a rerun skips
+// what exists. A register tx is signed here and journaled with its hash before it is broadcast; a
+// rerun reads that tx's receipt for the agent id, and registers again only while the registry
+// holds no identity of that owner. While HEDERA_RPC_URL_1 does not answer, a dry run says so and
+// still prints the plan from the journal, and a send makes the keys and accounts (mirror node and
+// the Hedera SDK only) and stops before the EVM steps.
 //
 // Keys: one per identity, `$KEYSTORE_DIR/cast-<shop>.json`, `cast-<company>-platform.json` and
 // `cast-<company>-agent.json`, Foundry v3 keystores made by `cast wallet new` with the password in
@@ -22,8 +24,9 @@
 // Registration documents: the repo's own (agentCompanyRegistration and shopRegistration in
 // @recourse/records, as h0-setup registers agents 149 and 150) with the cast's description and one
 // more object, `recourse`: { role, kind, label, summary }. They go on chain inline, as a
-// `data:application/json;base64,` agentURI; a shop's x402 endpoint is the loopback port its
-// in-process shop runs on (ops/cast/orders.sh), since a cast shop runs no service of its own.
+// `data:application/json;base64,` agentURI; a shop's x402 endpoint is the loopback port that
+// ops/cast/orders.sh runs it on for an order (with_shop), since a cast shop runs no service of its
+// own (live-order --local-shop runs it on a random port instead).
 //
 // The party map gains, at its end, one shop entry per shop (its own account as its hcsWriter) and a
 // platform and an agent entry per company (the agent's account as the platform's hcsWriter), the
@@ -39,6 +42,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import type { Abi, TransactionReceipt } from 'viem';
 import {
   PARTY_SELECTORS,
   TINYBAR_PER_MICRO_USDC,
@@ -73,6 +77,8 @@ const FEE_TINYBAR = { accountCreate: 80_000_000n, mint: 20_000_000n, setRequired
 /** Fees an identity pays from its own balance: register measured on agent 149's (gas 453986 used). */
 const OWN_FEE_TINYBAR = { register: 80_000_000n, deposit: 60_000_000n };
 const mockMintAbi = viem.parseAbi(['function mint(address to, uint256 amount)']);
+/** The identity registry is an ERC-721: an owner's balance counts the identities it holds. */
+const registryBalanceAbi = viem.parseAbi(['function balanceOf(address owner) view returns (uint256)']);
 
 interface CastFile {
   shops: { id: string; name: string; description: string; recourse: Recourse; port: number; hbar: string; usdc: string; catalogue: { sku: string; unitUsdc: string }[] }[];
@@ -190,6 +196,10 @@ class CastJournal {
   has(key: string, step: string, match: Record<string, string>): boolean {
     return this.rows.some((r) => r.key === key && r.step === step && Object.entries(match).every(([f, v]) => String(r[f]).toLowerCase() === v.toLowerCase()));
   }
+  /** The tx hashes of this key's rows of this step, oldest first. */
+  txHashes(key: string, step: string): Hex[] {
+    return this.rows.filter((r) => r.key === key && r.step === step && typeof r.txHash === 'string').map((r) => r.txHash as Hex);
+  }
   add(key: string, step: string, data: Record<string, unknown>): void {
     const row = { at: new Date().toISOString(), key, step, ...data };
     this.rows.push(row);
@@ -300,6 +310,37 @@ async function main(): Promise<number> {
   if (rpcDown) console.log(`note  Hedera EVM reads are down: ${rpcDown}. Registrations, balances and deposits are not read or simulated; the plan assumes the journal is right.`);
   const vaultAbi = loadAbi('DepositVault', env);
 
+  type Reader = NonNullable<typeof publicClient>;
+  /**
+   * The identity an earlier register made, from the receipt of a journaled register tx; 'held' when
+   * the registry holds an identity of this owner that no readable receipt names; null when it holds
+   * none, so a register may be sent.
+   */
+  const registrationOf = async (pc: Reader, key: string, owner: Address): Promise<{ agentId: string; txHash: Hex } | 'held' | null> => {
+    for (const hash of journal.txHashes(key, 'register_sent')) {
+      let receipt: TransactionReceipt;
+      try {
+        receipt = await pc.getTransactionReceipt({ hash });
+      } catch (error) {
+        if (error instanceof viem.TransactionReceiptNotFoundError) continue;
+        throw error;
+      }
+      const agentId = receipt.status === 'success' ? registeredId(receipt) : undefined;
+      if (agentId) return { agentId, txHash: hash };
+    }
+    const held = await pc.readContract({ address: IDENTITY, abi: registryBalanceAbi, functionName: 'balanceOf', args: [owner] });
+    return held > 0n ? 'held' : null;
+  };
+  /** What an identity's mUSDC still needs, read on chain: the mint, a platform's deposit, and whether its requirement is to be set. */
+  const fundingOf = async (pc: Reader, i: Identity, holder: Address): Promise<{ mint: bigint; deposit: bigint; setRequired: boolean }> => {
+    const balance = await pc.readContract({ address: deployment.usdc, abi: viem.erc20Abi, functionName: 'balanceOf', args: [holder] });
+    // A shop's court fees are minted once per token; what it has spent on claims is not topped up.
+    if (i.role !== 'platform') return { mint: journal.has(i.key, 'minted', { token: deployment.usdc }) ? 0n : atLeastZero(i.usdc - balance), deposit: 0n, setRequired: false };
+    const held = (await pc.readContract({ address: deployment.vault, abi: vaultAbi, functionName: 'depositOf', args: [holder] })) as bigint;
+    const required = (await pc.readContract({ address: deployment.vault, abi: vaultAbi, functionName: 'requiredOf', args: [holder] })) as bigint;
+    return { mint: atLeastZero(i.usdc - held - balance), deposit: atLeastZero(i.usdc - held), setRequired: required !== i.usdc };
+  };
+
   // --- plan and cost ---
   let fromDeployer = 0n;
   let fees = 0n;
@@ -322,13 +363,43 @@ async function main(): Promise<number> {
       fromDeployer += i.hbar;
       fees += FEE_TINYBAR.accountCreate;
     }
-    if (i.registration && !k.agentId) steps.push(`register in ERC-8004 (about ${fmtHbar(OWN_FEE_TINYBAR.register)} HBAR from its own balance)`);
-    // Mints and deposits count for the deployment they were made on: after a redeploy they are made again.
-    const funded = i.role === 'platform' ? journal.has(i.key, 'deposited', { vault: deployment.vault }) : journal.has(i.key, 'minted', { token: deployment.usdc });
-    if (i.usdc > 0n && !funded) {
-      steps.push(i.role === 'platform' ? `mint ${fmtUsdc(i.usdc)} mUSDC, approve and postDeposit it, setRequired ${fmtUsdc(i.usdc)}` : `mint ${fmtUsdc(i.usdc)} mUSDC for court fees`);
-      minted += i.usdc;
-      fees += FEE_TINYBAR.mint + (i.role === 'platform' ? FEE_TINYBAR.setRequired : 0n);
+    // With the RPC up, the registration and funding are read on chain as --send reads them; else from the journal.
+    const evm = publicClient && !rpcDown && k.address ? publicClient : null;
+    if (i.registration && !k.agentId) {
+      const back = evm
+        ? await registrationOf(evm, i.key, k.address!).catch((error: unknown) => {
+            steps.push(`(registration not read: ${shortError(error)})`);
+            return undefined;
+          })
+        : undefined;
+      const sent = journal.txHashes(i.key, 'register_sent');
+      if (back === 'held') steps.push('stop: it holds an ERC-8004 identity that no journaled register tx names; --send will not register a second');
+      else if (back) steps.push(`journal agent ${back.agentId}, registered by the earlier tx ${back.txHash}`);
+      else if (back === undefined && sent.length > 0) steps.push(`read back the register tx ${sent.at(-1)} sent earlier, and register only if it made no identity`);
+      else steps.push(`register in ERC-8004 (about ${fmtHbar(OWN_FEE_TINYBAR.register)} HBAR from its own balance)`);
+    }
+    if (i.usdc > 0n) {
+      const f = evm && mock
+        ? await fundingOf(evm, i, k.address!).catch((error: unknown) => {
+            steps.push(`(balances not read: ${shortError(error)}; from the journal)`);
+            return undefined;
+          })
+        : undefined;
+      if (f) {
+        if (f.mint > 0n) steps.push(`mint ${fmtUsdc(f.mint)} mUSDC${i.role === 'platform' ? '' : ' for court fees'}`);
+        if (f.deposit > 0n) steps.push(`approve and postDeposit ${fmtUsdc(f.deposit)} mUSDC (deposit to ${fmtUsdc(i.usdc)})`);
+        if (f.setRequired) steps.push(`setRequired ${fmtUsdc(i.usdc)}`);
+        minted += f.mint;
+        fees += (f.mint > 0n ? FEE_TINYBAR.mint : 0n) + (f.setRequired ? FEE_TINYBAR.setRequired : 0n);
+      } else {
+        // Mints and deposits count for the deployment they were made on: after a redeploy they are made again.
+        const funded = i.role === 'platform' ? journal.has(i.key, 'deposited', { vault: deployment.vault }) : journal.has(i.key, 'minted', { token: deployment.usdc });
+        if (!funded) {
+          steps.push(i.role === 'platform' ? `mint ${fmtUsdc(i.usdc)} mUSDC, approve and postDeposit it, setRequired ${fmtUsdc(i.usdc)}` : `mint ${fmtUsdc(i.usdc)} mUSDC for court fees`);
+          minted += i.usdc;
+          fees += FEE_TINYBAR.mint + (i.role === 'platform' ? FEE_TINYBAR.setRequired : 0n);
+        }
+      }
     }
     lines.push(`${i.key.padEnd(24)} ${i.role.padEnd(8)} ${i.displayName}: ${k.address ?? '(no key yet)'} ${k.accountId ?? ''} ${k.agentId ? `agent ${k.agentId}` : ''}`);
     lines.push(`${''.padEnd(24)} ${steps.length > 0 ? `to do: ${steps.join('; ')}` : 'done'}`);
@@ -385,7 +456,7 @@ async function main(): Promise<number> {
   const gasPrice = await pc.getGasPrice();
   const wallet = (key: string, envName = 'CAST_KEY_FILE', from: Env = keyEnv(keystoreDir, key)) =>
     viem.createWalletClient({ account: loadSigner(envName, from), chain: hederaTestnet, transport: viem.http(rpcUrl, { timeout: 60_000 }) });
-  const sendCall = async (w: ReturnType<typeof wallet>, call: { address: Address; abi: viem.Abi; functionName: string; args: unknown[] }): Promise<{ hash: Hex; receipt: viem.TransactionReceipt }> => {
+  const sendCall = async (w: ReturnType<typeof wallet>, call: { address: Address; abi: Abi; functionName: string; args: unknown[] }): Promise<{ hash: Hex; receipt: TransactionReceipt }> => {
     const gas = await pc.estimateContractGas({ ...call, account: w.account } as Parameters<typeof pc.estimateContractGas>[0]);
     const hash = await w.writeContract({ ...call, gas: (gas * 13n) / 10n, gasPrice } as Parameters<typeof w.writeContract>[0]);
     const receipt = await pc.waitForTransactionReceipt({ hash, timeout: 120_000 });
@@ -397,32 +468,55 @@ async function main(): Promise<number> {
   for (const i of identities) {
     const k = state.get(i.key)!;
     if (i.registration && !k.agentId) {
+      const owner = k.address!;
       const doc = i.registration(k.accountId!);
       const uri = toDataUri(doc as Parameters<typeof toDataUri>[0]);
-      const { hash, receipt } = await sendCall(wallet(i.key), { address: IDENTITY, abi: erc8004IdentityAbi as unknown as viem.Abi, functionName: 'register', args: [uri] });
-      const logs = viem.parseEventLogs({ abi: erc8004IdentityAbi, logs: receipt.logs, eventName: 'Registered' });
-      const log = logs.find((l) => l.address.toLowerCase() === IDENTITY.toLowerCase());
-      if (!log) throw new Error(`${i.key}: no Registered event in tx ${hash}`);
-      k.agentId = log.args.agentId.toString();
+      // Read back first: a register sent by an earlier run whose answer or receipt was lost.
+      const back = await registrationOf(pc, i.key, owner);
+      if (back === 'held') {
+        throw new Error(`${i.key}: ${owner} already holds an ERC-8004 identity, but no journaled register tx shows its agent id (yet); rerun later, or journal it as a "registered" row with its agentId, rather than register a second one`);
+      }
+      let hash: Hex;
+      if (back) {
+        hash = back.txHash;
+        k.agentId = back.agentId;
+        console.log(`${i.key}: agent ${k.agentId}, registered by the earlier tx ${hash}`);
+      } else {
+        const w = wallet(i.key);
+        const call = { address: IDENTITY, abi: erc8004IdentityAbi as unknown as Abi, functionName: 'register', args: [uri] };
+        const gas = await pc.estimateContractGas({ ...call, account: w.account } as Parameters<typeof pc.estimateContractGas>[0]);
+        // Signed here, so its hash is journaled before the relay sees it and a rerun can read it back.
+        const request = await w.prepareTransactionRequest({ to: IDENTITY, data: viem.encodeFunctionData(call), gas: (gas * 13n) / 10n, gasPrice } as Parameters<typeof w.prepareTransactionRequest>[0]);
+        const serialized = await w.signTransaction(request as Parameters<typeof w.signTransaction>[0]);
+        hash = viem.keccak256(serialized);
+        journal.add(i.key, 'register_sent', { txHash: hash, nonce: request.nonce });
+        const relayHash = await w.sendRawTransaction({ serializedTransaction: serialized });
+        // The relay's own hash for the tx is journaled too if it differs, so a rerun reads either.
+        if (relayHash.toLowerCase() !== hash.toLowerCase()) {
+          journal.add(i.key, 'register_sent', { txHash: relayHash, nonce: request.nonce, from: 'relay' });
+          hash = relayHash;
+        }
+        const receipt = await pc.waitForTransactionReceipt({ hash, timeout: 120_000 });
+        if (receipt.status !== 'success') throw new Error(`register reverted, tx ${hash}`);
+        const agentId = registeredId(receipt);
+        if (!agentId) throw new Error(`${i.key}: no Registered event in tx ${hash}`);
+        k.agentId = agentId;
+        console.log(`${i.key}: agent ${k.agentId} registered, tx ${hash}`);
+      }
       mkdirSync(join(stateDir, 'registrations'), { recursive: true });
       writeFileSync(join(stateDir, 'registrations', `${i.key}.json`), `${JSON.stringify(doc, null, 2)}\n`);
-      journal.add(i.key, 'registered', { agentId: k.agentId, txHash: hash, agentUri: uri });
-      console.log(`${i.key}: agent ${k.agentId} registered, tx ${hash}`);
+      journal.add(i.key, 'registered', { agentId: k.agentId, txHash: hash, ...(back ? { found: 'receipt' } : { agentUri: uri }) });
     }
     if (i.usdc > 0n && mock) {
       const holder = k.address!;
       // Read, not guessed: a failed read stops the run rather than minting or depositing twice.
-      const balance = await pc.readContract({ address: deployment.usdc, abi: viem.erc20Abi, functionName: 'balanceOf', args: [holder] });
-      const held = i.role === 'platform' ? ((await pc.readContract({ address: deployment.vault, abi: vaultAbi, functionName: 'depositOf', args: [holder] })) as bigint) : 0n;
-      const short = i.usdc - held - balance;
-      // A shop's court fees are minted once per token; what it has spent on claims is not topped up.
-      if (short > 0n && !(i.role === 'shop' && journal.has(i.key, 'minted', { token: deployment.usdc }))) {
+      const { mint: short, deposit: need } = await fundingOf(pc, i, holder);
+      if (short > 0n) {
         const { hash } = await sendCall(deployerWallet, { address: deployment.usdc, abi: mockMintAbi, functionName: 'mint', args: [holder, short] });
         journal.add(i.key, 'minted', { amount: short.toString(), token: deployment.usdc, txHash: hash });
         console.log(`${i.key}: minted ${fmtUsdc(short)} mUSDC, tx ${hash}`);
       }
       if (i.role === 'platform') {
-        const need = i.usdc - held;
         if (need > 0n) {
           const platform = wallet(i.key);
           const a = await sendCall(platform, { address: deployment.usdc, abi: viem.erc20Abi, functionName: 'approve', args: [deployment.vault, need] });
@@ -483,6 +577,16 @@ async function waitForMirror(mirror: string, address: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 3_000));
   }
   console.log(`note  ${address} is not on the mirror node yet; a rerun reads it from the journal`);
+}
+
+/** The agent id in a register tx's Registered event, from the identity registry itself. */
+function registeredId(receipt: TransactionReceipt): string | undefined {
+  const logs = viem.parseEventLogs({ abi: erc8004IdentityAbi, logs: receipt.logs, eventName: 'Registered' });
+  return logs.find((l) => l.address.toLowerCase() === IDENTITY.toLowerCase())?.args.agentId.toString();
+}
+
+function atLeastZero(n: bigint): bigint {
+  return n > 0n ? n : 0n;
 }
 
 function shortError(error: unknown): string {

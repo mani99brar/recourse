@@ -133,12 +133,15 @@ export function loadKeeperConfig(env: Env = process.env): KeeperConfig {
  * keeper's journal, cursors and control file. The dry run starts where the live keeper is, and its
  * events, snapshots, alerts, cursors and any open transaction it settles stay in the copy, so the
  * live keeper never reads them. A journal copied in the middle of an append can end in a partial
- * line; openJournal drops it, as after a crash.
+ * line; openJournal drops it, as after a crash. The caller removes the directory when it is done.
  */
 export function stageDryRunState(liveDir: string, root: string = tmpdir()): string {
   const dir = mkdtempSync(join(root, 'keeper-dry-run-'));
-  // cursors/ is where cursor.ts keeps each reader's position.
-  for (const name of [JOURNAL_FILE, 'cursors', CONTROL_FILE]) {
+  // cursors/ is where cursor.ts keeps each reader's position. It is copied before the journal: the
+  // live keeper journals a tick's events before it moves its cursors, so a tick that lands between
+  // the two copies leaves the copy's cursors behind its journal. The dry run then reads those events
+  // again and passes over them as seen, as after a restart; cursors ahead of the journal would skip them.
+  for (const name of ['cursors', JOURNAL_FILE, CONTROL_FILE]) {
     const from = join(liveDir, name);
     if (existsSync(from)) cpSync(from, join(dir, name), { recursive: true });
   }

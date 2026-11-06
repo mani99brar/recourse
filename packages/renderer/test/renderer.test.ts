@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ATTRIBUTES, canonicalBytes, ruleSlotFromDoc, sha256, utf8ToBytes, type Attrs, type CanonicalValue } from '@recourse/shared';
-import { ABSENT, MAX_VALUE_CHARS, RENDERER_VERSION, clean, departs, formatUnits, priceText, render, type RenderInput } from '../src/index.js';
+import { ABSENT, MAX_VALUE_CHARS, RENDERER_VERSION, UnshowableValueError, clean, departs, formatUnits, priceText, render, type RenderInput } from '../src/index.js';
 import { FIXTURES } from './fixtures.js';
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -116,6 +116,9 @@ describe('layout', () => {
       }
     })();
     expect(err?.message).not.toContain('Southwind');
+    expect(err).toBeInstanceOf(UnshowableValueError);
+    expect(err).toBeInstanceOf(RangeError);
+    expect(err).toMatchObject({ section: 'offer', attribute: 'brand' });
     // The ends are free, as the fault rule trims them; a value of exactly MAX_VALUE_CHARS shows in full.
     expect(render(offerWith({ colour: '  navy ' })).text).toContain('Colour: "navy"');
     const longest = 'x'.repeat(MAX_VALUE_CHARS);

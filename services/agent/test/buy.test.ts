@@ -3,10 +3,11 @@ import { decodeRecordMsg, RecordKind } from '@recourse/shared';
 import { render, type RenderInput } from '@recourse/renderer';
 import type { Server } from 'node:http';
 import { join } from 'node:path';
-import { memoryLogger, readJournal } from '@recourse/records';
+import { memoryLogger, readJournal, validStartSeconds } from '@recourse/records';
 import { approvalSigner, signApproval } from '../src/approval.js';
 import { createApprovalsApi } from '../src/approvals-api.js';
 import type { AgentRow } from '../src/buy.js';
+import { PAYMENT_DEAD_AFTER_S } from '../src/x402-pay.js';
 import { AGENT, ASKED_CAP, TOPIC, docAt, world, type World } from './world.js';
 
 let w: World | null = null;
@@ -325,13 +326,22 @@ describe('the shop reply after payment', () => {
     expect(w.fake.settled).toHaveLength(1);
   });
 
-  test('a settlement the mirror node never shows stops the order once its validity window is over', async () => {
+  test('a settlement the mirror node does not show, even past its validity window, is left unconfirmed and taken once shown', async () => {
     w = await world();
     w.fake.bareIds = true;
     const { buyer } = w.open();
     const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
-    expect(await buyer.run(orderId)).toMatchObject({ state: 'abandoned', reason: 'payment_unseen' });
+    const txId = () => w!.fake.settled[0]!.hederaTxId;
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'pay_unconfirmed', orderId, reason: 'payment_unconfirmed' });
+    // Mirror lag, not an end: no mismatch, no abandoned row, no ordered record.
+    expect(w.ledger.clock).toBeGreaterThan(validStartSeconds(txId()) + PAYMENT_DEAD_AFTER_S);
+    expect(rowsOf(w, orderId).some((r) => r.type === 'paid' || r.type === 'abandoned' || r.type === 'payment_mismatch')).toBe(false);
+    expect(rowsOf(w, orderId).find((r) => r.type === 'pay_unconfirmed')).toMatchObject({ txId: txId() });
     expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
+    // The mirror node catches up: a fresh process on the same journal takes the payment.
+    w.fake.settled[0]!.landed = true;
+    expect(await w.open().buyer.run(orderId)).toMatchObject({ state: 'done', txId: txId() });
+    expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval, RecordKind.Ordered]);
     expect(w.fake.settled).toHaveLength(1);
   });
 
@@ -348,14 +358,14 @@ describe('the shop reply after payment', () => {
       return transaction(id);
     };
     const orderId = buyer.draft({ sku: 'cap-red', quantity: 1, asked: ASKED_CAP });
-    const run = buyer.run(orderId);
-    await new Promise((r) => setTimeout(r, 300));
+    // The run returns instead of waiting for the outage to end.
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'pay_unconfirmed', orderId });
     expect(rowsOf(w, orderId).some((r) => r.type === 'paid' || r.type === 'abandoned')).toBe(false);
     expect(kindsOf(w, orderId)).toEqual([RecordKind.Asked, RecordKind.Shown, RecordKind.Approval]);
     // The mirror node is back and shows the transfer.
     w.fake.settled[0]!.landed = true;
     down = false;
-    expect(await run).toMatchObject({ state: 'done', txId: w.fake.settled[0]!.hederaTxId });
+    expect(await buyer.run(orderId)).toMatchObject({ state: 'done', txId: w.fake.settled[0]!.hederaTxId });
     expect(w.fake.settled).toHaveLength(1);
   });
 

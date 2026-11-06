@@ -2,6 +2,7 @@
 // says which reads are behind and how old their values are, and an action's chain read that does
 // not answer fails as upstream_unavailable naming the RPC, well before the action's deadline.
 
+import { getAddress } from 'viem';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import type { ActionReads } from '../src/chain.js';
@@ -44,7 +45,7 @@ async function boot(reader: Reader, chain: ActionReads | null = null) {
   ingest(store, sim);
   const now = built.reduce((m, b) => (b.now > m ? b.now : m), 0n);
   for (const s of ['hedera', 'arbitrum', 'hcs'] as const) store.status[s].indexedThrough = Number(now);
-  const h = harness({ store, now: Number(now), reader, deployments: { arbitrumChainId: 421_614 }, cfg: { readWaitMs: WAIT_MS, actionDeadlineMs: 10_000 } });
+  const h = harness({ store, now: Number(now), reader, deployments: { arbitrumChainId: 421_614 }, cfg: { readWaitMs: WAIT_MS, actionReadWaitMs: WAIT_MS, actionDeadlineMs: 10_000 } });
   const app = createApp(h.svc, { chain, creditWaitMs: WAIT_MS });
   const url = await new Promise<string>((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -142,6 +143,20 @@ describe('reads on a relay that hangs or fails', () => {
     expect(h.svc.degraded()).toEqual([]);
   });
 
+  it('warm reads again a party whose vault read failed, also one it does not read otherwise', async () => {
+    const { reader, mode } = switchable();
+    const { h } = await boot(reader);
+    const agent = getAddress('0x' + '31'.repeat(20));
+    mode.now = 'fail';
+    await h.svc.party(agent); // the agent's page during a relay blip
+    expect(h.svc.degraded()).toContain('vault');
+    mode.now = 'ok';
+    h.clock.now += 30;
+    await h.svc.warm();
+    expect(h.svc.degraded()).not.toContain('vault');
+    expect(h.svc.stale().filter((s) => s.read === 'vault')).toEqual([]);
+  });
+
   it('the legacy routes are bounded the same way', async () => {
     const { reader, mode } = switchable();
     mode.now = 'hang';
@@ -176,6 +191,32 @@ describe('the live refresh on a relay that hangs', () => {
     await refreshLive(store, fakeReader({ caseOf: async () => built[0]!.live!.caseView!, executionState: async () => 2 }), () => 1_700_000_600, 50);
     expect(store.liveReads.arbitrum).toEqual({ failing: false, okAt: 1_700_000_600 });
     expect(h.svc.degraded()).not.toContain('live');
+  });
+
+  it('stops reporting a chain once no claim needs it read, also after a failure there', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'ruled', 1);
+    const store = new Store();
+    ingest(store, sim);
+    // The case was read before; the message to court is not read as delivered yet.
+    store.live.set(b.claimId, { ...b.live!, exec: { [b.sendMsg]: 0 } });
+    let caseFails = true;
+    const reader = fakeReader({
+      caseOf: async () => {
+        if (caseFails) throw new Error('arbitrum relay 502');
+        return b.live!.caseView!;
+      },
+      executionState: async () => 2,
+    });
+    await refreshLive(store, reader, () => 1_700_000_500, 50);
+    expect(store.liveReads.arbitrum.failing).toBe(true);
+    // Every message now reads as delivered: the finished claim is not read again, and nothing else is.
+    caseFails = false;
+    await refreshLive(store, reader, () => 1_700_000_600, 50);
+    expect(store.liveReads.arbitrum.failing).toBe(false);
+    const h = harness({ store, now: 1_700_000_600, reader });
+    expect(h.svc.degraded()).not.toContain('live');
+    expect(h.svc.stale().filter((s) => s.read === 'live')).toEqual([]);
   });
 });
 

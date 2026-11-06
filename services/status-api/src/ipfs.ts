@@ -44,7 +44,10 @@ export interface DocFetcherOptions {
   now?: () => number;
   /** Byte budget of the cache of fetched documents (default 4 MiB). */
   cacheBytes?: number;
-  /** How long a failed fetch is not retried, in ms (default 60 s). */
+  /**
+   * How long a failed fetch is not retried, in ms (default 60 s). Each further failure of the same
+   * document doubles the pause, up to 30 minutes.
+   */
   retryAfterMs?: number;
 }
 
@@ -52,12 +55,14 @@ const CID_TEXT = /^[A-Za-z0-9]{1,128}$/;
 /** Per-entry overhead counted on top of the document bytes. */
 const ENTRY_OVERHEAD = 256;
 const MAX_MISSES = 5000;
+const MAX_RETRY_MS = 30 * 60_000;
 
 export class DocFetcher {
   /** Insertion order is recency: a hit moves to the end, eviction takes from the front. */
   private cache = new Map<string, DocCheck>();
   private cachedBytes = 0;
-  private misses = new Map<string, number>();
+  /** A failed fetch: when it last failed and how many times in a row. */
+  private misses = new Map<string, { at: number; n: number }>();
   private stamps: number[] = [];
   constructor(private opts: DocFetcherOptions) {}
 
@@ -84,7 +89,7 @@ export class DocFetcher {
     const hit = this.cache.get(key);
     if (hit) return hit;
     const missed = this.misses.get(key);
-    if (missed !== undefined && this.now() - missed < (this.opts.retryAfterMs ?? 60_000)) return null;
+    if (missed !== undefined && this.now() - missed.at < Math.min((this.opts.retryAfterMs ?? 60_000) * 2 ** (missed.n - 1), MAX_RETRY_MS)) return null;
     return undefined;
   }
 
@@ -124,8 +129,9 @@ export class DocFetcher {
         this.remember(key, rejected, 0);
         return rejected;
       }
+      const n = (this.misses.get(key)?.n ?? 0) + 1;
       if (this.misses.size >= MAX_MISSES) this.misses.clear();
-      this.misses.set(key, now);
+      this.misses.set(key, { at: now, n });
       return null;
     }
   }

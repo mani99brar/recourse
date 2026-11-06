@@ -6,11 +6,13 @@
 //                  make; nothing is signed or sent. Simulation runs from the ops addresses
 //                  (RULING_RELAYER_ADDRESS for Hedera; --ops-arb-address or the case contract's
 //                  trustedRelay() for Arbitrum). It works on a copy of KEEPER_STATE_DIR in the
-//                  system temp dir and writes nothing in the live one.
+//                  system temp dir, removed on exit, and writes nothing in the live one. Alerts,
+//                  its own and those the live journal has not sent, go to the log only.
 // --once           one tick, print health, exit.
 // --hedera-file    a bare *.local.json name in DEPLOYMENTS_DIR instead of hedera.json; same for
 //  --arbitrum-file  arbitrum. Local files are refused unless every RPC URL is loopback.
 
+import { rmSync } from 'node:fs';
 import { isAddress, type Address, type PublicClient } from 'viem';
 import { buildEvidence, rawCidOfHash } from '@recourse/court';
 import { fetchDocument, hashOfCid, ipfsOptionsFromEnv, type IpfsOptions } from '@recourse/records';
@@ -97,7 +99,10 @@ async function main(): Promise<void> {
   }
 
   const stateDir = dryRun ? stageDryRunState(cfg.stateDir) : cfg.stateDir;
-  if (dryRun) log(`dry run: state copied from ${cfg.stateDir} to ${stateDir}; the live state is not written`);
+  if (dryRun && stateDir !== cfg.stateDir) {
+    process.on('exit', () => rmSync(stateDir, { recursive: true, force: true }));
+    log(`dry run: state copied from ${cfg.stateDir} to ${stateDir}, removed on exit; the live state is not written and alerts are logged, not sent`);
+  }
   const journal = openJournal(stateDir);
   const append = (r: Parameters<typeof journal.append>[0]) => journal.append(r);
   // A transaction the node refuses 4 times in a row (one per tick) and that is 2 min old is
@@ -203,7 +208,7 @@ async function main(): Promise<void> {
     build: buildEvidence as unknown as BuildEvidence,
   });
 
-  const alerter = new Alerter({ service: 'keeper', append, log, ...(cfg.alertUrl ? { url: cfg.alertUrl } : {}) });
+  const alerter = new Alerter({ service: 'keeper', append, log, ...(cfg.alertUrl && !dryRun ? { url: cfg.alertUrl } : {}) });
   const courtLink = (id: string) => cfg.courtUrlTemplate.replace('{id}', id);
   const keeper = new Keeper({
     chains,

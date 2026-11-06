@@ -78,7 +78,7 @@ The demo host runs this today. In outline:
 
 ## Settings
 
-Values never live in git. The services read `~/.config/recourse/recourse.env` (shared by every unit and command) and then an optional `~/.config/recourse/<service>.env`; the watch reads `~/.config/recourse/watch.env`, and the web server only its own `web.env`. [.env.example](../.env.example) lists every name, and `packages/shared/src/env.ts` is the list the code checks against. By name only:
+Values never live in git. The services read `~/.config/recourse/recourse.env` (shared by every unit and command) and then an optional `~/.config/recourse/<service>.env`; the watch reads `~/.config/recourse/watch.env`, and the web server only its own `web.env`. [.env.example](../.env.example) lists the shared names, the same list as `ENV_NAMES` and `VITE_ENV_NAMES` in `packages/shared/src/env.ts` (a test keeps them equal, and `readEnv` refuses a name not in `ENV_NAMES`). Some settings are read directly by one service or script and are not on that list; the table below names both kinds. By name only:
 
 | Group | Names |
 |---|---|
@@ -86,16 +86,18 @@ Values never live in git. The services read `~/.config/recourse/recourse.env` (s
 | Documents (IPFS) | `IPFS_PIN_API_URL` (`file:///<dir>` for the content store on the host), `IPFS_PIN_API_KEY`, `IPFS_PIN_API_SECRET`, `IPFS_PIN_BUCKET` (all three for Filebase), `IPFS_GATEWAY_URL`, `IPFS_RATE_PER_MIN` |
 | Intake's model | `LLM_API_KEY`, `LLM_MODEL` |
 | Keystore paths | `KEYSTORE_DIR`, `DEPLOYER_KEY_FILE`, `OPS_HEDERA_KEY_FILE`, `OPS_ARB_KEY_FILE`, `PRECHECK_SIGNER_KEY_FILE`, `PLATFORM_KEY_FILE`, `AGENT_KEY_FILE`, `SHOP_KEY_FILE`, `SCHEME_KEY_FILE`, `BUYER_KEY_FILE`, `FACILITATOR_KEY_FILE` |
-| Parties, deployments, tooling | `HEDERA_ACCOUNT_IDS`, `DEPLOYMENTS_DIR`, `PARTIES_FILE`, `SUITE_LOCK_FILE` |
+| Parties, deployments, tooling | `HEDERA_ACCOUNT_IDS`, `DEPLOYMENTS_DIR`, `PARTIES_FILE`, `SUITE_LOCK_FILE`, `RECOURSE_ENV_FILE` (the env file the `ops/` scripts and `h0-setup` read and write; default `~/.config/recourse/recourse.env`) |
+| Party selectors | `RECOURSE_SHOP_ADDRESS`, `RECOURSE_PLATFORM_ADDRESS`, `RECOURSE_AGENT_ADDRESS`: each names this process's own party by its EVM address. Needed once the party map holds more than one party of that role, as it does after the demo cast is added ([ops/cast/README.md](../ops/cast/README.md)); without it the shop, the agent's commands and the record writers stop and name the variable (`packages/shared/src/parties.ts`) |
 | Contract deploy inputs | `RULING_RELAYER_ADDRESS`, `PRECHECK_SIGNER_ADDRESS`, `POOL_ADDRESS`, `ANVIL_PORT_HEDERA` |
 | Agent and shop | `AGENT_SPEND_LIMIT_USDC`, `AGENT_MAX_ORDER_USDC`, `AGENT_DAILY_CAP_USDC`, `AGENT_APPROVAL_TTL_SEC`, `PRICE_ASSET`, `SHOP_PUBLIC_URL`, `SHOP_BASE_URL`, `SHOP_PORT`, `AGENT_PORT`, `SHOP_STANDING_CHECK`, `SHOP_STATE_DIR`, `AGENT_STATE_DIR`, `SHOP_CATALOG_FILE`, `STATUS_API_URL` |
-| Pre-check and keeper | `PRECHECK_STATE_DIR`, `PRECHECK_PORT`, `PRECHECK_QUIET_S`, `KEEPER_STATE_DIR`, `KEEPER_PORT`, `KEEPER_REFILE_HOLD_MIN`, `KEEPER_ARB_CONFIRMATIONS`, `KEEPER_POLL_MS`, `SEND_PAUSE_WINDOWS` |
+| Pre-check and keeper | `PRECHECK_STATE_DIR`, `PRECHECK_PORT`, `PRECHECK_QUIET_S`, `KEEPER_STATE_DIR`, `KEEPER_PORT`, `KEEPER_REFILE_HOLD_MIN`, `KEEPER_ARB_CONFIRMATIONS`, `KEEPER_POLL_MS`, `KEEPER_COMPACT_MB` (journal size that triggers compaction), `KEEPER_FLOOR_OPS_HEDERA_HBAR`, `KEEPER_FLOOR_OPS_ARB_ETH`, `KEEPER_FLOOR_CLAIMS_FEE_HBAR`, `KEEPER_FLOOR_CLAIMS_FEE_LINK` (balances below which the keeper alerts), `SEND_PAUSE_WINDOWS` |
 | Docket | `DOCKET_PORT`, `DOCKET_STATE_DIR`, `DOCKET_STORE` (`local` by default, or `arkiv`), `DOCKET_PUBLISH_THRESHOLD`, `DOCKET_SAMPLE_MODE`, `DOCKET_Z`, `DOCKET_POLL_SECONDS`, `DOCKET_RETRY_SECONDS`, `DOCKET_RETRY_MAX`, `ARKIV_LIFETIME_DAYS`, `ARKIV_PAGE_SIZE`, `ARKIV_MIN_TGLM`, `SCHEME_MIN_HBAR`, `REVIEWS_ENABLED` (off by default), `REVIEW_VALUE_FAULT`, `REVIEW_VALUE_CLEAR`, `REVIEW_TAG1` |
 | Intake | `INTAKE_PORT`, `INTAKE_STATE_DIR`, `INTAKE_CORS_ORIGIN`, `INTAKE_MAX_BYTES`, `INTAKE_RATE_PER_MIN`, `INTAKE_LLM_TIMEOUT_MS`, `INTAKE_LLM_PAUSE_MIN` |
 | Status API | `STATUS_API_PORT`, `STATUS_API_STATE_DIR`, `POLL_MS`, `ARB_CONFIRMATIONS`, `ARB_LOG_CHUNK`, `SOURCE_TIMEOUT_MS`, `VIEW_CACHE_MS`, `LAG_WARN_S_HEDERA`, `LAG_WARN_S_ARB`, `LAG_WARN_S_HCS`, `DOCKET_URL`, `INTAKE_URL`, `AGENT_URL`, `PRECHECK_URL`, `SHOP_URL`, `WEB_ORIGIN`, `COURT_URL_TEMPLATE` |
-| Local runs only | `HEDERA_LOCAL_FILE`, `ARBITRUM_LOCAL_FILE`, `SHOP_ALLOW_NO_PARTIES` (`1` starts a shop with no party map, which takes any platform and checks no payer; without it the shop needs `PARTIES_FILE`) |
+| Local runs only | `HEDERA_LOCAL_FILE`, `ARBITRUM_LOCAL_FILE`, `LOCAL_HEDERA_RPC_URL`, `LOCAL_ARB_RPC_URL` (the local CCIP relay, `packages/court/scripts/local-relay.ts`), `SHOP_ALLOW_NO_PARTIES` (`1` starts a shop with no party map, which takes any platform and checks no payer; without it the shop needs `PARTIES_FILE`) |
 | Optional anvil tests | `LOCAL_ANVIL_URL`, `LOCAL_DEPLOYMENTS_FILE`, `TWO_CHAIN_HEDERA_URL`, `TWO_CHAIN_ARB_URL` (the status API's chain tests run only when these are set) |
 | Web app, at build time | `VITE_STATUS_API_URL`, `VITE_ARKIV_PUBLIC_RPC_URL`, `VITE_POLL_MS` (public values only: they end up in the bundle) |
+| Web server | `WEB_PORT`, `WEB_DIST_DIR`, `STATUS_API_PORT`, `WEB_API_RATE_PER_S`, `WEB_API_BURST` (`ops/units/web-server.mjs`; the unit sets the first three, the rest go in `web.env`) |
 | Watch | `RECOURSE_NOTIFY_CMD` (in `watch.env`) |
 
 ## Deployment files

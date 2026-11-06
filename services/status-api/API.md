@@ -44,7 +44,7 @@ own `servers` entry.
 | `GET /v1/params` | `params`: addresses, live parameters, vault token, records topic, `actions` this server builds |
 | `GET /v1/claims?party=&status=` | `claims[]`; with `party`, also `party: { standing, groups }` |
 | `GET /v1/claims/{claimId}` | `claim`: the summary fields plus records, pre-check, contest, court, bridge, money, docket, events |
-| `GET /v1/parties/{address}` | `party`: deposit, required, standing, credit, open claims |
+| `GET /v1/parties/{address}` | `party`: deposit, required, standing, credit, open claims, and `escrowOpen` (court fees held with this address as the shop: the vault's figure when read, else the indexed claims') |
 | `GET /v1/orders/{orderId}/records?platform=&shop=` | `order: { orderId, claimId, records[6] }` |
 | `GET /v1/search?q=` | `search: { q, hits[] }` |
 | `GET /v1/cast` | `cast: { registry, members[] }`: every shop and agent company with an ERC-8004 agent id (below) |
@@ -70,10 +70,12 @@ One member for each party in `deployments/parties.json` that has an `agentId`, i
 - `claims[]`: each indexed claim that names the party, with `statusKey`, `answer` (the pre-check's), `findingSide`,
   `paid`, `filedAt` and the other side as `counterparty` and `counterpartyName`.
 
-The registry is read at most every 30 s an agent, and a request waits at most 3 s on it. A slower or failing relay
-answers with the last values read (null before any), `current: false` on those members, and `identity` in
-`meta.degraded`. An agent id the registry reverts for has `owner` and `agentURI` null and is still current. Not paged,
-like `/v1/claims`.
+The registry is read at most every 30 s an agent. A request waits on it and on its other live reads (the claims' and
+the config lock) for the read wait in all, about 3 s. A slower or failing relay, a read still out from an earlier
+request, or a registration document whose host does not answer gives the last values read (null before any),
+`current: false` on those members, and `identity` in `meta.degraded`. An agent id the registry reverts for has
+`owner` and `agentURI` null and is still current; so is a document that answers 4xx (not 408 or 429) or is not JSON, with
+`registration` null. Not paged, like `/v1/claims`.
 
 ## Actions
 
@@ -149,7 +151,9 @@ by simulating the call carries `details.revert = { contract, name, args }`.
 
 An action reads the chain at the latest block and never from a cache: a read that does not answer within 3 s
 (a simulation within 6 s) fails as `upstream_unavailable` with `details.upstream` `hedera_rpc` or `arbitrum_rpc`,
-so a hanging relay is answered in seconds, not at the 12-second deadline.
+so a hanging relay is answered in seconds, not at the 12-second deadline. fileClaim's other reads wait 3 s each
+too: the shop's order (`shop`) and the ordered record's document (`ipfs`); the other record documents, read
+together, only leave `expectedFinding` null.
 
 `openapi.json` holds the same list with each code's meaning (`x-recourse-error-codes`), which codes each
 action can return (`x-recourse-errors`), and which contract custom error maps to which code
@@ -175,11 +179,11 @@ Hedera transfer for it with its own key and sends the same request with `PAYMENT
 
 ## What serving this needs
 
-1. `ops/units/web-server.mjs` forwards only `accept` today, so a POST reaches the status API without its
-   type: forward `content-type` and `content-length` on `/api`, send its own 429 and 502 in the error shape
-   (`rate_limited`; `upstream_unavailable` with upstream `status_api`), and every action must answer inside its
-   15-second upstream timeout. Until it forwards them, the status API reads an action body as JSON whatever
-   its type, and every client behind it shares one rate limit.
+1. `ops/units/web-server.mjs` forwards `accept`, `content-type` and `content-length` on `/api`, with the client
+   it counted as `cf-connecting-ip`, and sends its own 429 `rate_limited` and 502 `upstream_unavailable` in the
+   error shape on `/api/v1` (the 502 as in the table above: message `status API unreachable`, no `details`).
+   Every action must answer inside its 15-second upstream timeout. The status API reads an action body as JSON
+   whatever its type.
 2. The status API takes POST on `/v1/actions/*` with a 64 KB JSON limit, adds POST and `content-type` to the
    CORS reply on `/v1`, and uses the error shape on every `/v1` answer. Actions are limited per client
    (`cf-connecting-ip` when the request comes from the local proxy): 30 a minute with a burst of 10, at most

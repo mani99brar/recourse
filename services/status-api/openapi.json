@@ -573,7 +573,7 @@
         ],
         "operationId": "getCast",
         "summary": "The registered shops and agent companies",
-        "description": "Every party in the party map with an ERC-8004 agent id: its owner and agentURI read from the identity registry on Hedera, the name, description and `recourse` type of its registration document, the orders its records name on the records topic and its claims with their outcomes. Not paged, like /v1/claims. The registry is read at most every 30 s an agent and waited on for at most 3 s: a slower or failing relay answers with the last values read, `current: false` on those members, and `identity` in meta.degraded.",
+        "description": "Every party in the party map with an ERC-8004 agent id: its owner and agentURI read from the identity registry on Hedera, the name, description and `recourse` type of its registration document, the orders its records name on the records topic and its claims with their outcomes. Not paged, like /v1/claims. The registry is read at most every 30 s an agent and waited on within the read wait (about 3 s), which it shares with the request's other live reads: a slower or failing relay, or a registration document whose host does not answer, answers with the last values read, `current: false` on those members, and `identity` in meta.degraded. A 4xx answer (other than 408 or 429) or a document that is not JSON is an answer: `registration` null, still current.",
         "responses": {
           "200": {
             "description": "OK",
@@ -748,7 +748,7 @@
                               },
                               "current": {
                                 "type": "boolean",
-                                "description": "False while the latest registry or document read failed: the fields above are then the last ones read."
+                                "description": "False while the latest registry or document read failed or has not answered within the read wait: the fields above are then the last ones read."
                               },
                               "explorer": {
                                 "type": [
@@ -2393,7 +2393,7 @@
         ],
         "operationId": "relayRuling",
         "summary": "Relay the ruling to Hedera",
-        "description": "Builds `RecourseCase.relayRuling(claimId)` on Arbitrum Sepolia; anyone may sign. The case must be Ruled or Relayed (`case_wrong_state`), the peer set (`bridge_unavailable`), fewer than maxSends sends (`max_sends_reached`) and the last send at least resendGap ago (`resend_too_soon`). With payIn native the value is exactly `quoteRelayNative(claimId)` (the contract forwards exactly the fee and returns no change); with payIn link the value is 0 and the contract's LINK pays (`contract_underfunded`). Preview amounts: ccipFee (send, the signer; or contract_pays in LINK).",
+        "description": "Builds `RecourseCase.relayRuling(claimId)` on Arbitrum Sepolia; anyone may sign. The case must be Ruled or Relayed (`case_wrong_state`), the claim on Hedera not Settled, Closed or Expired (`wrong_status`: the claims contract would ignore the ruling), the peer set (`bridge_unavailable`), fewer than maxSends sends (`max_sends_reached`) and the last send at least resendGap ago (`resend_too_soon`). With payIn native the value is exactly `quoteRelayNative(claimId)` (the contract forwards exactly the fee and returns no change); with payIn link the value is 0 and the contract's LINK pays (`contract_underfunded`). Preview amounts: ccipFee (send, the signer; or contract_pays in LINK).",
         "x-recourse-call": {
           "chain": "arbitrum",
           "contract": "RecourseCase",
@@ -3468,7 +3468,7 @@
           "amount",
           "fate"
         ],
-        "description": "The court fee escrowed from the shop at filing, in vault-token base units."
+        "description": "The court fee escrowed from the shop at filing, in vault-token base units, as the vault's FeeEscrowed event gave it: 0 with fate none until that event is indexed."
       },
       "NextAction": {
         "type": [
@@ -4447,7 +4447,12 @@
             ]
           },
           "escrowOpen": {
-            "$ref": "#/components/schemas/Uint"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Uint"
+              }
+            ],
+            "description": "Court fees the vault holds in escrow with this address as the shop: the vault's shopEscrowOf when read, else the sum over its indexed claims that still hold their fee. A platform's own figure never includes its shops' fees."
           },
           "openClaims": {
             "type": "integer"

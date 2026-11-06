@@ -456,9 +456,10 @@ async function relayRuling(env: ActionEnv, raw: unknown): Promise<ActionAnswer> 
   const [k, court, head, gasPrice, status] = await Promise.all([c.caseNow(claimId), c.courtNow(), c.head('arbitrum'), c.gasPrice('arbitrum'), hederaStatusOf(env, claimId)]);
   caseKnown(k, claimId);
   if (k.state !== CaseState.Ruled && k.state !== CaseState.Relayed) throw caseWrongState(k.state);
-  // The case stays Relayed on Arbitrum for good: once the claim is settled or closed on Hedera, a
-  // re-relay only spends the CCIP fee.
-  if (status === ClaimStatus.Settled || status === ClaimStatus.Closed) throw wrongStatus(status);
+  // The case stays Relayed on Arbitrum for good: once the claim is settled, closed or expired on
+  // Hedera, the claims contract ignores the ruling (NOT_AT_COURT) and a re-relay only spends the
+  // CCIP fee.
+  if (status === ClaimStatus.Settled || status === ClaimStatus.Closed || status === ClaimStatus.Expired) throw wrongStatus(status);
   if (court.peer === ZERO_ADDRESS) throw new V1Error('bridge_unavailable', 'The bridge has no peer set.', {});
   if (k.sendCount >= court.maxSends) throw new V1Error('max_sends_reached', 'The ruling was already sent the most times allowed.', {});
   if (k.sendCount > 0) {

@@ -407,12 +407,17 @@ export function readBackShows(a, body, hashes) {
 let parties = null;
 /**
  * Reads the party map once with packages/shared's readParties (PARTIES_FILE, else the checkout's
- * deployments/parties.json). Public addresses only; the keys stay where they are.
+ * deployments/parties.json). Public addresses only; the keys stay where they are. Each role maps to
+ * one party through partyByRole, the services' own pick: once the demo cast adds more shops,
+ * platforms and agents, RECOURSE_SHOP_ADDRESS, RECOURSE_PLATFORM_ADDRESS and RECOURSE_AGENT_ADDRESS
+ * name the ones under test.
  */
 export async function loadParties() {
   const { readParties } = await repoModule('packages/shared/src/node/index.ts');
+  const { partyByRole } = await repoModule('packages/shared/src/parties.ts');
   const list = readParties({ PARTIES_FILE: process.env.PARTIES_FILE || join(DEPLOYMENTS_DIR, 'parties.json') });
-  parties = Object.fromEntries(list.map((p) => [p.role, viem.getAddress(p.evmAddress)]));
+  const roles = [...new Set(list.map((p) => p.role))];
+  parties = Object.fromEntries(roles.map((role) => [role, viem.getAddress(partyByRole(list, role, process.env).evmAddress)]));
   return parties;
 }
 

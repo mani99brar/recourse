@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/store.js';
-import { Sim } from './helpers/encode.js';
-import { FEE, PLATFORM, SHOP, SHOP2, buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
+import { Sim, encodeLog } from './helpers/encode.js';
+import { CASE_DEADLINE, FEE, PLATFORM, SHOP, SHOP2, buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
 import { harness } from './helpers/service.js';
 import { TtlCache } from '../src/live.js';
 
@@ -23,12 +23,15 @@ function multi() {
 describe('escrow has one source', () => {
   it('the party figure equals the sum over its open claims, and rows equal the detail', async () => {
     const { store, a, c, sim } = multi();
-    const h = harness({ store, now: Number(sim.t) + 1 });
+    // No vault read: the figure comes from the index.
+    const h = harness({ store, now: Number(sim.t) + 1, reader: null });
     const rows = await h.svc.claimRows();
     const held = rows.filter((r) => r.shop === SHOP && r.escrow.fate === 'held');
     const party = await h.svc.party(SHOP);
     expect(party.escrowOpen).toBe(held.reduce((n, r) => n + r.escrow.amount, 0n));
     expect(party.escrowOpen).toBe(FEE); // only claim a still holds its fee for SHOP
+    // The platform's page does not count its shops' court fees as its own.
+    expect((await h.svc.party(PLATFORM)).escrowOpen).toBe(0n);
     for (const x of [a, c]) {
       const row = rows.find((r) => r.claimId === x.claimId)!;
       const d = await h.svc.claimDetail(x.claimId);
@@ -38,6 +41,28 @@ describe('escrow has one source', () => {
     // Settled and closed claims show where the fee went.
     expect(rows.find((r) => r.statusKey === 'closed_uncontested')!.escrow.fate).toBe('refunded');
     expect(rows.find((r) => r.statusKey === 'settled')!.escrow.fate).toBe('kept_by_pool');
+  });
+
+  it('takes the vault figure when the vault was read, and shows no escrow for a fee it has not indexed', async () => {
+    const { store, sim } = multi();
+    const reader = fakeReader({
+      async party(a) {
+        return { deposit: 100_000_000n, required: 10_000_000n, credit: 0n, topUpDeadline: 0n, inGoodStanding: true, openClaims: 1n, exitRequestedAt: 0n, shopEscrow: a === SHOP ? 3n * FEE : 0n };
+      },
+    });
+    const h = harness({ store, now: Number(sim.t) + 1, reader });
+    expect((await h.svc.party(SHOP)).escrowOpen).toBe(3n * FEE);
+    expect((await h.svc.party(PLATFORM)).escrowOpen).toBe(0n);
+
+    // A claim whose FeeEscrowed is not indexed holds nothing, whatever the court fee is now.
+    const bare = new Sim();
+    const b = buildClaim(bare, 'finding_made', 9);
+    const feeTopic = encodeLog('vault', 'FeeEscrowed', { claimId: b.claimId, shop: SHOP, amount: FEE }).topics[0];
+    bare.logs = bare.logs.filter((l) => l.raw.topics[0] !== feeTopic);
+    const s = new Store();
+    ingest(s, bare);
+    const row = (await harness({ store: s, now: Number(bare.t) + 1 }).svc.claimRows()).find((r) => r.claimId === b.claimId)!;
+    expect(row.escrow).toEqual({ amount: 0n, fate: 'none' });
   });
 });
 
@@ -131,5 +156,70 @@ describe('the live-read cache is bounded', () => {
     // A failed load is not kept, and does not remove a newer entry for the same key.
     await expect(c.get('bad', async () => Promise.reject(new Error('x')))).rejects.toThrow();
     expect(await c.get('bad', async () => 2)).toBe(2);
+  });
+});
+
+describe('the court case read and its events', () => {
+  function atCourt() {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'at_court', 1);
+    return { sim, b };
+  }
+
+  it('the case events win over an older case read, and the Kleros reads still show', async () => {
+    const { sim, b } = atCourt();
+    sim.tick(900);
+    sim.arb('RulingFinal', { claimId: b.claimId, disputeId: 901n, ruling: 1, attempts: 1 });
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, b.live!); // read while the case was still opened
+    const h = harness({ store, now: Number(sim.t) + 10 });
+    const d = await h.svc.claimDetail(b.claimId);
+    expect(d.court.state).toBe('ruled');
+    expect(d.court.disputeIds[0]).toBe(901n);
+    expect(d.court.currentRuling).toBe(1n);
+  });
+
+  it('a later attempt in the events wins over a read of the first attempt being refiled', async () => {
+    const { sim, b } = atCourt();
+    sim.tick(600);
+    sim.arb('RefileNeeded', { claimId: b.claimId });
+    sim.tick(60);
+    sim.arb('CaseOpened', { claimId: b.claimId, disputeId: 951n, attempt: 2 });
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, state: 3 } });
+    const h = harness({ store, now: Number(sim.t) + 10 });
+    const d = await h.svc.claimDetail(b.claimId);
+    expect(d.court.state).toBe('opened');
+    expect(d.court.attempts).toBe(2);
+    expect(d.court.disputeIds).toEqual([901n, 951n]);
+  });
+
+  it('the case events keep the read expiry, so a refile stays open until expiresAt - caseDeadline', async () => {
+    const { sim, b } = atCourt();
+    sim.tick(600);
+    sim.arb('RefileNeeded', { claimId: b.claimId });
+    const now = sim.t + CASE_DEADLINE + 60n; // past ruledAt + caseDeadline, the rule without an expiry
+    const expiresAt = now + CASE_DEADLINE + 600n;
+    const store = new Store();
+    ingest(store, sim);
+    // The last case read is from before the RefileNeeded; the reads since failed.
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, expiresAt } });
+    const h = harness({ store, now: Number(now) });
+    const d = await h.svc.claimDetail(b.claimId);
+    expect(d.court.state).toBe('refile_pending');
+    expect(d.statusKey).toBe('refused_once');
+    expect(d.nextCall).toBe('refile');
+    expect(d.deadline).toBe(expiresAt - CASE_DEADLINE);
+  });
+
+  it('a case read further along than the events still wins', async () => {
+    const { sim, b } = atCourt();
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, state: 4, ruling: 2, ruledAt: sim.t } });
+    const h = harness({ store, now: Number(sim.t) + 10 });
+    expect((await h.svc.claimDetail(b.claimId)).court.state).toBe('ruled');
   });
 });

@@ -4,9 +4,11 @@
 //
 //   node compare.mjs <labelA> <labelB>
 //
-// Rows are matched on suite, path and test with claim and order ids, statuses in parentheses and
-// amounts taken out, so a check of "the claim" matches across deployments whose claims differ. A row
-// with no partner is listed as only in A or only in B. Exit 1 when a row passed in only one run.
+// Rows are matched on suite, path and test with statuses in parentheses and numbers (amounts, counts,
+// times) taken out, first keeping claim and order ids (the same claim in both runs), then with the ids
+// taken out too, so a check of "the claim" matches across deployments whose claims differ, and an ops row
+// matches when its counts have moved on. A row with no partner is listed as only in A or only in B; one
+// that passed there is also a row that passed in only one run (it was not run, or not reached, in the other). Exit 1 when a row passed in only one run.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,42 +25,70 @@ const norm = (s) =>
   String(s ?? '')
     .replace(/0x[0-9a-fA-F]{8,}/g, '{id}')
     .replace(STATUS, '({status})')
-    .replace(/\b(credit|balance) [0-9]+/g, '$1 {n}')
+    .replace(/\d+(?:\.\d+)?/g, '{n}')
     .replace(/: (filed|finding_made|no_finding|window_lapsed|closed_uncontested|contested|settled)$/, ': {status}');
 
-/** Rows keyed by their normalised name; the n-th row of a name gets #n. */
-function keyed(run) {
-  const seen = new Map();
-  const out = new Map();
-  for (const r of run.rows) {
-    const base = `${r.suite} | ${norm(r.path)} | ${norm(r.test)}`;
-    const n = (seen.get(base) ?? 0) + 1;
-    seen.set(base, n);
-    out.set(n > 1 ? `${base} #${n}` : base, r);
+/** The same with claim and order ids kept: rows that name the same claim pair up first. */
+const sameIds = (s) => {
+  const ids = [];
+  let i = 0;
+  return norm(String(s ?? '').replace(/0x[0-9a-fA-F]{8,}/g, (m) => (ids.push(m), '\u0001'))).replace(/\u0001/g, () => ids[i++]);
+};
+const name = (f, r) => `${r.suite} | ${f(r.path)} | ${f(r.test)}`;
+
+/**
+ * Pairs of rows [a, b] (either missing): first a row of B naming the same ids as a row of A, then, for rows
+ * left over (another deployment's claims), the n-th row of a normalised name in A with the n-th in B.
+ */
+function pairs() {
+  const out = [];
+  const leftB = new Set(B.rows);
+  const byIds = new Map();
+  for (const r of B.rows) byIds.set(name(sameIds, r), [...(byIds.get(name(sameIds, r)) ?? []), r]);
+  const leftA = [];
+  for (const r of A.rows) {
+    const m = byIds.get(name(sameIds, r))?.find((x) => leftB.has(x));
+    if (m) {
+      leftB.delete(m);
+      out.push([r, m]);
+    } else leftA.push(r);
   }
+  const byNorm = new Map();
+  for (const r of B.rows.filter((x) => leftB.has(x))) byNorm.set(name(norm, r), [...(byNorm.get(name(norm, r)) ?? []), r]);
+  for (const r of leftA) {
+    const m = byNorm.get(name(norm, r))?.shift();
+    if (m) leftB.delete(m);
+    out.push([r, m]);
+  }
+  for (const r of B.rows.filter((x) => leftB.has(x))) out.push([undefined, r]);
   return out;
 }
-const ka = keyed(A);
-const kb = keyed(B);
-const keys = [...new Set([...ka.keys(), ...kb.keys()])];
+const all = pairs();
 const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 const res = (r) => (r ? `${r.result}${r.txHash ? ` ${r.txHash}` : ''}` : '-');
+const named = (r) => `${r.suite} | ${r.path} | ${r.test}`;
 
 const head = (run) => `${run.label}: commit ${run.commit ?? '?'}, ${run.started ?? '?'}; claims ${run.deployments?.claims ?? '?'}, vault ${run.deployments?.vault ?? '?'}, case ${run.deployments?.recourseCase ?? '?'}; pass ${run.counts.pass}, fail ${run.counts.fail}, blocked ${run.counts.blocked}, dry-only ${run.counts['dry-only']}`;
 const lines = [`# ${a} and ${b} side by side`, '', `- A ${head(A)}`, `- B ${head(B)}`, '', `| Path | Test | A: ${cell(a)} | B: ${cell(b)} |`, '|---|---|---|---|'];
-for (const k of keys) {
-  const r = ka.get(k) ?? kb.get(k);
-  lines.push(`| ${cell(r.path)} | ${cell(r.test)} | ${cell(res(ka.get(k)))} | ${cell(res(kb.get(k)))} |`);
+for (const [ra, rb] of all) {
+  const r = ra ?? rb;
+  const test = ra && rb && ra.test !== rb.test ? `${ra.test} / B: ${rb.test}` : r.test;
+  lines.push(`| ${cell(r.path)} | ${cell(test)} | ${cell(res(ra))} | ${cell(res(rb))} |`);
 }
-const onlyOne = keys.filter((k) => ka.has(k) && kb.has(k) && (ka.get(k).result === 'pass') !== (kb.get(k).result === 'pass'));
-const onlyA = keys.filter((k) => ka.has(k) && !kb.has(k));
-const onlyB = keys.filter((k) => !ka.has(k) && kb.has(k));
-const list = (title, ks, f) => [`## ${title} (${ks.length})`, '', ...(ks.length ? ks.map(f) : ['none']), ''];
+const passed = (r) => r?.result === 'pass';
+const onlyOne = all.filter(([ra, rb]) => passed(ra) !== passed(rb));
+const onlyA = all.filter(([ra, rb]) => ra && !rb);
+const onlyB = all.filter(([ra, rb]) => !ra && rb);
+const list = (title, ps, f) => [`## ${title} (${ps.length})`, '', ...(ps.length ? ps.map(f) : ['none']), ''];
 lines.push(
   '',
-  ...list('Passed in only one run', onlyOne, (k) => `- ${k}: A ${ka.get(k).result}, B ${kb.get(k).result}${(ka.get(k).result === 'pass' ? kb : ka).get(k).note ? ` (${(ka.get(k).result === 'pass' ? kb : ka).get(k).note})` : ''}`),
-  ...list(`Only in A (${a})`, onlyA, (k) => `- ${k}: ${ka.get(k).result}`),
-  ...list(`Only in B (${b})`, onlyB, (k) => `- ${k}: ${kb.get(k).result}`),
+  ...list('Passed in only one run', onlyOne, ([ra, rb]) => {
+    const other = passed(ra) ? rb : ra;
+    const both = ra && rb && ra.test !== rb.test ? ` / B: ${rb.test}` : '';
+    return `- ${named(ra ?? rb)}${both}: A ${ra?.result ?? 'not in this run'}, B ${rb?.result ?? 'not in this run'}${other?.note ? ` (${other.note})` : ''}`;
+  }),
+  ...list(`Only in A (${a})`, onlyA, ([ra]) => `- ${named(ra)}: ${ra.result}`),
+  ...list(`Only in B (${b})`, onlyB, ([, rb]) => `- ${named(rb)}: ${rb.result}`),
 );
 process.stdout.write(`${lines.join('\n')}\n`);
 process.exit(onlyOne.length ? 1 : 0);

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { hcsWritersFor, type Parties } from '@recourse/shared';
 import type { Config } from './config.js';
 import type { Deployments } from './deployments.js';
-import type { FetchLike } from './http.js';
+import { safeError, type FetchLike } from './http.js';
 import type { DocFetcher } from './ipfs.js';
 import { refreshLive, refreshPreChecks, type Reader } from './live.js';
 import { pollArbitrum, pollEvidence, type ArbDeps, type ArbRpc } from './sources/arbitrum.js';
@@ -14,6 +14,9 @@ import { pollHcs } from './sources/hcs.js';
 import { pollHedera, type MirrorDeps } from './sources/hedera.js';
 import { Store, sameIdentity, type SnapshotIdentity } from './store.js';
 import type { SourceName } from './types.js';
+
+/** ARB_LOG_CHUNK ranges of one court attempt's evidence read a poll (10 000 blocks at the default chunk). */
+const EVIDENCE_CHUNKS_PER_POLL = 10;
 
 export interface IndexerDeps {
   store: Store;
@@ -69,15 +72,16 @@ export class Indexer {
       await pollHcs(store, mirror, cfg.recordsTopic, { isWriter });
       this.settle('hcs');
     }
+    let arb: ArbDeps | null = null;
     if (dep.caseAddress && this.d.arbRpc && this.due('arbitrum')) {
-      const arb: ArbDeps = { rpc: this.d.arbRpc, confirmations: cfg.arbConfirmations, chunk: cfg.arbLogChunk, nowS: this.d.nowS };
+      arb = { rpc: this.d.arbRpc, confirmations: cfg.arbConfirmations, chunk: cfg.arbLogChunk, nowS: this.d.nowS };
       await pollArbitrum(store, arb, dep.caseAddress, dep.arbitrumStartBlock);
       this.settle('arbitrum');
-      if (!store.status.arbitrum.failing) await this.evidence(arb);
     }
-    // Before the live reads and the documents: a fresh store serves once its sources have caught up,
-    // not once a slow relay has answered for every claim.
+    // Before the evidence, the live reads and the documents: a fresh store serves once its sources
+    // have caught up, not once each case's evidence is read or a slow relay has answered for every claim.
     if (store.rebuilding && this.caughtUp()) store.rebuilding = false;
+    if (arb && !store.status.arbitrum.failing) await this.evidence(arb);
     if (this.d.reader) {
       await refreshLive(store, this.d.reader, this.d.nowS, cfg.sourceTimeoutMs);
       await refreshPreChecks(store, this.d.reader, this.d.nowS, 20, cfg.sourceTimeoutMs);
@@ -98,6 +102,11 @@ export class Indexer {
     return lead === null || (st[lead].indexedThrough !== null && !st[lead].failing);
   }
 
+  /**
+   * Each court attempt's evidence, at most EVIDENCE_CHUNKS_PER_POLL ranges an attempt a poll: a
+   * fresh store walks an older case from its CaseOpened block over a few polls, not in one that
+   * holds up the other sources.
+   */
   private async evidence(arb: ArbDeps): Promise<void> {
     const { store, deployments: dep } = this.d;
     if (!dep.caseAddress) return;
@@ -107,20 +116,29 @@ export class Indexer {
         const attempt = Number(e.args.attempt);
         if (attempt !== 1 && attempt !== 2) continue;
         try {
-          await pollEvidence(store, arb, dep.outside.evidenceModule, dep.arbitrumChainId, dep.caseAddress, id as `0x${string}`, attempt, e.block);
-        } catch {
-          // evidence is shown when readable; the case itself does not depend on it
+          await pollEvidence(store, arb, dep.outside.evidenceModule, dep.arbitrumChainId, dep.caseAddress, id as `0x${string}`, attempt, e.block, EVIDENCE_CHUNKS_PER_POLL);
+        } catch (err) {
+          // Evidence is shown when readable and the case itself does not depend on it, so the
+          // source is not failing; the error still shows in /health. The next poll goes on from the
+          // last range read.
+          store.status.arbitrum.lastError = `evidence: ${safeError(err)}`;
+          store.status.arbitrum.lastErrorAt = this.d.nowS();
         }
       }
     }
   }
 
+  /**
+   * Fetches up to 20 record documents not known yet. No new fetch starts once one SOURCE_TIMEOUT_MS
+   * has passed, so a slow gateway holds the next poll of the sources for at most about twice that.
+   */
   private async prefetchDocs(): Promise<void> {
     const parties = this.d.parties();
     if (!parties) return;
     let budget = 20;
+    const until = Date.now() + this.d.cfg.sourceTimeoutMs;
     for (const r of this.d.store.hcs.values()) {
-      if (budget <= 0) break;
+      if (budget <= 0 || Date.now() >= until) break;
       if (this.d.docs.peek(r.cid, r.hash) !== undefined) continue;
       if (!hcsWritersFor(parties, r.kind).has(r.payer)) continue;
       budget--;

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The demo cast's planned orders (ops/cast/cast.json), each through the agent's live-order with an
-# in-process shop (--local-shop) and the identities' own keys, party selectors, catalogue, spend
-# limits and state folders. Dry by default: live-order's own dry run (account and topic checks, the
-# 402, the approval text and how the spend limits decide it); nothing is written or paid.
+# in-process shop (--local-shop), or its order command and then the shop's pack command (below), with
+# the identities' own keys, party selectors, catalogue, spend limits and state folders. Dry by
+# default: the commands' own dry runs (live-order's account and topic checks; the 402, the approval
+# text and how the spend limits decide it); nothing is written or paid.
 #
 #   ops/cast/orders.sh [--send] [<order id>...]      every planned order, or the ones named
 #   ops/cast/orders.sh approve <order id> [--send]   the buyer's approval of an order above the spend
@@ -17,12 +18,16 @@
 # ~/.local/state/recourse/cast): <shop>/shop is a shop's journals, <company>/agent an agent's, and
 # orders/<order id>.order the order id live-order printed, so a rerun carries the order on with --order.
 #
-# An order with "shopMode": "port" (the approval order) runs without --local-shop, against its shop
-# started as its own process on its registered port for the length of the command (see with_shop).
+# An order with "shopMode": "port" runs without --local-shop, against its shop started as its own
+# process on its registered port for the length of the command (see with_shop); the agent finds it
+# through the shop's ERC-8004 registration, or through SHOP_BASE_URL (that port) while the registry
+# cannot be read.
 #
 # live-order states what the buyer asked for and what arrived (asked Northwind, M, Navy, up to 2.00;
-# arrived the staged fault size, else L). An order whose planned asked or arrived differs would get
-# records that misstate it, so --send skips it until live-order takes them from the order.
+# arrived the staged fault size, else L), which suits the Kestrel claim orders. An order with "via":
+# "order" goes through the agent's order command instead, with its own asked values from cast.json,
+# and then the shop's pack command (see order_then_pack), so its records state what its buyer asked
+# for. A live-order order whose planned asked or arrived differs from live-order's is skipped.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -75,12 +80,16 @@ env_for() {
   jq -r '.agentCompanies[] | select(.id == "'"$co"'") | .limits | to_entries[] | "\(.key)=\(.value)"' "$CAST"
 }
 
+port_of() { jq -r --arg s "$(jq -r .shop <<<"$1")" '.shops[] | select(.id == $s) | .port' "$CAST"; }
+
 # run_with <order json> <command...>: the command with the order's env, without the public shop URL
-# (the in-process shop has none).
+# (the in-process shop has none). For a shop on its port, SHOP_BASE_URL is that port: the agent uses
+# it only when the shop's registration cannot be read, and pays the party map's shop either way.
 run_with() {
   local o=$1; shift
   local -a assign=()
   mapfile -t assign < <(env_for "$o")
+  [ "$(jq -r '.shopMode // "local"' <<<"$o")" != port ] || assign+=("SHOP_BASE_URL=http://127.0.0.1:$(port_of "$o")")
   (cd "$ROOT" && env -u SHOP_PUBLIC_URL -u SHOP_BASE_URL "${assign[@]}" "$@")
 }
 
@@ -112,13 +121,16 @@ with_shop() {
   local o=$1; shift
   if [ "$SHOP_UP" = 1 ]; then "$@"; return $?; fi
   local shop port pid code=0 _
-  shop=$(jq -r .shop <<<"$o"); port=$(jq -r --arg s "$shop" '.shops[] | select(.id == $s) | .port' "$CAST")
+  shop=$(jq -r .shop <<<"$o"); port=$(port_of "$o")
   local health=http://127.0.0.1:$port/health
   if curl -fs -m 2 "$health" >/dev/null 2>&1; then die "port $port already answers: is a $shop shop running already?"; fi
   local -a assign=()
   mapfile -t assign < <(env_for "$o")
   (cd "$ROOT/services/shop" && exec env -u SHOP_PUBLIC_URL -u SHOP_BASE_URL "${assign[@]}" SHOP_PORT="$port" node --import tsx src/main.ts) >>"$STATE/$shop/shop.log" 2>&1 &
   pid=$!
+  # An interrupt, or a die inside the command, stops the shop too, so its port is free for the next run.
+  trap "kill $pid 2>/dev/null || true" EXIT
+  trap "kill $pid 2>/dev/null || true; exit 130" INT TERM
   for _ in $(seq 1 60); do curl -fs -m 2 "$health" >/dev/null 2>&1 && break; sleep 1; done
   if ! curl -fs -m 2 "$health" >/dev/null 2>&1; then
     kill "$pid" 2>/dev/null || true
@@ -131,6 +143,7 @@ with_shop() {
   set +e; "$@"; code=$?; set -e
   SHOP_UP=0
   kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+  trap - EXIT INT TERM
   return "$code"
 }
 
@@ -159,20 +172,62 @@ live_order() { # live_order <order json> [extra args]
   return "$code"
 }
 
+order_args() { # order_args <order json>: the agent's order flags for it, one per line: the item and what its buyer asked for
+  local o=$1
+  jq -r --arg m "$(jq -r --arg s "$(jq -r .shop <<<"$o")" '.shops[] | select(.id == $s) | .name' "$CAST")" \
+    '"--sku", .sku, (.asked | to_entries[] | "--\(.key)", .value), "--merchant", $m' <<<"$o"
+}
+
+# order_then_pack <order json>: an order with "via": "order", while its shop runs on its port. The
+# agent's order command places it with the buyer's asked values from cast.json (a rerun carries the
+# saved order on with --resume); once it is paid, the shop's pack command writes the packed record:
+# the catalogue item and the price charged. An order that waits for the buyer stops before packing.
+order_then_pack() {
+  local o=$1
+  local id saved log out code
+  id=$(jq -r .id <<<"$o")
+  mkdir -p "$STATE/orders"; saved=$STATE/orders/$id.order; log=$STATE/orders/$id.log; out=$STATE/orders/$id.last
+  local -a args=()
+  if [ -s "$saved" ]; then args=(--resume "$(cat "$saved")"); else mapfile -t args < <(order_args "$o"); fi
+  [ "$SEND" = 0 ] || args+=(--send)
+  echo "  order $(printf '%q ' "${args[@]}")"
+  set +e
+  run_with "$o" pnpm --silent --filter @recourse/agent order "${args[@]}" 2>&1 | tee "$out"
+  code=${PIPESTATUS[0]}
+  set -e
+  cat "$out" >> "$log"
+  local got; got=$(grep -o '^order 0x[0-9a-f]\{64\}' "$out" | tail -1 | awk '{print $2}' || true)
+  [ -z "$got" ] || [ -s "$saved" ] || echo "$got" > "$saved"
+  [ "$code" = 0 ] || return "$code"
+  if [ ! -s "$saved" ]; then echo "  then: the shop's pack --order <the order id> once it is paid"; return 0; fi
+  if [ "$SEND" = 1 ] && ! grep -q '"state":"done"' "$out"; then
+    grep -q '"state":"awaiting_approval"' "$out" && echo "  waiting for the buyer: orders.sh approve $id --send"
+    return 0
+  fi
+  local -a pargs=(--order "$(cat "$saved")"); [ "$SEND" = 0 ] || pargs+=(--send)
+  echo "  pack ${pargs[*]}"
+  set +e
+  run_with "$o" pnpm --silent --filter @recourse/shop run pack "${pargs[@]}" 2>&1 | tee -a "$log"
+  code=${PIPESTATUS[0]}
+  set -e
+  # A dry run's pack reads the shop's journal only: an order not paid yet is not a failure there.
+  [ "$SEND" = 0 ] || return "$code"
+}
+
 if [ "$CMD" = approve ]; then
   [ ${#NAMES[@]} = 1 ] || die "usage: orders.sh approve <order id> [--send]"
   o=$(order "${NAMES[0]}"); [ -n "$o" ] || die "no order ${NAMES[0]} in cast.json"
   ready "$o" || exit 2
   log=$STATE/orders/${NAMES[0]}.log
-  aid=$([ -f "$log" ] && grep -o 'approve [0-9a-f]\{16\} --yes' "$log" | tail -1 | awk '{print $2}' || true)
+  aid=$([ -f "$log" ] && grep -o 'approve [0-9a-f]\{16\}\b' "$log" | tail -1 | awk '{print $2}' || true)
   [ -n "$aid" ] || die "no approval waiting for ${NAMES[0]}: run orders.sh --send ${NAMES[0]} first"
   if [ "$SEND" = 0 ]; then run_with "$o" pnpm --silent --filter @recourse/agent approve "$aid"; exit $?; fi
   [ "$(jq -r '.shopMode // "local"' <<<"$o")" = port ] || die "${NAMES[0]} ran on an in-process shop, which is gone: its payment URL cannot be reached again"
   # approve signs and journals the decision and pays the shop at the URL of the first 402; the
-  # live-order rerun then carries the order on to its last step.
+  # order's own command, rerun, then carries it on to its last step.
   approve_and_finish() {
     run_with "$o" pnpm --silent --filter @recourse/agent approve "$aid" --yes || return $?
-    live_order "$o"
+    if [ "$(jq -r '.via // "live-order"' <<<"$o")" = order ]; then order_then_pack "$o"; else live_order "$o"; fi
   }
   with_shop "$o" approve_and_finish
   exit $?
@@ -188,22 +243,32 @@ if [ "$CMD" = withdraw ]; then
 fi
 
 [ ${#NAMES[@]} -gt 0 ] || mapfile -t NAMES < <(jq -r '.orders[].id' "$CAST")
-[ "$SEND" = 1 ] || echo "# dry run: live-order's dry run for each order; nothing is written or paid; add --send to run them"
+[ "$SEND" = 1 ] || echo "# dry run: each order's own dry run (live-order, or order then pack); nothing is written or paid; add --send to run them"
 failed=()
 for name in "${NAMES[@]}"; do
   o=$(order "$name"); [ -n "$o" ] || die "no order $name in cast.json"
   echo "== $name: $(jq -r '"\(.company) buys \(.sku) from \(.shop) -> \(.outcome)"' <<<"$o")"
-  if ! states_honestly "$o"; then
+  via=$(jq -r '.via // "live-order"' <<<"$o")
+  if [ "$via" = live-order ] && ! states_honestly "$o"; then
     echo "  skipped: live-order records asked $(jq -c . <<<"$LIVE_ASKED") and arrived Northwind/Navy; this order's buyer asked $(jq -c .asked <<<"$o"), so its records would misstate it"
     continue
   fi
   if ! ready "$o"; then
     if [ "$SEND" = 0 ]; then
-      echo "  would run: live-order $(jq -r 'if .shopMode == "port" then "(shop on its port \(.shop))" else "--local-shop" end' <<<"$o") --sku $(jq -r .sku <<<"$o") --through $(jq -r .through <<<"$o")$(jq -r 'if .fault then " --fault \(.fault)" else "" end' <<<"$o")"
+      if [ "$via" = order ]; then
+        mapfile -t oargs < <(order_args "$o")
+        echo "  would run, with the $(jq -r .shop <<<"$o") shop on its port $(port_of "$o"): order $(printf '%q ' "${oargs[@]}"), then the shop's pack --order <the order id> once it is paid"
+      else
+        echo "  would run: live-order $(jq -r 'if .shopMode == "port" then "(shop on its port \(.shop))" else "--local-shop" end' <<<"$o") --sku $(jq -r .sku <<<"$o") --through $(jq -r .through <<<"$o")$(jq -r 'if .fault then " --fault \(.fault)" else "" end' <<<"$o")"
+      fi
       echo "  with: $(env_for "$o" | grep -v '_ADDRESS=$' | tr '\n' ' ')"
     else failed+=("$name"); fi
     continue
   fi
-  live_order "$o" || failed+=("$name")
+  if [ "$via" = order ]; then
+    with_shop "$o" order_then_pack "$o" || failed+=("$name")
+  else
+    live_order "$o" || failed+=("$name")
+  fi
 done
 [ ${#failed[@]} = 0 ] || { echo "orders.sh: not finished: ${failed[*]}"; exit 1; }

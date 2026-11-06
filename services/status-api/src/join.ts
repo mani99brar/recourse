@@ -15,7 +15,7 @@ import {
   type SettleResult,
 } from '@recourse/shared';
 import type { Address, Hex } from 'viem';
-import type { KlerosRead, LiveState } from './store.js';
+import type { KlerosRead, LiveState, RawCaseView } from './store.js';
 import type { IndexedEvent } from './types.js';
 
 const ZERO32 = '0x' + '00'.repeat(32);
@@ -176,36 +176,55 @@ export function foldClaim(events: readonly IndexedEvent[]): FoldedClaim | null {
   return c;
 }
 
-/** The Arbitrum case as the status derivation sees it: the live read, else rebuilt from events. */
+/**
+ * The Arbitrum case as the status derivation sees it: the live read, else rebuilt from the case
+ * events. The events win when they are further along (a later attempt, or a later state in the
+ * same attempt), as after a ruling whose case read failed: the read kept is from before it.
+ */
 export function caseViewOf(claim: FoldedClaim, events: readonly IndexedEvent[], live: LiveState | undefined): CaseView | null {
-  const k = (id: bigint): KlerosRead | undefined => live?.kleros[id.toString()];
-  if (live?.caseView) {
-    const c = live.caseView;
-    const current = c.attempts >= 2 ? c.disputeIds[1] : c.disputeIds[0];
-    const kl = k(current);
-    const v: CaseView = {
-      state: c.state as CaseState,
-      payloadHash: c.payloadHash,
-      receivedAt: c.receivedAt,
-      attempts: c.attempts,
-      disputeIds: c.disputeIds,
-      templateIds: c.templateIds,
-      ruling: c.ruling,
-      ruledAt: c.ruledAt,
-      sendCount: c.sendCount,
-      lastSendAt: c.lastSendAt,
-      lastMessageId: c.lastMessageId,
-    };
-    if (c.expiresAt !== undefined && c.expiresAt > 0n) v.expiresAt = c.expiresAt;
-    if (kl) {
-      if (kl.period !== null) v.period = kl.period;
-      v.currentRuling = kl.currentRuling;
-      v.tied = kl.tied;
-      v.overridden = kl.overridden;
-    }
-    return v;
+  const read = live?.caseView ? readCaseView(live.caseView) : null;
+  const rebuilt = eventCaseView(events);
+  let v = read ?? rebuilt;
+  if (read && rebuilt && (rebuilt.attempts > read.attempts || (rebuilt.attempts === read.attempts && rebuilt.state > read.state))) {
+    // What the events do not carry stays from the read: the payload hash (fixed at receipt), the
+    // expiry (filedAt + claimTimeout, the same in every state) and the templates and dispute ids
+    // of the attempts it saw.
+    v = { ...rebuilt, payloadHash: read.payloadHash, templateIds: read.templateIds, disputeIds: [rebuilt.disputeIds[0] || read.disputeIds[0], rebuilt.disputeIds[1] || read.disputeIds[1]] };
+    if (read.expiresAt !== undefined) v.expiresAt = read.expiresAt;
   }
-  // Rebuild from the case events when the live read is missing.
+  if (!v) return null;
+  void claim;
+  const current = v.attempts >= 2 ? v.disputeIds[1] : v.disputeIds[0];
+  const kl: KlerosRead | undefined = live?.kleros[current.toString()];
+  if (kl) {
+    if (kl.period !== null) v.period = kl.period;
+    v.currentRuling = kl.currentRuling;
+    v.tied = kl.tied;
+    v.overridden = kl.overridden;
+  }
+  return v;
+}
+
+function readCaseView(c: RawCaseView): CaseView {
+  const v: CaseView = {
+    state: c.state as CaseState,
+    payloadHash: c.payloadHash,
+    receivedAt: c.receivedAt,
+    attempts: c.attempts,
+    disputeIds: c.disputeIds,
+    templateIds: c.templateIds,
+    ruling: c.ruling,
+    ruledAt: c.ruledAt,
+    sendCount: c.sendCount,
+    lastSendAt: c.lastSendAt,
+    lastMessageId: c.lastMessageId,
+  };
+  if (c.expiresAt !== undefined && c.expiresAt > 0n) v.expiresAt = c.expiresAt;
+  return v;
+}
+
+/** The case rebuilt from its indexed events; null before ClaimReceived. */
+function eventCaseView(events: readonly IndexedEvent[]): CaseView | null {
   let state: CaseState = CaseState.None;
   let receivedAt = 0n;
   let attempts = 0;
@@ -243,7 +262,6 @@ export function caseViewOf(claim: FoldedClaim, events: readonly IndexedEvent[], 
     }
   }
   if (state === CaseState.None) return null;
-  void claim;
   return {
     state,
     payloadHash: ZERO32 as Hex,
@@ -355,7 +373,9 @@ export function moneyOf(c: FoldedClaim, p: MoneyParams, now: bigint): Money {
   const credited = c.applied ? c.applied.paid + c.applied.refund : null;
   let notCovered: bigint | null = null;
   if (c.applied) notCovered = c.shortfall ?? 0n;
-  return { owed, paid, credited, notCovered, escrow: { amount: fee, fate: escrowFate(c, fee) }, row, projected };
+  // The fee the vault took (FeeEscrowed): with none indexed, nothing is shown as held. The
+  // projection above still uses the current court fee then.
+  return { owed, paid, credited, notCovered, escrow: { amount: c.fee ?? 0n, fate: escrowFate(c, fee) }, row, projected };
 }
 
 function escrowFate(c: FoldedClaim, fee: bigint): EscrowFate {

@@ -6,7 +6,7 @@ Three more shops and three more agent companies, beside the agent company Parcel
 |---|---|
 | `cast.json` | The cast: each shop and agent company with its type, catalogue or limits, funding, and the planned orders. |
 | `setup.ts` | Creates the keys, the Hedera accounts and the ERC-8004 identities, adds the party map entries, and funds the deposits. Dry run by default. |
-| `orders.sh` | Places the planned orders through `live-order --local-shop`, each with its own identities. Dry run by default. |
+| `orders.sh` | Places the planned orders through `live-order --local-shop`, or through the agent's `order` and the shop's `pack` commands, each with its own identities. Dry run by default. |
 
 ## The cast
 
@@ -44,13 +44,16 @@ The fault rule compares six attributes across the order's records: brand, size, 
 
 | Order | Agent company, shop, item | Outcome it shows |
 |---|---|---|
-| `wren-kestrel-payout` | Wren, Kestrel, `shell-navy-m`, `--fault ordered-size=S` | A claim nobody contests. The pre-check answers 1 (agent company) at step 2a-ii. After the contest window the claim closes, the shop is paid from Wren's deposit, and the shop withdraws its credit. |
+| `wren-kestrel-payout` | Wren, Kestrel, `shell-navy-m`, `--fault ordered-size=S` | A claim nobody contests. The pre-check answers 1 (agent company) at step 3: the ordered record differs from what was shown, while asked and shown agree. After the contest window the claim closes, the shop is paid from Wren's deposit, and the shop withdraws its credit. |
 | `wren-kestrel-neither` | Wren, Kestrel, `shell-navy-l` | The buyer asked for M. The screen showed L, flagged the change, and Wren approved it, so L is what was packed and received. The pre-check answers neither (step 11), and nothing is paid. |
-| `tallyhouse-kestrel-approval` | Tallyhouse, Kestrel, `jacket-navy-m` (3 USDC) | The order waits for the buyer, then `orders.sh approve tallyhouse-kestrel-approval --send` signs it, pays, and the shop packs. No claim. The agent pays to the shop URL it saved at the first 402, so for this order Kestrel runs as its own process (the shop service's code with Kestrel's settings) on its registered port, 8731, for as long as each command runs. |
+| `tallyhouse-kestrel-approval` | Tallyhouse, Kestrel, `jacket-navy-m` (3 USDC) | The buyer asked for this jacket at up to 3.00, so the approval text shows no change. The order is above Tallyhouse's 1 USDC spend limit, so it waits for the buyer. Then `orders.sh approve tallyhouse-kestrel-approval --send` signs it and pays, and the shop packs. No claim. |
 | `wren-fernhill-no-claim` | Wren, Fernhill, `tulips-white-10` | Paid and packed, with no claim. A late delivery is refunded by the shop. |
 | `lumen-quillon-calls` | Lumen, Quillon, `forecast-100` | Paid with x402. The shop records the plan it delivered. No claim. |
 
-Each shop gets at least one paid order. One limit applies: `live-order` writes fixed values for what the buyer asked for (Northwind, M, Navy, up to 2.00) and for what arrived (Northwind, Navy, the staged size, else L). These values are correct for the Kestrel orders. They would misstate the Fernhill and Quillon orders, so `orders.sh --send` skips those two until `live-order` takes the asked and arrived values from the order.
+Each shop gets at least one paid order, and the orders go through two paths:
+
+- **The Kestrel claim orders** go through `live-order --local-shop`, which runs the shop inside the same process and carries the order on to the claim. `live-order` writes fixed values for what the buyer asked for (Northwind, M, Navy, up to 2.00) and for what arrived (Northwind, Navy, the staged size, else L). These values are correct for these two orders.
+- **The other three orders** (`"via": "order"` in `cast.json`) go through the agent's `order` command, with the buyer's asked values from `cast.json`, so their records state what that buyer asked for. Once an order is paid, the shop's `pack` command writes the packed record: the catalogue item and the price charged. For these orders the shop runs as its own process (the shop service's code with that shop's settings) on its registered port (8731 to 8733), for as long as each command runs. The approval order needs this: the agent pays to the shop URL it saved at the first 402, and the payment comes on a later run. The agent finds the shop through its ERC-8004 registration. While the registry cannot be read, it uses `SHOP_BASE_URL`, which `orders.sh` sets to the same port, and it still pays the shop's own account from the party map.
 
 ## Running it
 
@@ -60,10 +63,10 @@ The build session runs these steps after the redeploy has rewritten `deployments
    `RECOURSE_SHOP_ADDRESS=0x0d87ED2F5D792561B53043Ff028956125c820287`,
    `RECOURSE_PLATFORM_ADDRESS=0xff845c7d57eb58f30dEEE83a96010FeE055FdaF6`,
    `RECOURSE_AGENT_ADDRESS=0xC9d6E94A0Ada9293ACbf871c4bC15c580355b623`.
-   `setup.ts --send` refuses to start while these are unset. Restart the shop and agent units once these lines are in place, before the party map changes. Otherwise a restart after the change finds several shops and no selector, and stops.
-2. Run `set -a; . ~/.config/recourse/recourse.env; set +a; node --import tsx ops/cast/setup.ts` from the repo root. This prints the plan and its cost. Then run it again with `--send`. A rerun skips what exists, but it reads each agent company's deposit from the vault and tops it up to its target, for example after a claim was paid from it, or after a redeploy, which brings a new vault and token. Its journal is in `~/.local/state/recourse/cast/journal.jsonl`. If `ops/fund/05-write-ids.sh` rewrites the party map, it drops the cast entries. A rerun of `setup.ts --send` adds them again from the journal.
+   `setup.ts --send` refuses to start while these are unset. Restart the shop unit once these lines are in place, before the party map changes. Otherwise a restart after the change finds several shops and no selector, and stops. The agent has no unit: its commands read `recourse.env` on each run, so they pick up the selectors on their next run.
+2. Run `set -a; . ~/.config/recourse/recourse.env; set +a; node --import tsx ops/cast/setup.ts` from the repo root. This prints the plan and its cost. Then run it again with `--send`. A rerun skips what exists, but it reads each agent company's deposit from the vault and tops it up to its target, for example after a claim was paid from it, or after a redeploy, which brings a new vault and token. While `HEDERA_RPC_URL_1` answers, the dry run reads the same balances and deposits and prices that top-up; while it does not, the plan comes from the journal alone. A register tx is journaled with its hash before it is sent, so a rerun after a lost answer or receipt reads that tx's agent id back instead of registering the identity a second time. If the registry already holds an identity of that key that no journaled tx names, `--send` stops rather than register again. Its journal is in `~/.local/state/recourse/cast/journal.jsonl`. If `ops/fund/05-write-ids.sh` rewrites the party map, it drops the cast entries. A rerun of `setup.ts --send` adds them again from the journal.
 3. Restart the pre-check and docket services so they read the new party map. The status API reads it again every 30 s. Do not run `h0-setup --broadcast` once the cast is in the party map: it sets agent ids by role, so it would write 149 on every platform and 150 on every shop.
-4. Run `ops/cast/orders.sh`, which is a dry run, then `ops/cast/orders.sh --send`. For the approval order, run `ops/cast/orders.sh approve tallyhouse-kestrel-approval --send`. After the contest window, rerun `ops/cast/orders.sh --send wren-kestrel-payout` if the claim step needs to carry on. Then the shop withdraws its credit with `ops/cast/orders.sh withdraw wren-kestrel-payout --send`, which runs `withdraw-credit --as shop` with Kestrel's key.
+4. Run `ops/cast/orders.sh`, which is a dry run, then `ops/cast/orders.sh --send`. For the approval order, run `ops/cast/orders.sh approve tallyhouse-kestrel-approval --send`. The approval can be given once only. If the order stops after it, for example at the pack, rerun `ops/cast/orders.sh --send tallyhouse-kestrel-approval`, which resumes the paid order and packs it. After the contest window, rerun `ops/cast/orders.sh --send wren-kestrel-payout` if the claim step needs to carry on. Then the shop withdraws its credit with `ops/cast/orders.sh withdraw wren-kestrel-payout --send`, which runs `withdraw-credit --as shop` with Kestrel's key.
 
 ## Cost
 

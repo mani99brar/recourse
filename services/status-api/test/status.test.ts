@@ -1,7 +1,7 @@
 import { STATUS_KEYS } from '@recourse/shared';
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/store.js';
-import { Sim } from './helpers/encode.js';
+import { Sim, encodeLog } from './helpers/encode.js';
 import { STAGES, TIMEOUT, WINDOW, buildClaim, fakeReader, ingest, type Stage } from './helpers/fixtures.js';
 import { refreshLive, refreshPreChecks } from '../src/live.js';
 import { harness } from './helpers/service.js';
@@ -104,6 +104,9 @@ describe('expiry', () => {
   it('passes Arbitrum expiresAt through: a received case past it is dead', async () => {
     const sim = new Sim();
     const b = buildClaim(sim, 'at_court', 1);
+    // Received and never opened: no CaseOpened in the events either.
+    const opened = encodeLog('case', 'CaseOpened', { claimId: b.claimId, disputeId: 901n, attempt: 1 }).topics[0];
+    sim.logs = sim.logs.filter((l) => l.raw.topics[0] !== opened);
     const store = new Store();
     ingest(store, sim);
     const cv = { ...b.live!.caseView!, state: 1, attempts: 0, disputeIds: [0n, 0n] as const, expiresAt: b.now - 1n };
