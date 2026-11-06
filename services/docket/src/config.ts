@@ -51,8 +51,10 @@ export function loadConfig(env: Env = process.env): DocketConfig {
   const store = env.DOCKET_STORE === undefined || env.DOCKET_STORE === '' ? 'local' : env.DOCKET_STORE;
   if (store !== 'arkiv' && store !== 'local') throw new Error('DOCKET_STORE: expected arkiv or local');
   const accessKey = env.ARKIV_ACCESS_KEY ?? '';
-  if (store === 'arkiv' && accessKey === '') {
-    throw new Error('DOCKET_STORE=arkiv needs ARKIV_ACCESS_KEY; unset DOCKET_STORE to run on the local store');
+  // With no key the SDK uses Arkiv's public RPC, which is heavily rate limited; the docket writes a
+  // few entities a day, so that is enough, but only when asked for by name.
+  if (store === 'arkiv' && accessKey === '' && !flag(env, 'ARKIV_PUBLIC_ENDPOINT', false)) {
+    throw new Error('DOCKET_STORE=arkiv needs ARKIV_ACCESS_KEY, or ARKIV_PUBLIC_ENDPOINT=1 for the public RPC; unset DOCKET_STORE to run on the local store');
   }
   return {
     port: num(env, 'DOCKET_PORT', 8707, 1),

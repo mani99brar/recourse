@@ -9,6 +9,8 @@ describe('config', () => {
   it('the arkiv path switches on with config only, and refuses to start without a key', () => {
     expect(() => loadConfig({ DOCKET_STORE: 'arkiv' })).toThrow(/ARKIV_ACCESS_KEY/);
     expect(loadConfig({ DOCKET_STORE: 'arkiv', ARKIV_ACCESS_KEY: 'k' })).toMatchObject({ store: 'arkiv', arkivAccessKey: 'k' });
+    expect(loadConfig({ DOCKET_STORE: 'arkiv', ARKIV_PUBLIC_ENDPOINT: '1' })).toMatchObject({ store: 'arkiv', arkivAccessKey: '' });
+    expect(() => loadConfig({ DOCKET_STORE: 'arkiv', ARKIV_PUBLIC_ENDPOINT: '0' })).toThrow(/ARKIV_PUBLIC_ENDPOINT=1/);
   });
   it('rejects bad values by name', () => {
     expect(() => loadConfig({ DOCKET_STORE: 'x' })).toThrow(/DOCKET_STORE/);
