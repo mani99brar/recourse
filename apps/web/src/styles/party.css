@@ -23,7 +23,7 @@
 .party-page .party-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--sp-4);
+  gap: 0 var(--sp-6);
   align-items: start;
 }
 @media (min-width: 980px) {

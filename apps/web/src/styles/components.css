@@ -255,20 +255,20 @@ header.top nav a[aria-current='page']::after {
 }
 
 /* ---------- cards and grids ---------- */
+/* sections side by side read as the design's panes: a gutter between them, each under its own rule */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
-  gap: var(--sp-4);
-  margin-bottom: var(--sp-4);
+  gap: 0 var(--sp-6);
+  margin-bottom: var(--sp-5);
 }
+/* a section is part of one ruled sheet, not a box: a hairline above, the page's left edge kept */
 section.card,
 .card {
-  margin-bottom: var(--sp-4);
-  padding: 22px 24px 24px;
-  background: var(--g);
+  margin-bottom: var(--sp-5);
+  padding: 20px 0 24px;
   color: var(--fg);
-  border-radius: var(--radius);
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 1px var(--line);
   overflow-wrap: anywhere;
 }
 .grid > .card {
@@ -288,7 +288,7 @@ section.card,
 @media (max-width: 720px) {
   section.card,
   .card {
-    padding: 18px 16px 20px;
+    padding: 18px 0 20px;
   }
 }
 
@@ -376,17 +376,16 @@ span.error::before {
 }
 /* who is at fault or who pays, as the API names it: the one place red carries words (white on red, AA) */
 .fault {
-  display: inline;
-  padding: 1px 7px 2px;
+  display: inline-block;
+  padding: 0 7px 1px;
   border-radius: 2px;
   background: var(--r);
   color: var(--r-ink);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
   overflow-wrap: normal;
+  white-space: nowrap; /* the side's name is never broken across lines; the chip moves down whole */
 }
 h1 .pill {
   min-height: 40px;
@@ -867,10 +866,23 @@ label.check-row {
     position: static;
     gap: 8px 16px;
   }
+  /* the nav keeps one row and scrolls inside itself, so the header stays short and the page never scrolls sideways */
   header.top nav {
     order: 3;
-    flex-basis: 100%;
-    gap: 2px 18px;
+    flex: 1 0 100%;
+    min-width: 0;
+    flex-wrap: nowrap;
+    gap: 0 18px;
+    /* room inside the scroller for the focus ring, and for the last link to clear the fade */
+    margin: -4px 0 -4px -4px;
+    padding: 4px 28px 4px 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  }
+  header.top nav::-webkit-scrollbar {
+    display: none;
   }
   .shell > main {
     padding-top: var(--sp-5);
