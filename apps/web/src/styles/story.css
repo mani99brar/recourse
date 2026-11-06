@@ -1,1 +1,613 @@
-/* Story page: scoped under .story-page; reads the tokens only. */
+/*
+ * How it works (#/story): five beats of one claim, then the ways out. Imported from pages/Story.tsx; every
+ * rule is scoped under .story-page so it cannot reach another page. Colours come from tokens.css only.
+ * Motion is transform and opacity alone, started per beat by an IntersectionObserver (the page adds .reveal,
+ * each beat gets .in). With reduced motion, no script, or on paper, every beat is simply there.
+ */
+
+/* ---------- the head and the claim it follows ---------- */
+.story-page > .page-head {
+  margin-bottom: var(--sp-5);
+}
+.story-page > .page-head .lead {
+  max-width: 40em;
+}
+.story-case {
+  margin-bottom: var(--sp-6);
+  color: var(--fg2);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+}
+.story-case .pill {
+  margin-left: 4px;
+}
+
+/* ---------- a beat: its words on the left, what the records show on the right ---------- */
+.story-page .beat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-6) clamp(32px, 5vw, 88px);
+  align-items: center;
+  padding: clamp(48px, 10vh, 120px) 0;
+  box-shadow: inset 0 1px var(--line);
+}
+.story-page .beat h2 {
+  margin-top: 14px;
+  color: var(--s);
+  font-size: clamp(30px, 3.4vw, 52px);
+  font-weight: 600;
+  font-stretch: var(--semi);
+  line-height: 1.04;
+  letter-spacing: -0.024em;
+}
+/* red is the fault: one word per line, at display size (large-text contrast) */
+.story-page .beat h2 em {
+  font-style: normal;
+  color: var(--r);
+}
+.story-page .note {
+  max-width: 34em;
+  margin-top: 18px;
+  color: var(--fg2);
+  font-size: clamp(17px, 1.3vw, 20px);
+  line-height: 1.42;
+}
+.story-page .small-note {
+  margin-top: 12px;
+  color: var(--mute);
+  font-size: var(--fs-md);
+}
+.story-page .beat-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 18px;
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+
+/* the art: a raised sheet, as the home page's doors sit */
+.story-page .beat-art {
+  min-width: 0;
+  padding: clamp(20px, 2.6vw, 36px);
+  background: var(--g);
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow-wrap: anywhere;
+}
+.story-page .beat-art figure {
+  margin: 0;
+}
+.story-page .beat-art figcaption {
+  margin-top: 16px;
+  color: var(--fg3);
+  font-size: var(--fs-sm);
+  line-height: 1.42;
+}
+.story-page .beat-art .muted {
+  color: var(--fg3);
+}
+
+/* labels over a big letter: the sizes (beat 1) and the three stations (beat 3) */
+.story-page .sizes .k,
+.story-page .rail .k {
+  color: var(--fg2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.story-page .sizes .v,
+.story-page .rail .v {
+  color: var(--s);
+  font-size: clamp(44px, 4.6vw, 76px);
+  font-weight: 800;
+  font-stretch: var(--wide);
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+}
+.story-page .sizes .off .v,
+.story-page .rail .off .v {
+  color: var(--r);
+}
+
+/* ---------- 1: the size in each record ---------- */
+.story-page .sizes {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  box-shadow: inset 0 1px var(--rule2);
+}
+.story-page .sizes li {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 8px 6px 0;
+}
+.story-page .sizes li + li {
+  padding-left: 12px;
+  box-shadow: inset 1px 0 var(--line);
+}
+
+/* ---------- 2: the records on the topic, one chain ---------- */
+.story-page .chain-head {
+  margin-bottom: 10px;
+  color: var(--fg2);
+  font-size: var(--fs-sm);
+}
+.story-page .chain {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.story-page .chain li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.4em minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 10px 0 10px 26px;
+  border-top: 1px solid var(--rule);
+  font-size: var(--fs-md);
+}
+.story-page .chain li:last-child {
+  border-bottom: 1px solid var(--rule);
+}
+/* a dot per record and a rule from each to the next */
+.story-page .chain li::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--s);
+}
+.story-page .chain li::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  width: 1px;
+  height: 100%;
+  background: var(--line);
+}
+.story-page .chain li:last-child::after {
+  display: none;
+}
+.story-page .chain .seq {
+  color: var(--fg2);
+}
+.story-page .chain .kind {
+  font-weight: 600;
+}
+.story-page .chain .hash {
+  color: var(--fg3);
+  text-align: right;
+}
+
+/* ---------- 3: three stations on one line; from Shown to Ordered it parts in red ---------- */
+.story-page .rail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.story-page .rail li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 32px;
+}
+.story-page .rail li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--s);
+}
+.story-page .rail li::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  top: 7px;
+  height: 2px;
+  background: var(--s);
+  transform-origin: left;
+}
+.story-page .rail li:last-child::after {
+  display: none;
+}
+.story-page .rail li.cut::after {
+  top: 6px;
+  height: 4px;
+  background: var(--r);
+}
+.story-page .rail li.off::before {
+  background: var(--g);
+  box-shadow: inset 0 0 0 3px var(--r);
+}
+.story-page .rail-gap {
+  margin-top: 24px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  color: var(--fg);
+  font-size: var(--fs-md);
+}
+.story-page .rail-mark {
+  display: inline-block;
+  margin-right: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--r);
+  color: var(--fg2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.story-page .rail-fault {
+  margin-top: 12px;
+  font-size: var(--fs-md);
+}
+
+/* ---------- 4: the way to the court and back, the case's red progress line ---------- */
+.story-page .route {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.story-page .route::before {
+  content: '';
+  position: absolute;
+  left: 5.5px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: var(--r);
+  transform-origin: top;
+}
+.story-page .route li {
+  position: relative;
+  padding-left: 30px;
+}
+.story-page .route .stop {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-block: 6px;
+}
+.story-page .route .stop::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--s);
+}
+.story-page .route .court::before {
+  background: var(--g);
+  box-shadow: inset 0 0 0 2px var(--r);
+}
+.story-page .route .net {
+  color: var(--fg3);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.story-page .route .what {
+  color: var(--fg);
+  font-size: var(--fs-lead);
+  font-weight: 600;
+  font-stretch: 108%;
+  line-height: 1.25;
+}
+.story-page .route .t {
+  color: var(--fg3);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.story-page .route .hop {
+  padding-block: 12px;
+  color: var(--fg3);
+  font-size: var(--fs-sm);
+}
+
+/* ---------- 5: the deposit's ring, the sum, and the parts in proportion ---------- */
+/* the ring stands over the sum, and beside it once the sheet is wide enough for both */
+.story-page .beat-5 .beat-art {
+  container-type: inline-size;
+}
+.story-page .pay-fig {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-5) var(--sp-6);
+  align-items: center;
+}
+@container (min-width: 440px) {
+  .story-page .pay-fig {
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+}
+.story-page .pay-ring {
+  position: relative;
+  width: min(200px, 72%);
+  margin: 0 auto;
+}
+@container (min-width: 440px) {
+  .story-page .pay-ring {
+    width: auto;
+    margin: 0;
+  }
+}
+.story-page .pay-ring img {
+  width: 100%;
+  height: auto;
+}
+/* the figure is sized to the ring, so it stays inside the inner circle at any width */
+.story-page .pay-ring {
+  container-type: inline-size;
+}
+.story-page .pay-ring p {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20%;
+  text-align: center;
+}
+.story-page .pay-n {
+  color: var(--s);
+  font-size: 28px;
+  font-size: 17cqi;
+  white-space: nowrap;
+  font-weight: 800;
+  font-stretch: var(--wide);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.story-page .pay-u {
+  margin-top: 6px;
+  color: var(--fg2);
+  font-size: var(--fs-xs);
+  line-height: 1.25;
+}
+.story-page .ledger > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.story-page .ledger dt {
+  color: var(--fg2);
+}
+.story-page .ledger dd {
+  font-weight: 500;
+  text-align: right;
+  white-space: nowrap; /* an amount and its unit stay on one line */
+}
+.story-page .ledger .tot {
+  border-top-color: var(--rule2);
+}
+.story-page .ledger .tot dt,
+.story-page .ledger .tot dd {
+  color: var(--fg);
+  font-weight: 700;
+}
+.story-page .bar {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 3px;
+  height: 10px;
+}
+.story-page .bar span {
+  flex: 1 1 0;
+  border-radius: 1px;
+  background: var(--s);
+  transform-origin: left;
+}
+.story-page .bar span:nth-child(2) {
+  opacity: 0.55;
+}
+/* the third part is the shop's own fee coming back, not the deposit's money: drawn as an outline */
+.story-page .bar span:nth-child(3) {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--s);
+}
+.story-page .pay-fig figcaption {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+/* ---------- the ways out: rows on the home page's door scale ---------- */
+.story-page .story-next {
+  padding-top: var(--sp-7);
+  box-shadow: inset 0 1px var(--line);
+}
+.story-page .story-next > h2 {
+  margin-bottom: var(--sp-5);
+}
+.story-page .story-doors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin: 0 0 var(--sp-5);
+  padding: 1px;
+  list-style: none;
+  background: var(--line);
+  border-radius: var(--radius);
+}
+.story-page .story-doors > li {
+  flex: 1 1 210px;
+  min-width: 0;
+  background: var(--g);
+}
+.story-page .story-door {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  padding: 20px 22px 24px;
+  color: var(--fg);
+  text-decoration: none;
+  transition: background-color var(--t-fast) ease;
+}
+.story-page .story-door:hover {
+  background: rgba(var(--t), 0.06);
+}
+.story-page .story-door:focus-visible {
+  outline-offset: -3px;
+}
+.story-page .sd-kicker {
+  padding-left: 10px;
+  border-left: 1px solid var(--r);
+  color: var(--fg3);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.story-page .sd-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 600;
+  font-stretch: 112%;
+  line-height: 1.2;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: rgba(var(--t), 0.4);
+}
+.story-page .sd-title svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  transition: transform var(--t-mid) var(--ease);
+}
+.story-page .story-door:hover .sd-title {
+  text-decoration-color: currentColor;
+}
+.story-page .story-door:hover .sd-title svg {
+  transform: translateX(3px);
+}
+.story-page .sd-text {
+  color: var(--fg2);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+}
+
+/* ---------- the reveal: only on a screen, only when motion is welcome, only once the observer runs ---------- */
+@media screen and (prefers-reduced-motion: no-preference) {
+  .story-page.reveal .beat-copy,
+  .story-page.reveal .beat-art {
+    opacity: 0;
+    transform: translate3d(0, 28px, 0);
+    transition: opacity 0.6s ease, transform 0.9s var(--ease);
+  }
+  .story-page.reveal .beat-art {
+    transition-delay: 0.08s;
+  }
+  .story-page.reveal .beat.in .beat-copy,
+  .story-page.reveal .beat.in .beat-art {
+    opacity: 1;
+    transform: none;
+  }
+  /* inside the art once its beat is in: the sizes and the records arrive one by one */
+  .story-page.reveal .sizes li,
+  .story-page.reveal .chain li {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+    transition: opacity 0.45s ease, transform 0.6s var(--ease);
+    transition-delay: calc(0.2s + var(--i, 0) * 70ms);
+  }
+  .story-page.reveal .beat.in .sizes li,
+  .story-page.reveal .beat.in .chain li {
+    opacity: 1;
+    transform: none;
+  }
+  /* the line between the stations draws, the red part last */
+  .story-page.reveal .rail li::after {
+    transform: scaleX(0);
+    transition: transform 0.7s var(--ease) 0.3s;
+  }
+  .story-page.reveal .rail li.cut::after {
+    transition-delay: 0.75s;
+  }
+  .story-page.reveal .beat.in .rail li::after {
+    transform: none;
+  }
+  /* the way to the court draws top to bottom */
+  .story-page.reveal .route::before {
+    transform: scaleY(0);
+    transition: transform 1.2s var(--ease) 0.2s;
+  }
+  .story-page.reveal .beat.in .route::before {
+    transform: none;
+  }
+  /* the money fills part by part */
+  .story-page.reveal .bar span {
+    transform: scaleX(0);
+    transition: transform 0.8s var(--ease) 0.3s;
+  }
+  .story-page.reveal .bar span:nth-child(2) {
+    transition-delay: 0.45s;
+  }
+  .story-page.reveal .bar span:nth-child(3) {
+    transition-delay: 0.6s;
+  }
+  .story-page.reveal .beat.in .bar span {
+    transform: none;
+  }
+}
+
+/* ---------- narrower screens ---------- */
+@media (max-width: 900px) {
+  .story-page .beat {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-5);
+    padding: var(--sp-7) 0;
+  }
+}
+@media (max-width: 560px) {
+  /* the sizes become rows: the label left, the letter right */
+  .story-page .sizes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .story-page .sizes li,
+  .story-page .sizes li + li {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    box-shadow: inset 0 -1px var(--line);
+  }
+  .story-page .sizes .v {
+    font-size: 40px;
+  }
+  .story-page .chain li {
+    grid-template-columns: 3em minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+}
