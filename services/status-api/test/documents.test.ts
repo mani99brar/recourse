@@ -7,13 +7,14 @@ import { join } from 'node:path';
 import { IpfsError, MAX_DOCUMENT_BYTES, cidOfHash, ipfsOptionsFromEnv } from '@recourse/records';
 import { canonicalBytes, encodeRecordMsg, recordHash, RECORD_KEYS } from '@recourse/shared';
 import { afterEach, describe, expect, it } from 'vitest';
+import { Indexer } from '../src/indexer.js';
 import { DocFetcher, type DocFetch } from '../src/ipfs.js';
 import { pollHcs } from '../src/sources/hcs.js';
 import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
-import { TOPIC, buildClaim, ingest } from './helpers/fixtures.js';
+import { TOPIC, buildClaim, h32, ingest } from './helpers/fixtures.js';
 import { FakeMirror } from './helpers/mirror.js';
-import { harness } from './helpers/service.js';
+import { harness, testConfig, testDeployments, testParties } from './helpers/service.js';
 
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })));
@@ -169,6 +170,19 @@ describe('document checks and caps', () => {
     expect(docs.peek(cid, hash)).toBeUndefined();
     await docs.get(cid, hash);
     expect(calls).toBe(2);
+    // Each further failure doubles the pause: 2 minutes now, then 4, up to 30.
+    now += 60_001;
+    expect(docs.peek(cid, hash)).toBeNull();
+    now += 60_000;
+    await docs.get(cid, hash);
+    expect(calls).toBe(3);
+    for (let i = 0; i < 8; i++) {
+      now += 30 * 60_000 + 1;
+      await docs.get(cid, hash);
+    }
+    expect(calls).toBe(11);
+    now += 30 * 60_000 - 1;
+    expect(docs.peek(cid, hash)).toBeNull();
   });
 
   it('a result code it does not know (such as not_found) reads as unknown, not as failed', async () => {
@@ -189,5 +203,28 @@ describe('document checks and caps', () => {
     expect(await docs.get(cid, hash)).toBeNull();
     expect(calls).toBe(0);
     expect(docs.describe()).toMatchObject({ localStore: false, gateway: false });
+  });
+
+  it('the poll stops starting document fetches once SOURCE_TIMEOUT_MS has passed', async () => {
+    let calls = 0;
+    const slow: DocFetch = async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 60));
+      return new Response(null, { status: 504 });
+    };
+    const docs = new DocFetcher({ fetch: slow, ipfs: { gatewayUrl: 'http://gw.test' }, ratePerMin: 100, timeoutMs: 1000 });
+    const store = new Store();
+    store.addHcs(
+      Array.from({ length: 10 }, (_, k) => ({ topic: TOPIC, seq: k + 1, consensusTimestamp: `1700000000.00000000${k}`, payer: '0.0.1002', kind: 1, orderId: h32(0x01), hash: h32(0x100 + k), cid: `bafkreislow${k}` })),
+    );
+    const cfg = testConfig({ recordsTopic: '', sourceTimeoutMs: 100 });
+    const deployments = testDeployments({ claims: undefined, vault: undefined, caseAddress: undefined });
+    const indexer = new Indexer({ store, cfg, deployments, fetch: async () => { throw new Error('no mirror'); }, arbRpc: null, reader: null, parties: () => testParties(), docs, nowS: () => 1_700_000_000 });
+    const t0 = Date.now();
+    await indexer.pollOnce();
+    // About two fetches fit in 100 ms; all ten in turn would take 600.
+    expect(calls).toBeGreaterThanOrEqual(1);
+    expect(calls).toBeLessThanOrEqual(3);
+    expect(Date.now() - t0).toBeLessThan(500);
   });
 });

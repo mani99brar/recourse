@@ -119,12 +119,17 @@ export class Indexer {
     }
   }
 
+  /**
+   * Fetches up to 20 record documents not known yet. No new fetch starts once one SOURCE_TIMEOUT_MS
+   * has passed, so a slow gateway holds the next poll of the sources for at most about twice that.
+   */
   private async prefetchDocs(): Promise<void> {
     const parties = this.d.parties();
     if (!parties) return;
     let budget = 20;
+    const until = Date.now() + this.d.cfg.sourceTimeoutMs;
     for (const r of this.d.store.hcs.values()) {
-      if (budget <= 0) break;
+      if (budget <= 0 || Date.now() >= until) break;
       if (this.d.docs.peek(r.cid, r.hash) !== undefined) continue;
       if (!hcsWritersFor(parties, r.kind).has(r.payer)) continue;
       budget--;
