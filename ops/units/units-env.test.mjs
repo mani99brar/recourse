@@ -42,6 +42,8 @@ const NEEDS = {
   web: [],
   'tunnel-web': [],
   'tunnel-shop': [],
+  // The named tunnel reads its token from a file (--token-file), never from the environment.
+  'tunnel-named': [],
   // The watch reads only its own watch.env (the notifier's path); the notifier reads its own config.
   watch: [],
 };
@@ -185,4 +187,13 @@ test('the watch is a oneshot run by its timer every two minutes, with a cap and 
   assert.match(timer, /^OnCalendar=\*:0\/2$/m);
   assert.match(timer, /^Unit=recourse-watch\.service$/m);
   assert.match(timer, /^WantedBy=timers\.target$/m);
+});
+
+test('the named tunnel reads its token from a file, never from a command-line value or the environment', () => {
+  const text = readFileSync(join(unitsDir, 'recourse-tunnel-named.service'), 'utf8');
+  const exec = text.split('\n').find((l) => l.startsWith('ExecStart='));
+  assert.match(exec, / run --token-file %h\/\.config\/recourse\/cloudflared\.token$/);
+  assert.match(exec, / --config %h\/\.config\/recourse\/cloudflared\.yml /);
+  assert.doesNotMatch(text, /--token[ =](?!file)|TUNNEL_TOKEN=|EnvironmentFile=/);
+  assert.doesNotMatch(text, /^ExecStart=.*\.cloudflared\/config\.yml/m, 'the quick tunnels read ~/.cloudflared/config.yml');
 });

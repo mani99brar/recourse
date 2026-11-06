@@ -12,17 +12,18 @@
 #   ctl.sh logs <service> [n]     last n journal lines (default 100)
 #   ctl.sh urls                   the current public https name of each tunnel
 #   ctl.sh keeper <args>          keeper-ctl with the unit's port and state dir (status, pause, resume, ...)
-# Services: keeper precheck shop status-api docket intake web tunnel-web tunnel-shop
-# A tunnel runs only when named: restarting one gives it a new public name, which the shop's SHOP_PUBLIC_URL
-# and the agent registrations then have to follow (README, Public tunnels).
+# Services: keeper precheck shop status-api docket intake web tunnel-web tunnel-shop tunnel-named
+# A tunnel runs only when named: restarting a quick tunnel (tunnel-web, tunnel-shop) gives it a new public name,
+# which the shop's SHOP_PUBLIC_URL and the agent registrations then have to follow (README, Public tunnels).
+# tunnel-named keeps fixed hostnames on a Cloudflare account once the operator has set it up (ops/tunnel).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
-ORDER=(keeper precheck shop status-api docket intake web tunnel-web tunnel-shop)
+ORDER=(keeper precheck shop status-api docket intake web tunnel-web tunnel-shop tunnel-named)
 SERVICES=(keeper precheck shop status-api docket intake web)
 declare -A PORT=([keeper]=8706 [precheck]=8705 [shop]=8720 [status-api]=8787 [docket]=8707 [intake]=8716 [web]=8788
-  [tunnel-web]=8789 [tunnel-shop]=8721)
+  [tunnel-web]=8789 [tunnel-shop]=8721 [tunnel-named]=8790)
 # The tunnels report on cloudflared's metrics port, where /ready is 200 once the edge connection is up.
-declare -A HPATH=([tunnel-web]=/ready [tunnel-shop]=/ready)
+declare -A HPATH=([tunnel-web]=/ready [tunnel-shop]=/ready [tunnel-named]=/ready)
 cmd=${1:-}; shift || true
 json=0
 svcs=()
@@ -33,8 +34,8 @@ if [ ${#svcs[@]} -eq 0 ]; then
   case "$cmd" in start|stop|restart) svcs=("${SERVICES[@]}") ;; *) svcs=("${ORDER[@]}") ;; esac
 fi
 ordered() { for s in "${ORDER[@]}"; do for w in "${svcs[@]}"; do [ "$s" = "$w" ] && echo "$s"; done; done; }
-tunnel_note() { # after a tunnel (re)start: its public name is new
-  for s in "${svcs[@]}"; do case "$s" in tunnel-*)
+tunnel_note() { # after a quick tunnel (re)start: its public name is new
+  for s in "${svcs[@]}"; do case "$s" in tunnel-web|tunnel-shop)
     echo "note: $s has a new public name. Run 'ctl.sh urls'; for tunnel-shop also set SHOP_PUBLIC_URL, restart shop"
     echo "      and refresh the agent registrations (ops/units/README.md, Public tunnels)."; break ;; esac; done
 }
@@ -141,7 +142,13 @@ case "$cmd" in
       u=$(journalctl --user -u "recourse-$s" --since "$(systemctl --user show "recourse-$s" -p ActiveEnterTimestamp --value)" \
         --no-pager -o cat 2>/dev/null | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1 || true)
       printf '%-12s %s\n' "$s" "${u:-none (not running, or no name yet)}"
-    done ;;
+    done
+    # The named tunnel's hostnames are fixed: in its config (cert option) or in the Cloudflare dashboard.
+    y="$HOME/.config/recourse/cloudflared.yml"
+    h=$( { grep -oE '^[[:space:]]*-[[:space:]]*hostname:[[:space:]]*[^[:space:]]+' "$y" 2>/dev/null || true; } | awk '{print "https://" $NF}' | paste -sd' ' -)
+    if [ -n "$h" ]; then printf '%-12s %s (%s)\n' tunnel-named "$h" "$(systemctl --user is-active recourse-tunnel-named 2>/dev/null || true)"
+    elif [ -f "$y" ]; then printf '%-12s %s\n' tunnel-named "hostnames set in the Cloudflare dashboard (token option)"
+    else printf '%-12s %s\n' tunnel-named "not set up (ops/tunnel/README.md)"; fi ;;
   # keeper-ctl reads these two from the environment; outside the unit nothing sets them.
   keeper)
     cd "$(dirname "$0")/../../services/keeper"

@@ -1,0 +1,32 @@
+# Recourse named tunnel: fixed public hostnames for the web app (127.0.0.1:8788) and the shop (127.0.0.1:8720)
+# on a Cloudflare account, in place of the two quick tunnels whose names change on every restart.
+# ops/tunnel/setup.sh writes both files this unit reads; ops/tunnel/README.md has the operator's steps.
+#   ~/.config/recourse/cloudflared.yml    ingress (cert option) or no ingress (token option: the dashboard holds it).
+#                                         Not ~/.cloudflared/config.yml: cloudflared reads that file by default, and
+#                                         the quick tunnels refuse to start beside a config with ingress rules.
+#   ~/.config/recourse/cloudflared.token  the tunnel token, mode 600, read with --token-file so it is never on a
+#                                         command line or in the environment.
+# Written to ~/.config/systemd/user by ops/units/install.sh. Started only when named: ctl.sh start tunnel-named.
+[Unit]
+Description=Recourse tunnel: fixed public hostnames for the web app and the shop (named Cloudflare tunnel)
+After=recourse-web.service recourse-shop.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=GOMEMLIMIT=64MiB
+UnsetEnvironment=SSH_AUTH_SOCK
+ExecStartPre=/bin/sh -c 'test -s %h/.config/recourse/cloudflared.yml && test -s %h/.config/recourse/cloudflared.token || { echo "recourse-tunnel-named: run ops/tunnel/setup.sh first: cloudflared.yml or cloudflared.token is missing in %h/.config/recourse (ops/tunnel/README.md)" >&2; exit 1; }'
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:8790 --config %h/.config/recourse/cloudflared.yml run --token-file %h/.config/recourse/cloudflared.token
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+MemoryMax=96M
+# Under host memory pressure the kernel kills user units (default oom_score_adj 200) before interactive
+# sessions (0). 100 is the lowest a user unit can ask for: the user manager runs at 100, and a lower value
+# is raised to 100 without a warning (tested with systemd-run --user on 6 Nov).
+OOMScoreAdjust=100
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
