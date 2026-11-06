@@ -6,7 +6,7 @@ A named tunnel on a Cloudflare account keeps two fixed hostnames, one for the we
 
 | File | What it does |
 |---|---|
-| `ops/tunnel/setup.sh` | Dry run by default; `--apply` creates the tunnel and DNS routes (option 1) and writes the two files below. Never prints the token. |
+| `ops/tunnel/setup.sh` | Dry run by default; `--apply` creates the tunnel and DNS routes (option 1) and writes the two files below. Never prints the token, and never replaces a token file that exists without `--force`. |
 | `ops/units/recourse-tunnel-named.service` | `cloudflared tunnel --config ~/.config/recourse/cloudflared.yml run --token-file ~/.config/recourse/cloudflared.token`, metrics and `/ready` on `127.0.0.1:8790`. Restart on failure, 96M cap. |
 | `~/.config/recourse/cloudflared.yml` | Written by setup.sh: the ingress (option 1) or no ingress (option 2). |
 | `~/.config/recourse/cloudflared.token` | The tunnel token, mode 600. Read by cloudflared from the file, so it is never on a command line, in a unit's environment or in a log. |
@@ -25,7 +25,7 @@ bash ops/tunnel/setup.sh --web app.<domain> --shop shop.<domain>          # dry 
 bash ops/tunnel/setup.sh --web app.<domain> --shop shop.<domain> --apply  # creates tunnel "recourse", 2 CNAMEs, both files
 ```
 
-`--name <name>` picks another tunnel name. A tunnel of that name that already exists is reused. `cert.pem` is the account credential `cloudflared` uses to create, route and delete tunnels; the unit needs only the token, so `cert.pem` can be moved off the host once the tunnel runs.
+`--name <name>` picks another tunnel name. A tunnel of that name that already exists is reused. setup.sh takes option 1 whenever `cert.pem` is there, so when `~/.config/recourse/cloudflared.token` already exists (a dashboard token saved for option 2, or an earlier run's) `--apply` stops before it creates or routes anything: move `cert.pem` aside to keep a dashboard token, or add `--force` to replace the token, which keeps the old one as `cloudflared.token.bak` (mode 600; a rerun that gets the same token leaves both files alone). `cert.pem` is the account credential `cloudflared` uses to create, route and delete tunnels; the unit needs only the token, so `cert.pem` can be moved off the host once the tunnel runs.
 
 **Option 2: a dashboard tunnel.** In the Cloudflare dashboard (Zero Trust, Networks, Tunnels), create a tunnel of type cloudflared and add two public hostnames: `app.<domain>` to `http://127.0.0.1:8788` and `shop.<domain>` to `http://127.0.0.1:8720`. Copy the token from the command it shows (the long string that starts with `eyJ`), then:
 

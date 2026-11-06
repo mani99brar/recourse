@@ -120,3 +120,68 @@ test('option 1: a dry run writes nothing; --apply creates, routes, writes the in
     s.done();
   }
 });
+
+// Fixture text standing in for a token the operator saved earlier (a dashboard tunnel's, or another run's).
+const OTHER_TOKEN = ['dashboard', 'tunnel', 'text'].join('-');
+const shows = (r, text) => r.stdout.includes(text) || r.stderr.includes(text);
+
+test('option 1 never replaces an existing token without --force, and changes nothing on Cloudflare first', () => {
+  const s = sandbox();
+  try {
+    mkdirSync(join(s.home, '.cloudflared'));
+    writeFileSync(join(s.home, '.cloudflared/cert.pem'), 'fixture\n');
+    const token = join(s.conf, 'cloudflared.token');
+    writeFileSync(token, `${OTHER_TOKEN}\n`, { mode: 0o600 });
+
+    const dry = s.run();
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout, /cloudflared\.token already exists; --apply stops here unless --force/);
+    const listed = s.callsMade().length;
+
+    const r = s.run('--apply');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /already exists.*Nothing was changed/);
+    assert.match(r.stderr, /move .*cert\.pem out of the way/);
+    assert.match(r.stderr, /--force/);
+    assert.equal(s.callsMade().length, listed, 'nothing is listed, created or routed before the refusal');
+    assert.equal(readFileSync(token, 'utf8'), `${OTHER_TOKEN}\n`);
+    assert.ok(!existsSync(`${token}.bak`) && !existsSync(join(s.conf, 'cloudflared.yml')));
+    assert.ok(!shows(r, OTHER_TOKEN) && !shows(dry, OTHER_TOKEN), 'the token is never printed');
+  } finally {
+    s.done();
+  }
+});
+
+test('option 1 with --force keeps the old token as .bak, mode 600, and a rerun with the same token keeps that .bak', () => {
+  const s = sandbox();
+  try {
+    mkdirSync(join(s.home, '.cloudflared'));
+    writeFileSync(join(s.home, '.cloudflared/cert.pem'), 'fixture\n');
+    const token = join(s.conf, 'cloudflared.token');
+    writeFileSync(token, `${OTHER_TOKEN}\n`);
+    chmodSync(token, 0o644);
+
+    const dry = s.run('--force');
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout, /would keep the current .*cloudflared\.token as .*cloudflared\.token\.bak \(mode 600\)/);
+    assert.ok(!existsSync(`${token}.bak`));
+
+    const r = s.run('--apply', '--force');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /kept the old token as .*cloudflared\.token\.bak \(mode 600\)/);
+    assert.equal(readFileSync(`${token}.bak`, 'utf8'), `${OTHER_TOKEN}\n`);
+    assert.equal(statSync(`${token}.bak`).mode & 0o777, 0o600);
+    assert.equal(readFileSync(token, 'utf8').trim(), FIXTURE_TOKEN);
+    assert.equal(statSync(token).mode & 0o777, 0o600);
+    assert.ok(!shows(r, OTHER_TOKEN) && !shows(r, FIXTURE_TOKEN), 'neither token is printed');
+
+    const again = s.run('--apply', '--force');
+    assert.equal(again.status, 0, again.stderr);
+    assert.match(again.stdout, /holds this token already; left as it is/);
+    assert.equal(readFileSync(`${token}.bak`, 'utf8'), `${OTHER_TOKEN}\n`, 'the same token again does not overwrite the .bak');
+    assert.ok(!existsSync(`${token}.tmp`) && !existsSync(`${token}.bak.tmp`));
+    assert.ok(!shows(again, FIXTURE_TOKEN));
+  } finally {
+    s.done();
+  }
+});
