@@ -9,10 +9,6 @@
 .cast-page > .page-head {
   margin-bottom: var(--sp-6);
 }
-.docket-page > .page-head .eyebrow,
-.cast-page > .page-head .eyebrow {
-  margin-bottom: 4px;
-}
 
 /* ---------- the docket ---------- */
 
@@ -34,6 +30,9 @@
 }
 .docket-page .method p {
   max-width: 62ch;
+}
+.docket-page .method .mono {
+  white-space: nowrap; /* a short address never breaks at its ellipsis */
 }
 
 /* the rates: one table, shops and agent companies each under their own row-group head */

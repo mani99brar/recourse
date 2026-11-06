@@ -125,7 +125,6 @@ export function DocketPage() {
   return (
     <div className="docket-page">
       <div className="page-head">
-        <p className="eyebrow">The public record, read from Arkiv</p>
         <h1>Public docket</h1>
         <p className="lead">
           Fault rates from cases the court has ruled on. Each rate carries its range, and nothing is ranked. Cases that closed without a contest are counted next to the rates, not in them.

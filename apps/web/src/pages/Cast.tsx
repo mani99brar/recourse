@@ -168,7 +168,6 @@ export function CastPage() {
   return (
     <div className="cast-page">
       <div className="page-head">
-        <p className="eyebrow">ERC-8004 on Hedera testnet</p>
         <h1>Shops and agents</h1>
         <p className="lead">
           Every shop and agent company in this demo, as registered in ERC-8004 on Hedera testnet: what type it is, how many orders its records name, and how its claims ended.
