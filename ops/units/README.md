@@ -83,16 +83,17 @@ Stop the units in reverse order (keeper last), `git pull --ff-only`, `pnpm insta
 
 The shop's journals (`journal.jsonl` for paid orders, `claims.jsonl`, `records.jsonl`, `pay-once-journal.jsonl`) have been written to `services/shop/state/` in the checkout, and the agent's (`orders.jsonl`, `records.jsonl`, `pay-once.jsonl`) to `services/agent/state/`. Both folders are git-ignored, so `git pull` keeps them, but a fresh clone or `git clean -x` deletes them, and with them the shop's record of which orders were paid and which claims it filed. Back them up with the `~/.local/state/recourse` folders.
 
-The shop unit now sets `SHOP_STATE_DIR=%h/.local/state/recourse/shop`, which the shop reads once its code takes that variable. Move the files when that code is deployed, with the shop stopped:
+The shop unit now sets `SHOP_STATE_DIR=%h/.local/state/recourse/shop`. The shop code reads that variable from commit `2f11ccd` on (without it, it falls back to `services/shop/state`); a shop started before that commit still reads the old folder. Move the files as part of the restart onto that code, with the shop stopped:
 
 ```
 bash ops/units/ctl.sh stop shop
+git pull --ff-only            # the checkout must hold 2f11ccd or later
 mkdir -p ~/.local/state/recourse/shop
 mv services/shop/state/*.jsonl ~/.local/state/recourse/shop/
 bash ops/units/install.sh --install && bash ops/units/ctl.sh start shop
 ```
 
-Until the files are moved, the unit refuses to start the shop (an `ExecStartPre` check: `services/shop/state/journal.jsonl` has rows and the new folder has no `journal.jsonl`), so a restart cannot bring the shop up on an empty journal. Do not move them before the shop code reads `SHOP_STATE_DIR`: older code still reads `services/shop/state`. The command-line scripts in `services/shop/scripts` and `services/agent/scripts` take their state folder from their own code, not from the unit. The agent has no unit, and its state stays in `services/agent/state`.
+Until the files are moved, the unit refuses to start the shop (an `ExecStartPre` check: `services/shop/state/journal.jsonl` has rows and the new folder has no `journal.jsonl`), so a restart cannot bring the shop up on an empty journal. Do not move them while the shop runs older code. The command-line scripts in `services/shop/scripts` (`pack`, `file-claim`, `reconcile`) do not see the unit's environment: after the move, run them with `SHOP_STATE_DIR=~/.local/state/recourse/shop` exported (or `--state`). Run without it, they look in `services/shop/state`, find no `journal.jsonl` and stop. The agent has no unit. It reads `AGENT_STATE_DIR` the same way and falls back to `services/agent/state`, where its journals still are; moving them is optional and needs the same export for every agent run.
 
 ## What a unit can see
 
