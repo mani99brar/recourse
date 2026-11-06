@@ -229,6 +229,23 @@ describe('at court', () => {
     expect(deriveStatus(atCourt, relayed, tookFirst, LOCKED, after).nextCall).toBe('expireClaim');
   });
 
+  it('past the timeout, a case not read lately gets no expiry advice unless it can no longer move', () => {
+    const after = expiry + 1n;
+    const late = { caseLate: true };
+    // Nothing read: "no case" may only mean the reads are behind.
+    expect(deriveStatus(atCourt, null, [msg({})], LOCKED, after, late)).toEqual({ statusKey: 'at_court', nextActor: 'none', nextCall: null, deadline: null });
+    expect(deriveStatus(atCourt, null, [msg({})], LOCKED, after).nextCall).toBe('expireClaim');
+    // An old read of an open case: it may have been ruled since.
+    const opened = kase({ state: CaseState.Opened, attempts: 1 });
+    expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, after, late)).toEqual({ statusKey: 'at_court', nextActor: 'court', nextCall: null, deadline: null });
+    expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, after).nextCall).toBe('expireClaim');
+    // A Stale case, or one past its open deadline, cannot move again: expiry stands.
+    expect(deriveStatus(atCourt, kase({ state: CaseState.Stale }), [msg({})], LOCKED, after, late).nextCall).toBe('expireClaim');
+    expect(deriveStatus(atCourt, kase({ state: CaseState.Received }), [msg({})], LOCKED, after, late).nextCall).toBe('expireClaim');
+    // Before the timeout a late read changes nothing.
+    expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, expiry, late)).toEqual(deriveStatus(atCourt, opened, [msg({})], LOCKED, expiry));
+  });
+
   it('past the timeout, a dispute in its execution period waits for executeRuling, not expiry', () => {
     const after = expiry + 1n;
     const executing = kase({ state: CaseState.Opened, attempts: 1, disputeIds: [212n, 0n], period: 4 });

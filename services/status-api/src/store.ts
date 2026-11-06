@@ -47,6 +47,11 @@ export interface KlerosRead {
 
 export interface LiveState {
   caseView: RawCaseView | null;
+  /**
+   * Unix seconds of the last `caseOf` read that succeeded. Absent until one does (and in older
+   * snapshots); `caseView` is then only as current as the case events.
+   */
+  caseReadAt?: number;
   /** CCIP execution state by message id. */
   exec: Record<string, number>;
   /** By dispute id (decimal text). */

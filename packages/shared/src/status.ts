@@ -182,6 +182,17 @@ function rulingOnItsWay(c: CaseView | null, views: readonly BridgeView[]): boole
   return c.state === CaseState.Opened && c.attempts > 0 && c.period === 4;
 }
 
+/** What the caller knows about how current its reads are. */
+export interface StatusOptions {
+  /**
+   * True when the Arbitrum case has not been read recently, so `caseView` (or its absence, which
+   * otherwise means "not received yet") may be behind the chain: a ruling may be on its way that
+   * the caller cannot see. Past the timeout an AtCourt claim then gets no expiry advice unless the
+   * case it did read can no longer move (Stale, or past its open or refile deadline).
+   */
+  caseLate?: boolean;
+}
+
 /** Status of one claim. First matching row wins. */
 export function deriveStatus(
   claim: ClaimForStatus,
@@ -189,6 +200,7 @@ export function deriveStatus(
   bridgeViews: readonly BridgeView[],
   p: LiveParams,
   now: bigint,
+  opts: StatusOptions = {},
 ): StatusView {
   const s = claim.status;
   const view = (statusKey: StatusKey, nextActor: NextActor, nextCall: NextCall | null, deadline: bigint | null = null) => ({
@@ -215,9 +227,10 @@ export function deriveStatus(
     const back = legStuck(lastBack, p, now);
     const out = legStuck(latest(bridgeViews, 'toArbitrum'), p, now);
     const dead = caseDead(caseView, p, now);
-    // Past the timeout with a ruling still on its way: never advise expiry, which would discard it.
-    // No deadline either: the timeout has passed, and showing it reads as "can be ended after".
-    if (expired && !dead && rulingOnItsWay(caseView, bridgeViews)) {
+    // Past the timeout with a ruling still on its way, or a case read too long ago to tell: never
+    // advise expiry, which would discard the ruling. No deadline either: the timeout has passed,
+    // and showing it reads as "can be ended after".
+    if (expired && !dead && (opts.caseLate === true || rulingOnItsWay(caseView, bridgeViews))) {
       if (back === 'failed') return view('stuck', 'anyone', 'manualExecute');
       if (back === 'waiting') return view('stuck', 'anyone', 'relayRuling');
       const key: StatusKey = caseView !== null && caseView.attempts === 2 ? 'refused_once' : 'at_court';

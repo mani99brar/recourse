@@ -33,7 +33,7 @@ import {
   type Money,
 } from './join.js';
 import { TtlCache, type CaseParams, type ClaimsParams, type ConfigLocks, type PartyViews, type Reader, type VaultParams } from './live.js';
-import type { Store } from './store.js';
+import type { LiveState, Store } from './store.js';
 import type { HcsRecord, IndexedEvent, SourceName } from './types.js';
 
 const ZERO32 = '0x' + '00'.repeat(32);
@@ -236,6 +236,21 @@ export class StatusService {
     return ps ? (partyByAddress(ps, a)?.displayName ?? null) : null;
   }
 
+  /**
+   * True when the claim's Arbitrum case is not known to be current: Arbitrum is configured, no
+   * `caseOf` read has succeeded within the Arbitrum lag limit, and the case events are failing,
+   * not read through yet or late. A fresh store serves before Arbitrum has caught up, so "no case"
+   * can then just mean "not read".
+   */
+  private caseLate(live: LiveState | undefined): boolean {
+    if (!this.sourceConfigured('arbitrum')) return false;
+    const now = this.d.nowS();
+    const limit = this.d.cfg.lagWarnS.arbitrum;
+    if (live?.caseReadAt !== undefined && now - live.caseReadAt <= limit) return false;
+    const st = this.d.store.status.arbitrum;
+    return st.failing || st.indexedThrough === null || now - st.indexedThrough > limit;
+  }
+
   private statusOf(c: FoldedClaim, lp: LiveParamBundle) {
     const events = this.d.store.eventsOf(c.claimId);
     const live = this.d.store.live.get(c.claimId);
@@ -248,6 +263,7 @@ export class StatusService {
       bridge,
       params,
       this.nowBig(),
+      { caseLate: this.caseLate(live) },
     );
     return { status, caseView, bridge };
   }

@@ -2,8 +2,8 @@ import { STATUS_KEYS } from '@recourse/shared';
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
-import { STAGES, WINDOW, buildClaim, fakeReader, ingest, type Stage } from './helpers/fixtures.js';
-import { refreshPreChecks } from '../src/live.js';
+import { STAGES, TIMEOUT, WINDOW, buildClaim, fakeReader, ingest, type Stage } from './helpers/fixtures.js';
+import { refreshLive, refreshPreChecks } from '../src/live.js';
 import { harness } from './helpers/service.js';
 
 async function rowFor(stage: Stage) {
@@ -106,6 +106,61 @@ describe('expiry', () => {
     store.live.set(b.claimId, { ...b.live!, caseView: cv });
     const h = harness({ store, now: Number(b.now) });
     expect((await h.svc.claimRows())[0]!.statusKey).toBe('stuck');
+  });
+
+  it('past the timeout, a case Arbitrum has not been read for gets no expiry advice', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'at_court', 1);
+    const store = new Store();
+    // A fresh store serving before Arbitrum caught up: the Hedera events only, no case read.
+    ingest(store, sim, (chain) => chain === 'hedera');
+    store.live.set(b.claimId, { ...b.live!, caseView: null });
+    const preCheckedAt = store.eventsOf(b.claimId).find((e) => e.name === 'PreCheckRecorded')!.time;
+    const now = Number(preCheckedAt + TIMEOUT + 1n);
+    const h = harness({ store, now });
+    const row = async () => (await h.svc.claimRows())[0]!;
+    expect(await row()).toMatchObject({ statusKey: 'at_court', nextActor: 'none', nextCall: null, deadline: null });
+    expect((await h.svc.claimDetail(b.claimId)).nextCall).toBeNull();
+    // Arbitrum read through to now and no case on it: nothing reached the court, so expiry is right.
+    store.status.arbitrum.indexedThrough = now;
+    expect((await row()).nextCall).toBe('expireClaim');
+    // The Arbitrum source failing again: unknown again.
+    store.status.arbitrum.failing = true;
+    expect((await row()).nextCall).toBeNull();
+    // A fresh caseOf read that finds no case settles it, whatever the events say.
+    store.live.set(b.claimId, { ...b.live!, caseView: { ...b.live!.caseView!, state: 0, attempts: 0, disputeIds: [0n, 0n] }, caseReadAt: now - 5 });
+    expect((await row()).nextCall).toBe('expireClaim');
+  });
+
+  it('past the timeout, an old read of an open case is not taken as current', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'at_court', 1);
+    const store = new Store();
+    ingest(store, sim);
+    const preCheckedAt = store.eventsOf(b.claimId).find((e) => e.name === 'PreCheckRecorded')!.time;
+    const now = Number(preCheckedAt + TIMEOUT + 1n);
+    store.status.arbitrum.failing = true;
+    // Read as Opened half an hour ago; Arbitrum has failed since, so it may have been ruled.
+    store.live.set(b.claimId, { ...b.live!, caseReadAt: now - 1_800 });
+    const h = harness({ store, now });
+    expect((await h.svc.claimRows())[0]).toMatchObject({ statusKey: 'at_court', nextActor: 'court', nextCall: null, deadline: null });
+    // Read as Opened a few seconds ago: still being decided, nothing on its way, expiry stands.
+    store.live.set(b.claimId, { ...b.live!, caseReadAt: now - 5 });
+    expect((await h.svc.claimRows())[0]).toMatchObject({ statusKey: 'stuck', nextCall: 'expireClaim' });
+  });
+
+  it('a successful case read is timed; a failed one leaves the time as it was', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'at_court', 1);
+    const store = new Store();
+    ingest(store, sim);
+    await refreshLive(store, fakeReader(), () => 1_000);
+    expect(store.live.get(b.claimId)?.caseReadAt).toBeUndefined();
+    await refreshLive(store, fakeReader({ caseOf: async () => b.live!.caseView! }), () => 2_000);
+    expect(store.live.get(b.claimId)?.caseReadAt).toBe(2_000);
+    await refreshLive(store, fakeReader(), () => 3_000);
+    expect(store.live.get(b.claimId)?.caseReadAt).toBe(2_000);
+    expect(Store.fromJSON(store.toJSON())!.live.get(b.claimId)?.caseReadAt).toBe(2_000);
   });
 });
 

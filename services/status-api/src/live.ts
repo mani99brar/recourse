@@ -353,6 +353,7 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
     if (finished && live.caseView && messages.every((m) => live.exec[m.messageId] === 2)) continue;
     try {
       live.caseView = await reader.caseOf(claim.claimId);
+      live.caseReadAt = nowS();
     } catch (e) {
       errors.push(safeError(e));
     }
