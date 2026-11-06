@@ -182,8 +182,9 @@ export class StatusService {
   /**
    * Reads, in the background, every live value a request may wait on: the parameters, the
    * contract facts, the config locks and the vault views of the known platforms and shops, of
-   * the parties of indexed claims and of any other address whose last read failed (so `vault`
-   * does not stay degraded until that address is asked for again). Run at start-up and then on a
+   * the parties of indexed claims and of up to 20 other addresses whose last read failed (so
+   * `vault` does not stay degraded until that address is asked for again, and an outage seen by
+   * many party pages adds at most 160 calls a run). Run at start-up and then on a
    * timer (main.ts), so requests are served from these reads rather than waiting on the relay. A
    * read already running is not started again; one that fails is tried at the next run.
    */
@@ -197,7 +198,7 @@ export class StatusService {
       const c = this.foldOf(id);
       if (c) parties.add(c.shop).add(c.platform);
     }
-    for (const a of this.partyViews.behindKeys()) parties.add(a as Address);
+    for (const a of this.partyViews.behindKeys().slice(0, 20)) parties.add(a as Address);
     return Promise.all([
       this.warmParams(),
       this.facts$.refresh('f', () => r.facts()),
