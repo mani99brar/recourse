@@ -139,7 +139,7 @@ verify_one() { # <chain name> <chainId> <key> <address>
     input=$(jq -r --arg a "${addr,,}" '[.transactions[] | select(.transactionType == "CREATE"
       and ((.contractAddress // "") | ascii_downcase) == $a)][0].transaction.input // ""' "$file")
     code=$(jq -r '.bytecode.object // ""' "$out/$(basename "$src")/$name.json" 2>/dev/null)
-    [ -n "$input" ] && [ -n "$code" ] && cmp=$(compare "$input" "$code")
+    [ ${#input} -gt 2 ] && [ ${#code} -gt 2 ] && cmp=$(compare "$input" "$code")
   else
     say "forge build failed in $dir"
   fi
