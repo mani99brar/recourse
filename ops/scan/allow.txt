@@ -3,3 +3,5 @@
 # Hash a line with: printf '%s' "$(sed -n <n>p <path>)" | sha256sum
 # The Web3 Secret Storage definition's known-answer private key (password "testpassword").
 packages/shared/test/node.test.ts 995267628b9fa7f62983d62dcb9bc42444b2e1aa0a06d8a92c6305008aab18a1
+# A fictional contract address in a keeper test (LINK_TOKEN, now renamed); the name, not the value, trips the api key rule.
+services/keeper/test/levels.test.ts efbe5127a834add0fd91de2bdd21a289cb7c667ef7297d7b6c3e78f0823db0ce

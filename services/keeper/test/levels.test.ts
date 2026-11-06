@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 const hbar = (s: string) => parseUnits(s, 18);
-const LINK_TOKEN = '0x00000000000000000000000000000000000f1a2b' as Address;
+const LINK_ADDR = '0x00000000000000000000000000000000000f1a2b' as Address;
 
 function rig(fake: FakeChains, floors?: FundingFloors) {
   const d = mkdtempSync(join(tmpdir(), 'keeper-levels-'));
@@ -106,14 +106,14 @@ describe('funding floors', () => {
 
   it('checks the claims contract LINK when it pays CCIP fees in LINK', async () => {
     const fake = new FakeChains();
-    fake.levelsV = { ...fake.levelsV, claimsFeeToken: LINK_TOKEN, claimsLink: parseUnits('0.013', 18), claimsNativeWeibar: 0n };
+    fake.levelsV = { ...fake.levelsV, claimsFeeToken: LINK_ADDR, claimsLink: parseUnits('0.013', 18), claimsNativeWeibar: 0n };
     fake.sendQuote = parseUnits('0.013', 18);
     const out = await check(fake);
     const low = out.find((a) => a.kind === 'link_low' && a.subject === 'claims')!;
     expect(low.hint).toContain('holds 0.013 LINK');
     expect(low.hint).toContain('floor of 0.04 LINK');
     const fake2 = new FakeChains();
-    fake2.levelsV = { ...fake2.levelsV, claimsFeeToken: LINK_TOKEN, claimsLink: parseUnits('1', 18), claimsNativeWeibar: 0n };
+    fake2.levelsV = { ...fake2.levelsV, claimsFeeToken: LINK_ADDR, claimsLink: parseUnits('1', 18), claimsNativeWeibar: 0n };
     expect((await check(fake2)).some((a) => a.kind === 'link_low')).toBe(false);
   });
 });
@@ -143,7 +143,7 @@ describe('LiveChains fee reads', () => {
   it('turns a native quote from tinybars into weibar, and leaves a LINK quote as it is', async () => {
     expect(await chains(zeroAddress, 220_000_000n).quoteSend('0x01')).toEqual({ native: true, amount: hbar('2.2') });
     expect(await chains(zeroAddress, 7n, 1n).quoteSend('0x01')).toEqual({ native: true, amount: 7n });
-    expect(await chains(LINK_TOKEN, 13n * 10n ** 15n).quoteSend('0x01')).toEqual({ native: false, amount: 13n * 10n ** 15n });
+    expect(await chains(LINK_ADDR, 13n * 10n ** 15n).quoteSend('0x01')).toEqual({ native: false, amount: 13n * 10n ** 15n });
   });
 
   it('reads the fee token and the claims contract HBAR balance with the other levels', async () => {
