@@ -20,7 +20,9 @@
 // A payment the shop reports is taken only when it is one this agent signed for the order and the
 // mirror node shows it succeeded, moving exactly the approved amount of the asset from the agent's
 // account to payTo. Anything else is journaled (`payment_mismatch`) and ends the order before the
-// ordered record. A mirror node that cannot be read leaves the payment unconfirmed, never paid.
+// ordered record. A mirror node that cannot be read, or does not show the payment yet, leaves it
+// unconfirmed, never paid and never ended: after a while the run returns `pay_unconfirmed`
+// (journaled, not an end), and a rerun carries on.
 
 import type { Address, Hex, LocalAccount } from 'viem';
 import { bytesToHex, hexToBytes } from 'viem';
@@ -95,6 +97,8 @@ export type AgentRow =
   | (At & { type: 'offer_mismatch'; txId: string; keys: string[]; shown: Omit<Attrs, 'price'>; replied: Omit<Attrs, 'price'> })
   /** A payment the shop reported that could not be taken as this order's; the order ends here. */
   | (At & { type: 'payment_mismatch'; txId: string; source: 'settlement' | 'shop' | 'mirror'; reason: PaymentMismatch; detail: string })
+  /** A run stopped waiting for the mirror node to confirm this payment; not an end, a rerun carries on. */
+  | (At & { type: 'pay_unconfirmed'; txId: string; rounds: number })
   | (At & { type: 'pay_failed'; status: number; error: string })
   | (At & { type: 'abandoned'; reason: string })
   | (At & { type: 'done' })
@@ -116,7 +120,9 @@ export type OrderOutcome =
   | { state: 'done'; orderId: Hex; txId: string }
   | { state: 'awaiting_approval'; orderId: Hex; approvalId: string; expiresAt: number }
   | { state: 'refused' | 'abandoned' | 'declined' | 'expired'; orderId: Hex; reason: string }
-  | { state: 'pay_failed'; orderId: Hex; reason: string };
+  | { state: 'pay_failed'; orderId: Hex; reason: string }
+  /** The payment is signed and may be paid, but the mirror node does not confirm it yet: run again later. */
+  | { state: 'pay_unconfirmed'; orderId: Hex; txId: string; reason: string };
 
 export interface OrderPreview {
   orderId: Hex;
@@ -184,10 +190,17 @@ export function offerDifferences(shown: Omit<Attrs, 'price'>, replied: Omit<Attr
 
 /**
  * Why a reported payment was not taken: the agent did not sign it for this order, the shop's order
- * says the payer did not match, it failed on chain, it never reached the mirror node in its validity
- * window, or it moved something other than the approved amount and asset from the agent to payTo.
+ * says the payer did not match, it failed on chain, or it moved something other than the approved
+ * amount and asset from the agent to payTo. A payment the mirror node does not show is not a
+ * mismatch: the shop's facilitator reports success only after consensus, so it may only be lag.
  */
-export type PaymentMismatch = 'payment_not_signed' | 'payer_mismatch' | 'payment_failed' | 'payment_unseen' | 'transfer_mismatch';
+export type PaymentMismatch = 'payment_not_signed' | 'payer_mismatch' | 'payment_failed' | 'transfer_mismatch';
+
+/**
+ * Polls one run makes while a payment waits for the mirror node before it returns
+ * `pay_unconfirmed` (with the default 5 s poll, about five minutes).
+ */
+const UNCONFIRMED_ROUNDS = 60;
 
 /** The settlement id prefix of the local simulated facilitator, which moves no money. */
 const SIMULATED_SETTLEMENT = 'fake-settlement:';
@@ -662,9 +675,10 @@ export class Buyer {
   /**
    * Whether a payment the shop reported (`claimed`, in the shop's spelling) is this order's: one
    * the agent signed for it, and on the mirror node a success moving exactly the approved amount
-   * and asset from the agent's account to payTo. `wait`: the mirror node does not show it yet, or
-   * cannot be read. An order whose records all went to a simulated topic takes the simulated
-   * facilitator's settlement of its own signed payment as it is: there is no chain to look at.
+   * and asset from the agent's account to payTo. `wait`: the mirror node does not show it yet (also
+   * past its validity window: mirror lag), or cannot be read. An order whose records all went to a
+   * simulated topic takes the simulated facilitator's settlement of its own signed payment as it
+   * is: there is no chain to look at.
    */
   private async confirmPayment(
     orderId: Hex,
@@ -686,10 +700,7 @@ export class Buyer {
       this.deps.log?.warn('payment_unconfirmed', { orderId, txId: signed.txId, error: error instanceof Error ? error.message.slice(0, 200) : String(error) });
       return { state: 'wait' };
     }
-    if (!tx) {
-      if (this.now() <= validStartSeconds(signed.txId) + PAYMENT_DEAD_AFTER_S) return { state: 'wait' };
-      return { state: 'mismatch', reason: 'payment_unseen', detail: `${signed.txId} is not on the mirror node past its validity window` };
-    }
+    if (!tx) return { state: 'wait' };
     if (tx.result !== 'SUCCESS') return { state: 'mismatch', reason: 'payment_failed', detail: `transaction ${tx.result}` };
     const problem = transferProblem(tx, probed.terms, this.deps.payer.accountId);
     return problem ? { state: 'mismatch', reason: 'transfer_mismatch', detail: problem } : { state: 'paid' };
@@ -752,20 +763,30 @@ export class Buyer {
       const kept = this.rowsOf(orderId).filter((r): r is Extract<AgentRow, { type: 'pay_replied' }> => r.type === 'pay_replied' && paymentKey(r.txId, false) === key);
       return kept.at(-1)?.offer ?? null;
     };
+    // A payment the mirror node does not confirm yet is never given up on: after a while this run
+    // returns, and a rerun carries on from the journal.
+    const unconfirmed = (round: number, txId: string) => {
+      if (round < UNCONFIRMED_ROUNDS) return null;
+      this.write({ type: 'pay_unconfirmed', at: iso(), orderId, txId, rounds: round });
+      this.deps.log?.warn('payment_still_unconfirmed', { orderId, txId, rounds: round });
+      return { state: 'stopped' as const, outcome: { state: 'pay_unconfirmed' as const, orderId, txId, reason: 'payment_unconfirmed' } };
+    };
 
     for (let round = 0; ; round++) {
       // Settle every signed payment of this order that is still open before signing another.
       const dead = new Set(this.rowsOf(orderId).filter((r) => r.type === 'pay_dead').map((r) => (r as { txId: string }).txId));
       const open = this.rowsOf(orderId).filter((r): r is Extract<AgentRow, { type: 'pay_signed' }> => r.type === 'pay_signed' && !dead.has(r.txId));
-      let waiting = false;
+      let waitingOn: string | null = null;
       for (const signed of open) {
         const r = await this.resolveSigned(orderId, probed, signed);
         if (r.state === 'paid') return markPaid(r.txId, r.source, offerFor(r.txId));
         if (r.state === 'mismatch') return stop(r.txId, r.source, r);
         if (r.state === 'dead') this.write({ type: 'pay_dead', at: iso(), orderId, txId: signed.txId, reason: r.reason });
-        else waiting = true;
+        else waitingOn = signed.txId;
       }
-      if (waiting) {
+      if (waitingOn !== null) {
+        const stopped = unconfirmed(round, waitingOn);
+        if (stopped) return stopped;
         await this.sleep(this.deps.pollMs ?? 5000);
         continue;
       }
@@ -775,6 +796,8 @@ export class Buyer {
         const c = await this.confirmPayment(orderId, probed, known.txId, known.status);
         if (c.state === 'paid') return markPaid(known.txId, 'shop', offerFor(known.txId));
         if (c.state === 'mismatch') return stop(known.txId, 'shop', c);
+        const stopped = unconfirmed(round, known.txId);
+        if (stopped) return stopped;
         await this.sleep(this.deps.pollMs ?? 5000);
         continue;
       }
