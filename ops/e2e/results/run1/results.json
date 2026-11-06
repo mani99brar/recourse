@@ -1,0 +1,2800 @@
+{
+  "label": "run1",
+  "commit": "21ade87",
+  "dirty": false,
+  "started": "2026-11-06T20:08:32Z",
+  "finished": "2026-11-06T20:30:07Z",
+  "flags": "--suites",
+  "deployments": {
+    "files": [
+      "hedera.json",
+      "arbitrum.json"
+    ],
+    "local": false,
+    "claims": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
+    "vault": "0xA22fB188b49eddecc4f9DE22607e70E1d07Aea2e",
+    "recourseCase": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
+    "usdc": "0x6D6fb82e82E525B9c30619189EA8aF17117C3c73",
+    "vaultToken": {
+      "mode": "mock",
+      "address": "0x6D6fb82e82E525B9c30619189EA8aF17117C3c73",
+      "decimals": 6,
+      "tokenId": null,
+      "symbol": "mUSDC",
+      "label": "mUSDC (testnet mock)"
+    },
+    "evidenceModule": "0xA88A9a25cE7f1d8b3941dA3b322Ba91D009E1397",
+    "klerosCore": "0xE8442307d36e9bf6aB27F1A009F95CE8E11C3479",
+    "chains": {
+      "hedera": 296,
+      "arbitrum": 421614
+    },
+    "recordsTopic": null,
+    "topicFrom": "HCS_RECORDS_TOPIC_ID"
+  },
+  "counts": {
+    "pass": 296,
+    "fail": 1,
+    "blocked": 18,
+    "dry-only": 5
+  },
+  "rows": [
+    {
+      "t": "2026-11-06T20:08:39.423Z",
+      "suite": "preflight",
+      "path": "GET /v1/health vs deployments/*.json",
+      "test": "the status API names the checkout's deployment files and vault token",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:42.647Z",
+      "suite": "preflight",
+      "path": "GET /v1/params vs deployments/*.json",
+      "test": "the status API names the checkout's contracts, chain ids and records topic",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:44Z",
+      "suite": "ops",
+      "path": "ctl.sh health",
+      "test": "every service up",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:45Z",
+      "suite": "ops",
+      "path": "ctl.sh health --json",
+      "test": "JSON for the watch: one object per unit",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:45Z",
+      "suite": "ops",
+      "path": "ctl.sh health strays",
+      "test": "no process of this checkout listens on all interfaces outside the units",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:46Z",
+      "suite": "ops",
+      "path": "recourse-watch runs",
+      "test": "timer active, 90 runs since -3 hours, last 42s ago, 0 sends kept back, 0 without a notifier",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:47Z",
+      "suite": "ops",
+      "path": "recourse-keeper alerts -> watch -> notifier",
+      "test": "not checked: RECOURSE_NOTIFY_LOG unset (14 alert lines since the watch's first run (2026-11-06T14:30:05+00:00), 14 forwarded by the watch)",
+      "result": "blocked",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:47Z",
+      "suite": "ops",
+      "path": "recourse-precheck alerts -> watch -> notifier",
+      "test": "not checked: RECOURSE_NOTIFY_LOG unset (0 alert lines since the watch's first run (2026-11-06T14:30:05+00:00), 0 forwarded by the watch)",
+      "result": "blocked",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:47Z",
+      "suite": "ops",
+      "path": "recourse-watch down/back -> notifier",
+      "test": "not checked: RECOURSE_NOTIFY_LOG unset (20 down/back/restarted messages sent by the watch since -3 hours)",
+      "result": "blocked",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:47Z",
+      "suite": "ops",
+      "path": "keeper gas and intents",
+      "test": "ops-hedera 0.0000 HBAR (floor 10), ops-arb 0.00000 ETH, 0 open intents, problems []",
+      "result": "fail",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:49.684Z",
+      "suite": "api",
+      "path": "GET /v1/openapi.json",
+      "test": "served spec loads (OpenAPI 3.1) and is the repo file",
+      "result": "pass",
+      "note": "identical to services/status-api/openapi.json"
+    },
+    {
+      "t": "2026-11-06T20:08:49.738Z",
+      "suite": "api",
+      "path": "GET /openapi.json",
+      "test": "root copy of the spec is the same document",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:49.740Z",
+      "suite": "api",
+      "path": "spec openapi.json",
+      "test": "spec self-consistency: codes, statuses, revert map, action paths",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:58.339Z",
+      "suite": "api",
+      "path": "GET /v1/params + /v1/claims",
+      "test": "discovery from the API",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:58.419Z",
+      "suite": "api",
+      "path": "GET /v1/health",
+      "test": "health",
+      "result": "pass",
+      "note": "undeclared fields: .health.deployments, .health.documents"
+    },
+    {
+      "t": "2026-11-06T20:08:58.690Z",
+      "suite": "api",
+      "path": "GET /v1/params",
+      "test": "params, with the twelve actions",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:59.032Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "claims list",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:59.575Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "claims for the shop, with standing and groups",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:59.582Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "claims for the platform, with standing and groups",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:08:59.832Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "claims filtered by status closed_uncontested",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:00.085Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "claims filtered by status settled",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:00.404Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "claim detail 0x8f78143e",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:00.584Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "claim detail, upper-case id 0x8f78143e",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:00.836Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "claim detail 0x392d6f13",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:01.635Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "claim detail, upper-case id 0x392d6f13",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:01.648Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "claim detail 0x9cd70468",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:01.901Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "claim detail, upper-case id 0x9cd70468",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:02.156Z",
+      "suite": "api",
+      "path": "GET /v1/parties/{address}",
+      "test": "party shop",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:03.247Z",
+      "suite": "api",
+      "path": "GET /v1/parties/{address}",
+      "test": "party platform",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:03.830Z",
+      "suite": "api",
+      "path": "GET /v1/parties/{address}",
+      "test": "party scheme",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:03.845Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "order records 0x6d94a648",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:04.092Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "order records with platform and shop 0x6d94a648",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:04.337Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "order records 0xb7da5ace",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:04.588Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "order records with platform and shop 0xb7da5ace",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:04.837Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "order records 0x1bf80d52",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:05.088Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "order records with platform and shop 0x1bf80d52",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:05.346Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "search by claim id",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:05.588Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "search by order id",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:05.837Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "search by shop address",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:06.088Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "search by event tx",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:06.337Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "search by dispute number",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:06.604Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "invalid: status not a status key",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:06.837Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "invalid: party not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:07.087Z",
+      "suite": "api",
+      "path": "GET /v1/claims",
+      "test": "invalid: party given twice",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:07.338Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "invalid: claim id short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:07.589Z",
+      "suite": "api",
+      "path": "GET /v1/claims/{claimId}",
+      "test": "invalid: claim id unknown",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:07.838Z",
+      "suite": "api",
+      "path": "GET /v1/parties/{address}",
+      "test": "invalid: party not hex",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:08.088Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "invalid: order id short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:08.340Z",
+      "suite": "api",
+      "path": "GET /v1/orders/{orderId}/records",
+      "test": "invalid: order records with platform only",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:08.592Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "invalid: search without q",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:08.841Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "invalid: search q blank",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:09.091Z",
+      "suite": "api",
+      "path": "GET /v1/search",
+      "test": "invalid: search q over 200 characters",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:09.341Z",
+      "suite": "api",
+      "path": "GET /v1/nope",
+      "test": "invalid: unknown /v1 path",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:09.352Z",
+      "suite": "api",
+      "path": "POST /v1/health",
+      "test": "invalid: POST on a read",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:09.594Z",
+      "suite": "api",
+      "path": "DELETE /v1/claims",
+      "test": "invalid: DELETE on claims",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:34.628Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest 0x8f78143e (closed_uncontested) as platform",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:35.004Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest 0x8f78143e (closed_uncontested) as shop",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:39.145Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested 0x8f78143e (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:40.091Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt 0x8f78143e (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:42.769Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend 0x8f78143e (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:43.942Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim 0x8f78143e (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:45.842Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle 0x8f78143e (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:48.017Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase 0x8f78143e (closed_uncontested) as ops-arb",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:52.658Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile 0x8f78143e (closed_uncontested) as ops-arb",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:53.958Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling 0x8f78143e (closed_uncontested) as ops-arb, payIn native",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:55.110Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling 0x8f78143e (closed_uncontested) as ops-arb, payIn link",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:09:57.098Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence 0x8f78143e (closed_uncontested) as ops-arb",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:10:31.988Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest 0x392d6f13 (settled) as platform",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 409, got 502 upstream_unavailable; expected wrong_status, got upstream_unavailable; slow: 15017 ms (actions answer within 12 s, the proxy waits 15 s); 502 from t..."
+    },
+    {
+      "t": "2026-11-06T20:11:05.003Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest 0x392d6f13 (settled) as shop",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 409, got 502 upstream_unavailable; expected wrong_status, got upstream_unavailable; slow: 15006 ms (actions answer within 12 s, the proxy waits 15 s); 502 from t..."
+    },
+    {
+      "t": "2026-11-06T20:11:38.026Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested 0x392d6f13 (settled) as ops-hedera",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 409, got 502 upstream_unavailable; expected wrong_status, got upstream_unavailable; slow: 15007 ms (actions answer within 12 s, the proxy waits 15 s); 502 from t..."
+    },
+    {
+      "t": "2026-11-06T20:12:04.230Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt 0x392d6f13 (settled) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:04.616Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend 0x392d6f13 (settled) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:06.816Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim 0x392d6f13 (settled) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:08.777Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle 0x392d6f13 (settled) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:11.020Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase 0x392d6f13 (settled) as ops-arb",
+      "result": "pass",
+      "code": "case_wrong_state",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:15.645Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile 0x392d6f13 (settled) as ops-arb",
+      "result": "pass",
+      "code": "case_wrong_state",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:18.656Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling 0x392d6f13 (settled) as ops-arb, payIn native",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:21.671Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling 0x392d6f13 (settled) as ops-arb, payIn link",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:23.558Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence 0x392d6f13 (settled) as ops-arb",
+      "result": "dry-only",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:12:54.002Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest 0x9cd70468 (closed_uncontested) as platform",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": "slow: 12218 ms (actions answer within 12 s, the proxy waits 15 s)"
+    },
+    {
+      "t": "2026-11-06T20:13:03.498Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest 0x9cd70468 (closed_uncontested) as shop",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:10.577Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested 0x9cd70468 (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:19.062Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt 0x9cd70468 (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:19.801Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend 0x9cd70468 (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:21.854Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim 0x9cd70468 (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:23.852Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle 0x9cd70468 (closed_uncontested) as ops-hedera",
+      "result": "pass",
+      "code": "wrong_status",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:28.375Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase 0x9cd70468 (closed_uncontested) as ops-arb",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:31.392Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile 0x9cd70468 (closed_uncontested) as ops-arb",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:33.266Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling 0x9cd70468 (closed_uncontested) as ops-arb, payIn native",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:36.503Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling 0x9cd70468 (closed_uncontested) as ops-arb, payIn link",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:36.756Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence 0x9cd70468 (closed_uncontested) as ops-arb",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:13:46.806Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit as the shop",
+      "result": "pass",
+      "code": "no_credit",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:14:28.328Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit as an account with credit (scheme)",
+      "result": "dry-only",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:15:01.353Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit, body sent as text/plain (read as JSON whatever its type)",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 200|409, got 502 upstream_unavailable; slow: 15017 ms (actions answer within 12 s, the proxy waits 15 s); 502 from the web server: the status API did not answer ..."
+    },
+    {
+      "t": "2026-11-06T20:15:01.963Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim by orderId alone 0x6d94a648 (already claimed)",
+      "result": "pass",
+      "code": "claim_exists",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:15:03.942Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim by nonce + platform 0x6d94a648 (already claimed)",
+      "result": "pass",
+      "code": "claim_exists",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:15:05.566Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, orderId that does not match nonce + platform",
+      "result": "pass",
+      "code": "order_id_mismatch",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:15:40.678Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim by orderId alone 0xb7da5ace (already claimed)",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 409, got 502 upstream_unavailable; expected claim_exists, got upstream_unavailable; slow: 15014 ms (actions answer within 12 s, the proxy waits 15 s); 502 from t..."
+    },
+    {
+      "t": "2026-11-06T20:16:13.704Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim by nonce + platform 0xb7da5ace (already claimed)",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 409, got 502 upstream_unavailable; expected claim_exists, got upstream_unavailable; slow: 15006 ms (actions answer within 12 s, the proxy waits 15 s); 502 from t..."
+    },
+    {
+      "t": "2026-11-06T20:16:13.712Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, orderId that does not match nonce + platform",
+      "result": "pass",
+      "code": "order_id_mismatch",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:17.070Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim by orderId alone 0x1bf80d52 (already claimed)",
+      "result": "pass",
+      "code": "claim_exists",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:18.822Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim by nonce + platform 0x1bf80d52 (already claimed)",
+      "result": "pass",
+      "code": "claim_exists",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:20.020Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, orderId that does not match nonce + platform",
+      "result": "pass",
+      "code": "order_id_mismatch",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:22.120Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, orderId the shop does not know",
+      "result": "pass",
+      "code": "order_nonce_unknown",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:24.219Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, nonce with no ordered record",
+      "result": "pass",
+      "code": "no_ordered_record",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:26.320Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, platform is the shop itself",
+      "result": "pass",
+      "code": "same_party",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:28.422Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, neither orderId nor nonce + platform",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:30.522Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, netLossUsdc not an integer string",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:32.622Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, allowUnpacked not a boolean",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:34.726Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim, basketUsdc above uint256",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:36.826Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence, name over 200 characters",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:38.926Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence, blank name",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:41.033Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence, no description",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:43.127Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence, fileURI not /ipfs/ or https",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:45.228Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence, attempt 3",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:47.329Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence, attempt as a string",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:49.432Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence, 50 KB description (over 49152 bytes, under 64 KB)",
+      "result": "pass",
+      "code": "evidence_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:51.532Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling, payIn not native or link",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:53.631Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:55.737Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:57.840Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:16:59.935Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:02.041Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:04.137Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:06.240Z",
+      "suite": "api",
+      "path": "POST /v1/actions/fileClaim",
+      "test": "fileClaim: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:06.245Z",
+      "suite": "api",
+      "path": "GET /v1/actions/fileClaim",
+      "test": "fileClaim: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:08.341Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:10.444Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:12.545Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:14.647Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:16.748Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:18.849Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:20.948Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:23.048Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:29.954Z",
+      "suite": "api",
+      "path": "POST /v1/actions/contest",
+      "test": "contest: claimId unknown",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:29.959Z",
+      "suite": "api",
+      "path": "GET /v1/actions/contest",
+      "test": "contest: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:29.964Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:32.068Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:34.167Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:36.270Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:38.368Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:40.472Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:42.570Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:44.670Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:47.072Z",
+      "suite": "api",
+      "path": "POST /v1/actions/submitEvidence",
+      "test": "submitEvidence: claimId unknown",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:47.077Z",
+      "suite": "api",
+      "path": "GET /v1/actions/submitEvidence",
+      "test": "submitEvidence: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:48.875Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:50.974Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:53.077Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:55.177Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:57.279Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:17:59.379Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:01.484Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:01.513Z",
+      "suite": "api",
+      "path": "GET /v1/actions/withdrawCredit",
+      "test": "withdrawCredit: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:03.581Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:05.685Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:07.785Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:09.891Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:11.994Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:14.091Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:16.195Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:18.294Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:53.412Z",
+      "suite": "api",
+      "path": "POST /v1/actions/closeUncontested",
+      "test": "closeUncontested: claimId unknown",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 404, got 502 upstream_unavailable; expected not_found, got upstream_unavailable; slow: 15017 ms (actions answer within 12 s, the proxy waits 15 s); 502 from the ..."
+    },
+    {
+      "t": "2026-11-06T20:18:53.419Z",
+      "suite": "api",
+      "path": "GET /v1/actions/closeUncontested",
+      "test": "closeUncontested: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:53.433Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:55.532Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:57.626Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:18:59.728Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:01.829Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:03.930Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:06.031Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:08.130Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:43.249Z",
+      "suite": "api",
+      "path": "POST /v1/actions/sendToCourt",
+      "test": "sendToCourt: claimId unknown",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 404, got 502 upstream_unavailable; expected not_found, got upstream_unavailable; slow: 15017 ms (actions answer within 12 s, the proxy waits 15 s); 502 from the ..."
+    },
+    {
+      "t": "2026-11-06T20:19:43.258Z",
+      "suite": "api",
+      "path": "GET /v1/actions/sendToCourt",
+      "test": "sendToCourt: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:43.267Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:45.367Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:47.467Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:49.579Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:51.671Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:53.772Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:55.873Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:19:57.973Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:01.835Z",
+      "suite": "api",
+      "path": "POST /v1/actions/resend",
+      "test": "resend: claimId unknown",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:01.869Z",
+      "suite": "api",
+      "path": "GET /v1/actions/resend",
+      "test": "resend: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:02.181Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:04.290Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:06.379Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:08.481Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:10.583Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:12.686Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:14.786Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:16.887Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:52.010Z",
+      "suite": "api",
+      "path": "POST /v1/actions/expireClaim",
+      "test": "expireClaim: claimId unknown",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 404, got 502 upstream_unavailable; expected not_found, got upstream_unavailable; slow: 15014 ms (actions answer within 12 s, the proxy waits 15 s); 502 from the ..."
+    },
+    {
+      "t": "2026-11-06T20:20:52.016Z",
+      "suite": "api",
+      "path": "GET /v1/actions/expireClaim",
+      "test": "expireClaim: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:52.022Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:54.124Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:56.227Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:20:58.327Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:00.431Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:02.536Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:04.632Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:06.733Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:41.856Z",
+      "suite": "api",
+      "path": "POST /v1/actions/settle",
+      "test": "settle: claimId unknown",
+      "result": "blocked",
+      "code": "upstream_unavailable",
+      "note": "code upstream_unavailable is documented at 503, answered 502; expected HTTP 404, got 502 upstream_unavailable; expected not_found, got upstream_unavailable; slow: 15010 ms (actions answer within 12 s, the proxy waits 15 s); 502 from the ..."
+    },
+    {
+      "t": "2026-11-06T20:21:41.869Z",
+      "suite": "api",
+      "path": "GET /v1/actions/settle",
+      "test": "settle: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:41.881Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:43.976Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:46.078Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:48.179Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:50.280Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:52.380Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:54.481Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:21:56.582Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:01.688Z",
+      "suite": "api",
+      "path": "POST /v1/actions/openCase",
+      "test": "openCase: claimId unknown",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:01.693Z",
+      "suite": "api",
+      "path": "GET /v1/actions/openCase",
+      "test": "openCase: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:01.698Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:03.801Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:05.901Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:08.004Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:10.104Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:12.207Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:14.308Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:16.411Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:18.867Z",
+      "suite": "api",
+      "path": "POST /v1/actions/refile",
+      "test": "refile: claimId unknown",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:18.871Z",
+      "suite": "api",
+      "path": "GET /v1/actions/refile",
+      "test": "refile: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:20.608Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: empty object",
+      "result": "pass",
+      "code": "missing_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:22.706Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: from not an address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:24.806Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: from the zero address",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:26.908Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: an extra field (privateKey) is refused",
+      "result": "pass",
+      "code": "unknown_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:29.007Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: body not JSON",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:31.111Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: body a JSON array",
+      "result": "pass",
+      "code": "bad_json",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:33.211Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: body over 64 KB",
+      "result": "pass",
+      "code": "payload_too_large",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:35.309Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: claimId short",
+      "result": "pass",
+      "code": "invalid_field",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:40.414Z",
+      "suite": "api",
+      "path": "POST /v1/actions/relayRuling",
+      "test": "relayRuling: claimId unknown",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:40.418Z",
+      "suite": "api",
+      "path": "GET /v1/actions/relayRuling",
+      "test": "relayRuling: GET is refused",
+      "result": "pass",
+      "code": "method_not_allowed",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:40.422Z",
+      "suite": "api",
+      "path": "POST /v1/actions/stealFunds",
+      "test": "unknown action name",
+      "result": "pass",
+      "code": "not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:40.677Z",
+      "suite": "api",
+      "path": "GET /catalog",
+      "test": "shop catalog",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:40.922Z",
+      "suite": "api",
+      "path": "GET /orders/{orderId}",
+      "test": "shop order by id (nonce and platform for an orderId-only fileClaim)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:41.170Z",
+      "suite": "api",
+      "path": "GET /orders/{orderId}",
+      "test": "shop order unknown",
+      "result": "pass",
+      "code": "order_not_found",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:42.541Z",
+      "suite": "api",
+      "path": "POST /x402/orders/{sku}/{quantity}",
+      "test": "x402 order without the two order headers",
+      "result": "pass",
+      "code": "bad_order_headers",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:44.623Z",
+      "suite": "api",
+      "path": "POST /x402/orders/{sku}/{quantity}",
+      "test": "x402 order for an unknown item",
+      "result": "pass",
+      "code": "unknown_item",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:46.722Z",
+      "suite": "api",
+      "path": "POST /x402/orders/{sku}/{quantity}",
+      "test": "x402 order from an account that is not a platform",
+      "result": "pass",
+      "code": "unknown_platform",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:54.628Z",
+      "suite": "api",
+      "path": "POST /x402/orders/{sku}/{quantity}",
+      "test": "x402 order, no payment yet: the payment request (nothing settles)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:54.634Z",
+      "suite": "api",
+      "path": "POST /x402/ping-order",
+      "test": "x402 ping, no payment",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:54.703Z",
+      "suite": "api",
+      "path": "POST /v1/actions/withdrawCredit",
+      "test": "action rate limit: 14 at once from one client",
+      "result": "pass",
+      "code": "rate_limited",
+      "note": "first 429 after 10 posts, retry-after 2"
+    },
+    {
+      "t": "2026-11-06T20:22:54.704Z",
+      "suite": "api",
+      "path": "proxy /api -> status API",
+      "test": "upstream failures during the run use the documented shape",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:22:57.576Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail as served is judged pass",
+      "result": "pass",
+      "note": "judged pass"
+    },
+    {
+      "t": "2026-11-06T20:22:57.579Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail, statusKey not in its enum is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: /claim/statusKey must be equal to one of the allowed values [\"filed\",\"finding_made\",\"no_finding\",\"window_lapsed\",\"closed_uncontested\",\"contested\",\"at_court\",\"stuck\",\"refused_once\",\"ruled\",\"zero_twice_answer_applied\",..."
+    },
+    {
+      "t": "2026-11-06T20:22:57.580Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail, claimId deleted (required) is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: /claim must have required property 'claimId'"
+    },
+    {
+      "t": "2026-11-06T20:22:57.582Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail, claimId a number is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: /claim/claimId must be string"
+    },
+    {
+      "t": "2026-11-06T20:22:57.584Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail, meta deleted is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: / must have required property 'meta'"
+    },
+    {
+      "t": "2026-11-06T20:22:57.584Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail at HTTP 201 (not documented) is judged fail",
+      "result": "pass",
+      "note": "judged fail; HTTP 201 is not documented for GET /v1/claims/{claimId}; the spec gives no JSON schema for HTTP 201 on GET /v1/claims/{claimId}: nothing to validate against"
+    },
+    {
+      "t": "2026-11-06T20:22:57.585Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail served as text/html is judged fail",
+      "result": "pass",
+      "note": "judged fail; content-type text/html"
+    },
+    {
+      "t": "2026-11-06T20:22:57.586Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: claim detail, expected 404 on purpose is judged fail",
+      "result": "pass",
+      "note": "judged fail; expected HTTP 404, got 200; expected not_found, got HTTP 200"
+    },
+    {
+      "t": "2026-11-06T20:22:57.603Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims",
+      "test": "selftest: claims list as served is judged pass",
+      "result": "pass",
+      "note": "judged pass"
+    },
+    {
+      "t": "2026-11-06T20:22:57.604Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims",
+      "test": "selftest: claims list, claims an object is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: /claims must be array"
+    },
+    {
+      "t": "2026-11-06T20:22:57.605Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims",
+      "test": "selftest: claims list, a row with nextActor not in its enum is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: /claims/0/nextActor must be equal to one of the allowed values [\"none\",\"anyone\",\"shop\",\"platform\",\"keeper\",\"court\",\"preCheckSigner\"]"
+    },
+    {
+      "t": "2026-11-06T20:22:57.625Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: unknown claim as served (404 not_found) is judged pass",
+      "result": "pass",
+      "note": "judged pass"
+    },
+    {
+      "t": "2026-11-06T20:22:57.625Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: unknown claim, expected 400 invalid_field on purpose is judged fail",
+      "result": "pass",
+      "note": "judged fail; expected HTTP 400, got 404 not_found; expected invalid_field, got not_found"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, code not in ErrorCode is judged fail",
+      "result": "pass",
+      "note": "judged fail; error shape: /error/code must be equal to one of the allowed values [\"bad_json\",\"missing_field\",\"invalid_field\",\"unknown_field\",\"not_contester\",\"not_found\",\"method_not_allowed\",\"payload_too_large\",\"same_party\",\"order_id_mism..."
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, message deleted is judged fail",
+      "result": "pass",
+      "note": "judged fail; error shape: /error must have required property 'message'; message missing or holds a URL"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, a key beside error is judged fail",
+      "result": "pass",
+      "note": "judged fail; error shape: / must NOT have additional properties (stack)"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, a key inside error beside code, message, details is judged fail",
+      "result": "pass",
+      "note": "judged fail; error object holds stack besides code, message, details"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, a URL in the message is judged fail",
+      "result": "pass",
+      "note": "judged fail; message missing or holds a URL"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, a code documented at another status (wrong_status at 404) is judged fail",
+      "result": "pass",
+      "note": "judged fail; code wrong_status is documented at 409, answered 404"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, a code this path does not list (no_credit at 409) is judged fail",
+      "result": "pass",
+      "note": "judged fail; HTTP 409 is not documented for GET /v1/claims/{claimId}"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest GET /v1/claims/{claimId}",
+      "test": "selftest: error, the old shape {error: code} is judged fail",
+      "result": "pass",
+      "note": "judged fail; error shape: /error must be object; message missing or holds a URL"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: action error, a code at its status that the action does not list (withdrawCredit wrong_status 409) is judged fail",
+      "result": "pass",
+      "note": "judged fail; code wrong_status is not in /v1/actions/withdrawCredit's x-recourse-errors"
+    },
+    {
+      "t": "2026-11-06T20:22:57.626Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: action error, a listed code at its status (withdrawCredit no_credit 409) is judged pass",
+      "result": "pass",
+      "note": "judged pass"
+    },
+    {
+      "t": "2026-11-06T20:23:01.331Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: withdrawCredit build as served is judged pass",
+      "result": "pass",
+      "note": "judged pass"
+    },
+    {
+      "t": "2026-11-06T20:23:01.338Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build for a mainnet chain id (1) is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: /chainId must be equal to one of the allowed values [296,421614]; schema: /transactions/0/chainId must be equal to one of the allowed values [296,421614]"
+    },
+    {
+      "t": "2026-11-06T20:23:01.342Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build sent to another contract is judged fail",
+      "result": "pass",
+      "note": "judged fail; tx 1 goes to 0x000000000000000000000000000000000000dEaD, params say DepositVault is 0xA22fB188b49eddecc4f9DE22607e70E1d07Aea2e"
+    },
+    {
+      "t": "2026-11-06T20:23:01.347Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build whose data calls another function is judged fail",
+      "result": "pass",
+      "note": "judged fail; tx 1: data does not decode as a DepositVault call"
+    },
+    {
+      "t": "2026-11-06T20:23:01.349Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build with a value the preview does not show is judged fail",
+      "result": "pass",
+      "note": "judged fail; transactions send 1, the preview shows 0 sent"
+    },
+    {
+      "t": "2026-11-06T20:23:01.351Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build whose fee is not gas x gasPrice is judged fail",
+      "result": "pass",
+      "note": "judged fail; fee 1 is not the sum of gas x gasPrice (127682100000000000)"
+    },
+    {
+      "t": "2026-11-06T20:23:01.354Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build from another account is judged fail",
+      "result": "pass",
+      "note": "judged fail; from is not the account asked for"
+    },
+    {
+      "t": "2026-11-06T20:23:01.357Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build, movement not in its enum is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: /preview/amounts/0/movement must be equal to one of the allowed values [\"escrow\",\"reserve\",\"credit\",\"receive\",\"send\",\"contract_pays\",\"info\"]"
+    },
+    {
+      "t": "2026-11-06T20:23:01.359Z",
+      "suite": "api",
+      "path": "selftest POST /v1/actions/withdrawCredit",
+      "test": "selftest: build, transactions deleted is judged fail",
+      "result": "pass",
+      "note": "judged fail; schema: / must have required property 'transactions'; builtProblems threw: Cannot read properties of undefined (reading 'forEach')"
+    },
+    {
+      "t": "2026-11-06T20:23:08.140Z",
+      "suite": "ui",
+      "path": "UI #/ (no wallet)",
+      "test": "home reads without a wallet (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:08.561Z",
+      "suite": "ui",
+      "path": "UI #/claim/{id} (no wallet)",
+      "test": "claim-8f78143e reads without a wallet (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:09.021Z",
+      "suite": "ui",
+      "path": "UI #/claim/{id} (no wallet)",
+      "test": "claim-392d6f13 reads without a wallet (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:09.433Z",
+      "suite": "ui",
+      "path": "UI #/claim/{id} (no wallet)",
+      "test": "claim-9cd70468 reads without a wallet (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:09.682Z",
+      "suite": "ui",
+      "path": "UI #/party/{id} (no wallet)",
+      "test": "party-shop reads without a wallet (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:13.715Z",
+      "suite": "ui",
+      "path": "UI #/docket (no wallet)",
+      "test": "docket reads without a wallet (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:17.219Z",
+      "suite": "ui",
+      "path": "UI #/file (no wallet)",
+      "test": "file reads without a wallet (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:21.390Z",
+      "suite": "ui",
+      "path": "UI header Connect wallet",
+      "test": "connect: eth_requestAccounts, account and network in the header (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:44.378Z",
+      "suite": "ui",
+      "path": "UI withdraw-scheme withdrawCredit",
+      "test": "Withdraw credit: preview, confirm, wallet asked, declined (desktop)",
+      "result": "dry-only",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:49.519Z",
+      "suite": "ui",
+      "path": "UI evidence-392d6f13 submitEvidence",
+      "test": "Add evidence to the court case: preview, confirm, wallet asked, declined (desktop)",
+      "result": "dry-only",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:51.786Z",
+      "suite": "ui",
+      "path": "UI claim contest",
+      "test": "contest not offered on 0x8f78143e (closed_uncontested); the API answers wrong_status (desktop)",
+      "result": "blocked",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:55.933Z",
+      "suite": "ui",
+      "path": "UI #/file fileClaim",
+      "test": "a claimed order links its claim and offers no filing (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:56.486Z",
+      "suite": "ui",
+      "path": "UI #/file fileClaim",
+      "test": "unknown order: refused order_nonce_unknown, shown with its code (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:57.048Z",
+      "suite": "ui",
+      "path": "UI #/file fileClaim",
+      "test": "nonce + agent company with no ordered record: refused order_id_mismatch (desktop)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:23:57.070Z",
+      "suite": "ui",
+      "path": "UI claim next step (anyone)",
+      "test": "no claim has an anyone-may step due: nothing offered (desktop)",
+      "result": "blocked",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:01.215Z",
+      "suite": "ui",
+      "path": "UI #/ (no wallet)",
+      "test": "home reads without a wallet (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:04.919Z",
+      "suite": "ui",
+      "path": "UI #/claim/{id} (no wallet)",
+      "test": "claim-8f78143e reads without a wallet (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:05.228Z",
+      "suite": "ui",
+      "path": "UI #/claim/{id} (no wallet)",
+      "test": "claim-392d6f13 reads without a wallet (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:05.527Z",
+      "suite": "ui",
+      "path": "UI #/claim/{id} (no wallet)",
+      "test": "claim-9cd70468 reads without a wallet (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:09.142Z",
+      "suite": "ui",
+      "path": "UI #/party/{id} (no wallet)",
+      "test": "party-shop reads without a wallet (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:13.268Z",
+      "suite": "ui",
+      "path": "UI #/docket (no wallet)",
+      "test": "docket reads without a wallet (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:16.784Z",
+      "suite": "ui",
+      "path": "UI #/file (no wallet)",
+      "test": "file reads without a wallet (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:24:20.816Z",
+      "suite": "ui",
+      "path": "UI header Connect wallet",
+      "test": "connect: eth_requestAccounts, account and network in the header (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:25:47.774Z",
+      "suite": "ui",
+      "path": "UI withdraw-scheme withdrawCredit",
+      "test": "Withdraw credit: preview, confirm, wallet asked, declined (mobile)",
+      "result": "blocked",
+      "note": "the harness's own build answered upstream_unavailable after 3 tries: the page's preview was checked against its own answer only"
+    },
+    {
+      "t": "2026-11-06T20:25:55.382Z",
+      "suite": "ui",
+      "path": "UI evidence-392d6f13 submitEvidence",
+      "test": "Add evidence to the court case: preview, confirm, wallet asked, declined (mobile)",
+      "result": "dry-only",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:04.598Z",
+      "suite": "ui",
+      "path": "UI claim contest",
+      "test": "contest not offered on 0x8f78143e (closed_uncontested); the API answers wrong_status (mobile)",
+      "result": "blocked",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:07.069Z",
+      "suite": "ui",
+      "path": "UI #/file fileClaim",
+      "test": "a claimed order links its claim and offers no filing (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:07.507Z",
+      "suite": "ui",
+      "path": "UI #/file fileClaim",
+      "test": "unknown order: refused order_nonce_unknown, shown with its code (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:07.918Z",
+      "suite": "ui",
+      "path": "UI #/file fileClaim",
+      "test": "nonce + agent company with no ordered record: refused order_id_mismatch (mobile)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:07.935Z",
+      "suite": "ui",
+      "path": "UI claim next step (anyone)",
+      "test": "no claim has an anyone-may step due: nothing offered (mobile)",
+      "result": "blocked",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:11.635Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/court",
+      "test": "Tests  29 passed (29) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:18.819Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/records",
+      "test": "Tests  61 passed (61) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:21.757Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/renderer",
+      "test": "Tests  14 passed (14) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:26:28.507Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/shared",
+      "test": "Tests  277 passed (277) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:27:19.502Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/agent",
+      "test": "Tests  67 passed (67) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:27:28.515Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/docket",
+      "test": "Tests  107 passed (107) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:27:30.791Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/intake",
+      "test": "Tests  18 passed (18) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:27:42.373Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/keeper",
+      "test": "Tests  179 passed (179) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:27:54.253Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/precheck",
+      "test": "Tests  136 passed (136) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:28:05.172Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/shop",
+      "test": "Tests  75 passed (75) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:28:19.766Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/status-api",
+      "test": "Tests  263 passed | 2 skipped (265) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:28:23.152Z",
+      "suite": "run",
+      "path": "pnpm test @recourse/web",
+      "test": "Tests  147 passed (147) (exit 0)",
+      "result": "pass",
+      "note": ""
+    },
+    {
+      "t": "2026-11-06T20:30:07.013Z",
+      "suite": "run",
+      "path": "forge test --no-match-contract Probe",
+      "test": "301 passed, 0 failed, 3 skipped (exit 0)",
+      "result": "pass",
+      "note": ""
+    }
+  ]
+}
