@@ -21,6 +21,15 @@ export interface RegistrationDoc {
   x402Support?: boolean;
   active?: boolean;
   registrations?: { agentId: string; agentRegistry: string }[];
+  /** What kind of shop or agent company this is, for people browsing the registry (the cast page reads it). */
+  recourse?: RegistrationType;
+}
+
+export interface RegistrationType {
+  role: 'shop' | 'platform';
+  kind: string;
+  label: string;
+  summary: string;
 }
 
 export interface X402Endpoint {
@@ -43,6 +52,7 @@ export function shopRegistration(input: {
   asset: string;
   network: string;
   agentId?: string;
+  recourse?: RegistrationType;
 }): RegistrationDoc {
   const doc: RegistrationDoc = {
     type: REGISTRATION_TYPE,
@@ -61,6 +71,7 @@ export function shopRegistration(input: {
     active: true,
   };
   if (input.agentId) doc.registrations = [{ agentId: input.agentId, agentRegistry: identityRegistryRef() }];
+  if (input.recourse) doc.recourse = input.recourse;
   return doc;
 }
 

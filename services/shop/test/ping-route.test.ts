@@ -105,8 +105,11 @@ describe('connectivity-check route', () => {
     expect(health.payTo).toBe(TEST_SHOP_ACCOUNT);
     const reg = (await (await fetch(`${shop.url}/.well-known/agent-registration.json`)).json()) as {
       services: { name: string; endpoint: string; payTo: string }[];
+      recourse?: { role: string; kind: string };
     };
     expect(reg.services[0]).toMatchObject({ name: 'x402', endpoint: `${shop.url}/x402/`, payTo: TEST_SHOP_ACCOUNT });
+    // The built-in catalogue states its type, so the cast page can show it.
+    if (!process.env.SHOP_CATALOG_FILE) expect(reg.recourse).toMatchObject({ role: 'shop', kind: 'apparel-sizes' });
   });
 
   test('an oversized payment header is refused before it is decoded, and a real one fits well under the cap', async () => {

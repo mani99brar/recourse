@@ -4,6 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 import { TINYBAR_PER_MICRO_USDC, priceAssetIdOf, type Attrs, type ParseResult, type PriceAsset } from '@recourse/shared';
+import type { RegistrationType } from '@recourse/records';
 import type { Price } from './payments.js';
 
 type Env = Record<string, string | undefined>;
@@ -80,6 +81,18 @@ export function loadCatalog(env: Env = process.env): readonly CatalogItem[] {
  * live-order's prices all come from the same list.
  */
 export const CATALOG: readonly CatalogItem[] = loadCatalog();
+
+/** The type the built-in catalogue is: its registration says so. A shop on its own SHOP_CATALOG_FILE states none. */
+export const BUILT_IN_TYPE: RegistrationType = {
+  role: 'shop',
+  kind: 'apparel-sizes',
+  label: 'Physical goods with sizes',
+  summary: 'Sells tees, caps and hoodies in sizes over x402 and records what it packs.',
+};
+
+export function catalogType(env: Env = process.env): RegistrationType | undefined {
+  return env.SHOP_CATALOG_FILE ? undefined : BUILT_IN_TYPE;
+}
 
 export function itemBySku(sku: string): CatalogItem | undefined {
   return CATALOG.find((i) => i.sku === sku);

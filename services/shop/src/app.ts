@@ -19,6 +19,7 @@ import { isHex32, orderIdOf, partyByAddress, priceAssetIdOf, type Parties } from
 import { shopRegistration, type Journal, type Logger, type TopicReader } from '@recourse/records';
 import {
   CATALOG,
+  catalogType,
   MAX_QUANTITY,
   ORDER_ROUTE_PREFIX,
   basketPrice,
@@ -83,6 +84,9 @@ export interface ShopApp {
   /** Resolves open settles of unknown outcome against the mirror node and journals what it finds. */
   reconcile: (orderId?: string) => Promise<void>;
 }
+
+/** The built-in catalogue's type, named in the served registration; none for a SHOP_CATALOG_FILE shop. */
+const SHOP_TYPE = catalogType();
 
 export function pingPrice(config: ShopConfig): Price {
   return config.priceAsset === 'hbar'
@@ -300,6 +304,7 @@ export function createShopApp(deps: ShopAppDeps): ShopApp {
         asset: priceAssetIdOf(config.priceAsset),
         network: NETWORK,
         ...(deps.agentId ? { agentId: deps.agentId } : {}),
+        ...(SHOP_TYPE ? { recourse: SHOP_TYPE } : {}),
       }),
     );
   });
