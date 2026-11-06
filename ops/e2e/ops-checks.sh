@@ -146,7 +146,11 @@ check() {
   # 5. the keeper: open intents and the gas it signs with.
   local kh
   kh=$(curl -s -m 10 "http://127.0.0.1:${PORT[keeper]}/health" || true)
-  if jq -e . >/dev/null 2>&1 <<<"$kh"; then
+  if jq -e . >/dev/null 2>&1 <<<"$kh" && ! jq -e '.levels.opsHederaWeibar and .levels.opsArbWei' >/dev/null 2>&1 <<<"$kh"; then
+    # Right after a restart the keeper has not read its balances yet: that is not a balance of zero.
+    row "keeper gas and intents" blocked "the keeper has not read its balances yet (levels null, as after a restart); $(jq -r '.openIntents | length' <<<"$kh") open intents" \
+      "$(jq -c '{levels, openIntents: (.openIntents | length), problems}' <<<"$kh")"
+  elif jq -e . >/dev/null 2>&1 <<<"$kh"; then
     local hbar arb intents problems
     hbar=$(jq -r '.levels.opsHederaWeibar // "0"' <<<"$kh")
     arb=$(jq -r '.levels.opsArbWei // "0"' <<<"$kh")
