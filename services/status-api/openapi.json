@@ -548,6 +548,335 @@
         ]
       }
     },
+    "/v1/cast": {
+      "get": {
+        "tags": [
+          "reads"
+        ],
+        "operationId": "getCast",
+        "summary": "The registered shops and agent companies",
+        "description": "Every party in the party map with an ERC-8004 agent id: its owner and agentURI read from the identity registry on Hedera, the name, description and `recourse` type of its registration document, the orders its records name on the records topic and its claims with their outcomes. Not paged, like /v1/claims. The registry is read at most every 30 s an agent and waited on for at most 3 s: a slower or failing relay answers with the last values read, `current: false` on those members, and `identity` in meta.degraded.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cast": {
+                      "type": "object",
+                      "properties": {
+                        "registry": {
+                          "type": "object",
+                          "properties": {
+                            "chainId": {
+                              "type": "integer"
+                            },
+                            "address": {
+                              "$ref": "#/components/schemas/Address"
+                            },
+                            "accountId": {
+                              "$ref": "#/components/schemas/HederaId"
+                            },
+                            "explorer": {
+                              "type": [
+                                "string",
+                                "null"
+                              ],
+                              "description": "The registry on HashScan; null on a local deployment."
+                            }
+                          },
+                          "required": [
+                            "chainId",
+                            "address",
+                            "accountId",
+                            "explorer"
+                          ]
+                        },
+                        "members": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "agentId": {
+                                "$ref": "#/components/schemas/Uint"
+                              },
+                              "role": {
+                                "type": "string",
+                                "description": "The party's role in the party map (platform: an agent company; shop)."
+                              },
+                              "displayName": {
+                                "type": "string"
+                              },
+                              "address": {
+                                "$ref": "#/components/schemas/Address"
+                              },
+                              "hederaAccountId": {
+                                "anyOf": [
+                                  {
+                                    "$ref": "#/components/schemas/HederaId"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "owner": {
+                                "anyOf": [
+                                  {
+                                    "$ref": "#/components/schemas/Address"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "ownerOf(agentId); null before it was read, or when the registry has no such agent."
+                              },
+                              "ownerIsParty": {
+                                "type": [
+                                  "boolean",
+                                  "null"
+                                ],
+                                "description": "The owner is the party's own address; null before the registry was read."
+                              },
+                              "agentURI": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "description": "tokenURI(agentId)."
+                              },
+                              "registration": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "name": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ],
+                                        "maxLength": 120
+                                      },
+                                      "description": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ],
+                                        "maxLength": 600
+                                      },
+                                      "recourse": {
+                                        "anyOf": [
+                                          {
+                                            "type": "object",
+                                            "properties": {
+                                              "role": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "shop",
+                                                  "platform"
+                                                ]
+                                              },
+                                              "kind": {
+                                                "type": "string",
+                                                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                                                "maxLength": 64,
+                                                "description": "The type as a kebab-case slug, e.g. personal-shopper, apparel-sizes."
+                                              },
+                                              "label": {
+                                                "type": "string",
+                                                "maxLength": 80,
+                                                "description": "The type in plain words."
+                                              },
+                                              "summary": {
+                                                "type": "string",
+                                                "maxLength": 240,
+                                                "description": "One line about this shop or agent."
+                                              }
+                                            },
+                                            "required": [
+                                              "role",
+                                              "kind",
+                                              "label",
+                                              "summary"
+                                            ]
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ],
+                                        "description": "The document's `recourse` object; null when it has none or it does not validate (the type is then unknown)."
+                                      }
+                                    },
+                                    "required": [
+                                      "name",
+                                      "description",
+                                      "recourse"
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "From the registration document the agentURI names (data:, https:, or ipfs:// through the gateway); null before it was read, or when it could not be."
+                              },
+                              "readAt": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "description": "Unix seconds (a JSON number) of the last registry read that answered; null before any."
+                              },
+                              "current": {
+                                "type": "boolean",
+                                "description": "False while the latest registry or document read failed: the fields above are then the last ones read."
+                              },
+                              "explorer": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "description": "The identity registry on HashScan; null on a local deployment."
+                              },
+                              "ownerExplorer": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ],
+                                "description": "The owner's account on HashScan; null on a local deployment or with no owner."
+                              },
+                              "orders": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Distinct order ids among the records topic messages paid by the party's record writers."
+                              },
+                              "claims": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "claimId": {
+                                      "$ref": "#/components/schemas/Bytes32"
+                                    },
+                                    "orderId": {
+                                      "$ref": "#/components/schemas/Bytes32"
+                                    },
+                                    "statusKey": {
+                                      "$ref": "#/components/schemas/StatusKey"
+                                    },
+                                    "answer": {
+                                      "type": [
+                                        "integer",
+                                        "null"
+                                      ],
+                                      "enum": [
+                                        0,
+                                        1,
+                                        2,
+                                        3,
+                                        null
+                                      ],
+                                      "description": "Pre-check answer: 0 unknown, 1 platform, 2 shop (merchant), 3 neither; null before the pre-check."
+                                    },
+                                    "findingSide": {
+                                      "anyOf": [
+                                        {
+                                          "$ref": "#/components/schemas/Side"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "paid": {
+                                      "anyOf": [
+                                        {
+                                          "$ref": "#/components/schemas/Uint"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "description": "Vault token base units paid to the shop; null while not known."
+                                    },
+                                    "filedAt": {
+                                      "$ref": "#/components/schemas/UnixSeconds"
+                                    },
+                                    "counterparty": {
+                                      "$ref": "#/components/schemas/Address"
+                                    },
+                                    "counterpartyName": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "claimId",
+                                    "orderId",
+                                    "statusKey",
+                                    "answer",
+                                    "findingSide",
+                                    "paid",
+                                    "filedAt",
+                                    "counterparty",
+                                    "counterpartyName"
+                                  ]
+                                },
+                                "description": "Every indexed claim that names the party, as shop or as agent company."
+                              }
+                            },
+                            "required": [
+                              "agentId",
+                              "role",
+                              "displayName",
+                              "address",
+                              "hederaAccountId",
+                              "owner",
+                              "ownerIsParty",
+                              "agentURI",
+                              "registration",
+                              "readAt",
+                              "current",
+                              "explorer",
+                              "ownerExplorer",
+                              "orders",
+                              "claims"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "registry",
+                        "members"
+                      ]
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/Meta"
+                    }
+                  },
+                  "required": [
+                    "cast",
+                    "meta"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/v1/actions/fileClaim": {
       "post": {
         "tags": [
@@ -2990,10 +3319,11 @@
                 "hedera",
                 "arbitrum",
                 "hcs",
-                "params"
+                "params",
+                "identity"
               ]
             },
-            "description": "Sources whose data is late or whose last read failed."
+            "description": "Sources whose data is late or whose last read failed. `identity` (on /v1/cast only): a read of the ERC-8004 identity registry, or of a registration document, is not current."
           },
           "vaultToken": {
             "$ref": "#/components/schemas/VaultToken"

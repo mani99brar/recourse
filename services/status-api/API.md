@@ -41,12 +41,33 @@ own `servers` entry.
 | `GET /v1/parties/{address}` | `party`: deposit, required, standing, credit, open claims |
 | `GET /v1/orders/{orderId}/records?platform=&shop=` | `order: { orderId, claimId, records[6] }` |
 | `GET /v1/search?q=` | `search: { q, hits[] }` |
+| `GET /v1/cast` | `cast: { registry, members[] }`: every shop and agent company with an ERC-8004 agent id (below) |
 
 Each claim carries `statusKey`, `nextActor`, `nextCall`, `deadline` and `nextAction: { action, actor, path, deadline }`:
 the action under `/v1/actions` that builds the next call, or null when nothing is due or the call is not one of them
 (and for `withdrawCredit`, when the account that would sign it has no credit left in the vault). That credit is read
 live and waited on for at most 3 s. When the read is slower, the last credit read for the account is used, and before
 any has been read nextAction is null; so a slow Hedera relay never holds a claim read past the web server's 15-second timeout.
+
+### The cast: `GET /v1/cast`
+
+One member for each party in `deployments/parties.json` that has an `agentId`, in agent id order. Each member has:
+
+- from the party map: `agentId`, `role` (`platform` is an agent company), `displayName`, `address`, `hederaAccountId`;
+- from the ERC-8004 identity registry on Hedera (`registry`: its address, account id and HashScan page): `owner`
+  (`ownerOf`), `ownerIsParty`, `agentURI` (`tokenURI`) and `readAt`, the time of the last read that answered;
+- from the registration document the agentURI names (an inline `data:` URI, HTTPS, or `ipfs://` through the
+  gateway; nothing else is fetched): `registration: { name, description, recourse }`, where `recourse` is the
+  document's `{ role, kind, label, summary }` object (`kind` a kebab-case slug such as `personal-shopper`, `label`
+  the type in plain words, `summary` one line), or null when it has none or it does not validate;
+- `orders`: the distinct order ids among the records-topic messages paid by the party's record writers;
+- `claims[]`: each indexed claim that names the party, with `statusKey`, `answer` (the pre-check's), `findingSide`,
+  `paid`, `filedAt` and the other side as `counterparty` and `counterpartyName`.
+
+The registry is read at most every 30 s an agent, and a request waits at most 3 s on it. A slower or failing relay
+answers with the last values read (null before any), `current: false` on those members, and `identity` in
+`meta.degraded`. An agent id the registry reverts for has `owner` and `agentURI` null and is still current. Not paged,
+like `/v1/claims`.
 
 ## Actions
 

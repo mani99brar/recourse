@@ -14,6 +14,7 @@ import { foldClaim } from '../join.js';
 import { ApiError, type StatusService } from '../service.js';
 import { ACTIONS, ACTION_TARGET } from './actions.js';
 import { ACTION_NAMES, isActionName, type ActionName } from './build.js';
+import { castRoute, type CastOptions } from './cast.js';
 import { V1Error, body, fromLegacy, invalid, missing, notFound, upstream } from './errors.js';
 import { decodeRevert, revertError } from './reverts.js';
 
@@ -45,6 +46,8 @@ export interface V1Options {
   nowMs?: () => number;
   /** How long a claim read waits on a shop's vault credit (tests shorten it); CREDIT_WAIT_MS when absent. */
   creditWaitMs?: number;
+  /** The identity registry reads of /v1/cast (tests pass a fake); read on the Hedera relay when absent. */
+  cast?: CastOptions;
 }
 
 /**
@@ -270,6 +273,7 @@ export function createV1Router(svc: StatusService, opts: V1Options): Router {
       }),
     )
     .all(methodNotAllowed);
+  r.route('/cast').get(castRoute(svc, { meta, notRebuilding }, opts.cast)).all(methodNotAllowed);
   r.route('/search')
     .get(
       read('search', (req) => {
