@@ -50,18 +50,49 @@ function rpcClient(env: Env) {
   return createPublicClient({ chain: hederaTestnet, transport: http(env.HEDERA_RPC_URL_1, { timeout: 20_000 }) });
 }
 
+/** Thrown when the shop's registration names someone other than the party map's shop. Never falls back. */
+export class RegistrationMismatchError extends Error {
+  constructor(message: string) {
+    super(`registration mismatch: ${message}`);
+    this.name = 'RegistrationMismatchError';
+  }
+}
+
+/**
+ * What a fetched registration (and the identity token's owner) may name: the party map's shop only.
+ * Whoever serves the agentURI controls the document, so the account paid, the asset and the owner
+ * are checked against what this side already knows. Returns the differences, empty when it matches.
+ */
+export function registrationMismatches(
+  found: { payTo: string; asset: string; owner: Address },
+  expected: { payTo: string | undefined; asset: string; shopAddress: Address },
+): string[] {
+  const out: string[] = [];
+  if (expected.payTo !== undefined && found.payTo !== expected.payTo) out.push(`payTo ${found.payTo}, the party map's shop is ${expected.payTo}`);
+  if (found.asset !== expected.asset) out.push(`asset ${found.asset}, PRICE_ASSET is ${expected.asset}`);
+  if (getAddress(found.owner) !== getAddress(expected.shopAddress)) out.push(`identity owner ${getAddress(found.owner)}, the party map's shop is ${getAddress(expected.shopAddress)}`);
+  return out;
+}
+
 /**
  * Finds the shop: its agent id (party map, else the setup ids), the agentURI on the identity
- * registry, the registration document and its x402 service. SHOP_BASE_URL is used only when that
- * fails, and the fallback is logged.
+ * registry, the registration document and its x402 service. With a party map, the registration's
+ * payTo, asset and owner must be the party map's shop and the PRICE_ASSET id, or discovery stops
+ * (RegistrationMismatchError, no fallback). SHOP_BASE_URL is used only when discovery fails
+ * otherwise (an unreachable registry or agentURI, say), and the fallback is logged.
  */
-export async function discoverShop(env: Env, log?: Logger): Promise<ShopTarget> {
+export async function discoverShop(
+  env: Env,
+  log?: Logger,
+  options: { client?: Pick<ReturnType<typeof rpcClient>, 'readContract'> } = {},
+): Promise<ShopTarget> {
   const parties = partiesOrNull(env);
   const shopParty = parties ? partyByRole(parties, 'shop') : null;
   const agentId = shopParty?.agentId ?? readH0Ids()?.agents.shop?.agentId;
+  let found: { endpoint: ReturnType<typeof x402EndpointOf>; owner: Address };
   try {
     if (!agentId) throw new Error('no shop agent id yet');
-    const client = rpcClient(env);
+    const client = options.client ?? rpcClient(env);
     const identity = addressBook.hedera.erc8004Identity;
     const [uri, owner] = await Promise.all([
       client.readContract({ address: identity, abi: erc8004IdentityAbi, functionName: 'tokenURI', args: [BigInt(agentId)] }) as Promise<string>,
@@ -70,9 +101,7 @@ export async function discoverShop(env: Env, log?: Logger): Promise<ShopTarget> 
     const registration = await fetchRegistration(uri, { ipfsGatewayUrl: env.IPFS_GATEWAY_URL });
     const endpoint = x402EndpointOf(registration);
     if (endpoint.network !== 'hedera:testnet') throw new Error(`registration names network ${endpoint.network}`);
-    const x402Base = endpoint.baseUrl;
-    log?.info('shop_discovered', { agentId, x402Base, payTo: endpoint.payTo, source: 'erc8004' });
-    return { x402Base, apiBase: x402Base.replace(/\/x402\/?$/, ''), payTo: endpoint.payTo, shopAddress: getAddress(owner), source: `erc8004:${agentId}` };
+    found = { endpoint, owner };
   } catch (error) {
     const base = env.SHOP_BASE_URL;
     if (!base || !shopParty) throw error;
@@ -83,6 +112,24 @@ export async function discoverShop(env: Env, log?: Logger): Promise<ShopTarget> 
     const apiBase = base.replace(/\/+$/, '').replace(/\/x402$/, '');
     return { x402Base: `${apiBase}/x402/`, apiBase, payTo: shopParty.hederaAccountId, shopAddress: shopParty.evmAddress, source: 'SHOP_BASE_URL' };
   }
+  // Outside the fallback above: a registration naming another account is not a reason to try a
+  // different route to the shop, it is a reason to stop.
+  const { endpoint, owner } = found;
+  if (shopParty) {
+    const differs = registrationMismatches(
+      { payTo: endpoint.payTo, asset: endpoint.asset, owner },
+      { payTo: shopParty.hederaAccountId, asset: priceAssetIdOf(priceAssetOf(env)), shopAddress: shopParty.evmAddress },
+    );
+    if (differs.length > 0) {
+      log?.error('shop_registration_mismatch', { agentId, differs: differs.join('; ') });
+      throw new RegistrationMismatchError(differs.join('; '));
+    }
+  } else {
+    log?.warn('shop_registration_unpinned', { agentId, note: 'no party map: payTo and owner are taken from the registration as they are' });
+  }
+  const x402Base = endpoint.baseUrl;
+  log?.info('shop_discovered', { agentId, x402Base, payTo: endpoint.payTo, source: 'erc8004' });
+  return { x402Base, apiBase: x402Base.replace(/\/x402\/?$/, ''), payTo: endpoint.payTo, shopAddress: getAddress(owner), source: `erc8004:${agentId}` };
 }
 
 export interface OpenedAgent {
