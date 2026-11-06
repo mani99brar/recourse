@@ -1,0 +1,12 @@
+# Runs recourse-watch.service every two minutes. Written to ~/.config/systemd/user by ops/units/install.sh;
+# the operator enables it: systemctl --user enable --now recourse-watch.timer
+[Unit]
+Description=Recourse watch every two minutes
+
+[Timer]
+OnCalendar=*:0/2
+AccuracySec=10s
+Unit=recourse-watch.service
+
+[Install]
+WantedBy=timers.target

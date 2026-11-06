@@ -13,8 +13,9 @@ systemd user units for the Recourse services on this host. They are installed an
 | `recourse-web` | `ops/units/web-server.mjs` | 8788 | `GET /health` | 48M |
 | `recourse-tunnel-web` | `cloudflared` quick tunnel to 8788 | 8789 (metrics) | `GET /ready` | 96M |
 | `recourse-tunnel-shop` | `cloudflared` quick tunnel to 8720 | 8721 (metrics) | `GET /ready` | 96M |
+| `recourse-watch` (+ `.timer`) | `ops/watch/watch.sh`, every 2 minutes | none | its journal | 64M |
 
-The limits add up to 1104M without the tunnels (1296M with them), well under 2 GB on this 7.9 GB host, which has no swap and runs other workloads beside these; start only what a step needs and watch `ctl.sh status`. Startup compiles TypeScript through tsx, which peaks well above the steady state: on 6 Nov intake settled at 99 MB and was OOM-killed in a loop under a 96M cap, and the shop sat at 117 MB under 128M. Each cap sits above the highest peak seen on 6 Nov (`systemctl --user show recourse-<x> -p MemoryPeak`, and the `memory peak` the journal prints when a unit stops): keeper 148M, precheck 142M, shop 141M, docket 123M, status-api 108M, intake 102M, web 20M, tunnels 42M and 33M. The docket (123M under 128M) and the pre-check (142M under 160M) were raised to 160M and 192M. The keeper is the last unit to stop and the first to start.
+The limits add up to 1104M without the tunnels (1296M with them, 1360M with the watch's oneshot), well under 2 GB on this 7.9 GB host, which has no swap and runs other workloads beside these; start only what a step needs and watch `ctl.sh status`. Startup compiles TypeScript through tsx, which peaks well above the steady state: on 6 Nov intake settled at 99 MB and was OOM-killed in a loop under a 96M cap, and the shop sat at 117 MB under 128M. Each cap sits above the highest peak seen on 6 Nov (`systemctl --user show recourse-<x> -p MemoryPeak`, and the `memory peak` the journal prints when a unit stops): keeper 148M, precheck 142M, shop 141M, docket 123M, status-api 108M, intake 102M, web 20M, tunnels 42M and 33M. The docket (123M under 128M) and the pre-check (142M under 160M) were raised to 160M and 192M. The keeper is the last unit to stop and the first to start.
 
 **Host OOM kills.** A cap only stops one unit from growing; it does not protect a unit when the whole host runs short. On 6 Nov the kernel's OOM killer took the keeper and the docket twice each (the keeper at a 137.8M peak, well under its 192M cap) and the shop and the pre-check three times each, while other workloads filled the host; each came back 5 s later through `Restart=on-failure`. User units start at `oom_score_adj` 200 and interactive sessions at 0, so the kernel picks these services first. Every unit sets `OOMScoreAdjust=100`, the lowest a user unit can have: the user manager itself runs at 100, and a lower value (0, -100) is raised to 100 without a warning (tested with `systemd-run --user --wait --pipe -p OOMScoreAdjust=<n> cat /proc/self/oom_score_adj`). That halves the extra score these services carry (200 to 100 points; one point is about 8 MB of resident memory on this host), so other user units at 200 go first, but these services still go before an interactive session of the same size. Going lower needs root: system units, or a drop-in that lowers `OOMScoreAdjust=100` in `user@.service`. `node --test ops/units/units-env.test.mjs` checks the restart policy, the caps and their sum, and that systemd here gives 100.
 
@@ -31,13 +32,24 @@ How a unit runs:
 - The static server serves `apps/web/dist` (build it first with the web package's build) and forwards `/api/*` to the status API with the prefix removed, so the web app's default `/api` base works with no extra proxy. Any path that is not a file serves `index.html`.
 - There is no unit for the buying agent, and none is needed: it is a command-line tool that runs one order (or one approval, complaint or contest) and exits, so there is nothing long-running to restart or cap. `services/agent/src/main.ts` (`pnpm --filter @recourse/agent start`) serves its read-only approvals API on `127.0.0.1:$AGENT_PORT` (default 8722) when run by hand.
 
+## Watch: alerts and down/up messages
+
+The keeper and the pre-check POST their alerts to `ALERT_URL`, which is not set on this host, so their alerts (`outbound_slow`, `return_slow`, `relay_late`, `settle_late`, `settle_failed`, `exec_failure`, `sends_exhausted`, `mirror_lag`, ...) only reach their journals, as lines `alert <kind> [claim]: <hint>`. `recourse-watch.timer` runs `ops/watch/watch.sh` (`recourse-watch.service`, a oneshot) every two minutes. Each run:
+
+1. forwards each new `alert ` line of `recourse-keeper` and `recourse-precheck` since its saved journal cursor, at most 20 per unit per run and one message counting the rest;
+2. reads `ctl.sh health --json` and sends a message when a service goes from up to down, from down to up, or is up with a higher restart count than last time (an OOM kill and restart between two runs never shows as down). Each change is sent once.
+
+The first run only records where each journal ends and each service's state, and sends nothing; a service first seen down (a unit not installed, say) is not reported until it has been up. The text sent is the alert line after `alert `, through `ops/watch/redact.jq` (a URL keeps only its scheme and host; 64-hex runs such as claim ids, JWTs and long tokens are replaced) and cut to 600 characters. The docket's alerts are JSON log lines and are not forwarded.
+
+The notifier is the command in `RECOURSE_NOTIFY_CMD`, called as `<cmd> "<title>" "<message>"`. The unit file leaves it empty and reads the optional `~/.config/recourse/watch.env`, so put one line there, `RECOURSE_NOTIFY_CMD=<path of the operator's notify script>` (a path, no secret; the script reads its own channel settings, and the watch unit reads no other env file). With none, or one that is not executable, each message is only written to the unit's journal (`journalctl --user -u recourse-watch`) and the run still succeeds. State: `~/.local/state/recourse/watch/` (`journal-<unit>.cursor`, `health-<service>`); delete the folder to start over from a silent first run. Test: `node --test ops/watch/watch.test.mjs` (a fake journal folder, health file and notifier). Enable it once installed: `systemctl --user enable --now recourse-watch.timer`.
+
 ## Install (writes unit files only)
 
 ```
 bash ops/units/install.sh            # dry run: lists what it would write
 bash ops/units/install.sh --verify   # renders to a temp dir and runs systemd-analyze --user verify
 node --test ops/units/units-env.test.mjs   # what each unit's environment can hold (also runs each one through systemd-run)
-bash ops/units/install.sh --install  # writes ~/.config/systemd/user/recourse-*.service and daemon-reloads
+bash ops/units/install.sh --install  # writes ~/.config/systemd/user/recourse-*.service and .timer, and daemon-reloads
 ```
 
 The host needs `loginctl enable-linger $USER` once so user units survive a logout (`loginctl show-user $USER -p Linger` should say `yes`).

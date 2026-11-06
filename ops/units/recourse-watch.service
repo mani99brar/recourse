@@ -1,0 +1,22 @@
+# Recourse watch: forwards the keeper's and the pre-check's alert lines, and services going down or coming
+# back, to the operator's notifier. One run per recourse-watch.timer tick; see ops/watch/watch.sh.
+# Written to ~/.config/systemd/user by ops/units/install.sh, which fills in @REPO@.
+[Unit]
+Description=Recourse watch: alerts and service state to the operator's notifier
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@/ops/watch
+# The notifier, called as <cmd> "<title>" "<message>". This file names none: put one line
+# RECOURSE_NOTIFY_CMD=<path of the notify script> in watch.env (a path, no secret; it wins over the
+# empty value here). With none, every message is only logged to this unit's journal.
+# No shared env file: the watch needs no key, keyed URL or token, and the notifier reads its own config.
+Environment=RECOURSE_NOTIFY_CMD=
+EnvironmentFile=-%h/.config/recourse/watch.env
+Environment=WATCH_STATE_DIR=%h/.local/state/recourse/watch
+UnsetEnvironment=SSH_AUTH_SOCK
+ExecStart=/bin/bash @REPO@/ops/watch/watch.sh
+TimeoutStartSec=120
+MemoryMax=64M
+OOMScoreAdjust=100
+NoNewPrivileges=true

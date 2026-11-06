@@ -42,6 +42,8 @@ const NEEDS = {
   web: [],
   'tunnel-web': [],
   'tunnel-shop': [],
+  // The watch reads only its own watch.env (the notifier's path); the notifier reads its own config.
+  watch: [],
 };
 
 function parseUnit(name) {
@@ -171,4 +173,16 @@ test('systemd on this host gives a user unit the OOMScoreAdjust it asks for', { 
   const r = spawnSync('systemd-run', ['--user', '--wait', '--pipe', '-q', '-p', 'OOMScoreAdjust=100', '/bin/cat', '/proc/self/oom_score_adj'], { encoding: 'utf8', timeout: 30000 });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), '100');
+});
+
+test('the watch is a oneshot run by its timer every two minutes, with a cap and OOMScoreAdjust=100', () => {
+  const unit = readFileSync(join(unitsDir, 'recourse-watch.service'), 'utf8');
+  for (const want of ['Type=oneshot', 'OOMScoreAdjust=100', 'Environment=RECOURSE_NOTIFY_CMD=']) {
+    assert.ok(unit.split('\n').includes(want), `recourse-watch.service lacks ${want}`);
+  }
+  assert.match(unit, /^MemoryMax=\d+M$/m);
+  const timer = readFileSync(join(unitsDir, 'recourse-watch.timer'), 'utf8');
+  assert.match(timer, /^OnCalendar=\*:0\/2$/m);
+  assert.match(timer, /^Unit=recourse-watch\.service$/m);
+  assert.match(timer, /^WantedBy=timers\.target$/m);
 });

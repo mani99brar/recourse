@@ -3,8 +3,8 @@
 #   ctl.sh start [service...]     start in dependency order (default: every service, not the tunnels)
 #   ctl.sh stop [service...]      stop in reverse order, keeper last (default: every service, not the tunnels)
 #   ctl.sh restart [service...]   (default: every service, not the tunnels)
-#   ctl.sh status                 one line per unit: state and memory; then any process of this checkout that
-#                                 listens on a port from outside the units
+#   ctl.sh status                 one line per unit: state and memory; the watch timer's state and last run;
+#                                 then any process of this checkout that listens on a port from outside the units
 #   ctl.sh health [--json] [service...]
 #                                 per service: unit state, restarts, the HTTP code of its health endpoint, up or
 #                                 down, and the error fields its health JSON reports (redacted); then any stray
@@ -131,6 +131,8 @@ case "$cmd" in
       printf '%-12s %-10s mem %s\n' "$s" "$(systemctl --user is-active "$u" 2>/dev/null || true)" \
         "$(systemctl --user show "$u" -p MemoryCurrent --value 2>/dev/null | awk '{ if ($1 ~ /^[0-9]+$/) printf "%d MB", $1/1048576; else print "-" }')"
     done
+    printf '%-12s %-10s last run %s\n' watch "$(systemctl --user is-active recourse-watch.timer 2>/dev/null || true)" \
+      "$(systemctl --user show recourse-watch.service -p ExecMainExitTimestamp --value 2>/dev/null | grep . || echo -)"
     strays ;;
   health) health ;;
   logs) journalctl --user -u "recourse-${1:?service name}" -n "${2:-100}" --no-pager ;;
