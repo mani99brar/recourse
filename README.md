@@ -290,11 +290,11 @@ Taken from `deployments/`, `deployments/wiring.json`, `packages/records/h0-ids.j
 
 A code review of commit `f05649d` (6 Nov 2026, by four AI models, with every finding then checked against the code) confirmed 157 findings. Each has a review finding id, R01 to R157, and a severity: P0 loses or locks funds or forges a ruling, P1 gives a wrong outcome or breaks a flow, P2 is a robustness gap, P3 is minor. There was no P0. When the findings were checked against the code again at about 15:00 UTC that day, 112 P2 and P3 findings were still present or only partly fixed (38 P2, 74 P3).
 
-Since then, 18 of them have had fixes committed, each commit naming the finding or describing its fix (a reader can check each one): R13 (`873f6d3`, `fdf4b43`), R14 (`9fe5855`), R21 (`873f6d3`), R22 (`5e58081`), R26 (`bb5f16c`), R28 (`5a35970`), R29 (`5719e73`, `bc0175e`), R30 (`cb3b065`, `6e9f5c3`), R31 (`de695b3`), R32 (`46444f3`), R38 (`5e58081`, `e36767c`), R43 (`9fb4f9b`, `1068b29`), R47 (`108adcf`), R51 (`56fd0f6`), R53 (`109d794`), R56 (`5e58081`, `e36767c`), R57 (`873f6d3`), R58 (`5843978`). R47 is a contract change, so the deployed contracts take it only with the redeploy. The tables leave those 18 out and list the other 94 (20 P2, 74 P3), grouped by part of the system, each with what can go wrong and the planned fix.
+Since then, 26 of them have had fixes committed, each commit naming the finding or describing its fix (a reader can check each one): R13 (`873f6d3`, `fdf4b43`), R14 (`9fe5855`), R21 (`873f6d3`), R22 (`5e58081`), R26 (`bb5f16c`), R28 (`5a35970`), R29 (`5719e73`, `bc0175e`), R30 (`cb3b065`, `6e9f5c3`), R31 (`de695b3`), R32 (`46444f3`), R38 (`5e58081`, `e36767c`), R43 (`9fb4f9b`, `1068b29`), R47 (`108adcf`), R51 (`56fd0f6`), R53 (`109d794`), R56 (`5e58081`, `e36767c`), R57 (`873f6d3`), R58 (`5843978`), and later the same day R11 and R73 (`ec9739b`: the status API marks a failed live or parameter read as `degraded` and gives its age), R24, R25, R39 and R42 (`6f191f8`: the shop needs its party map to start, refuses complaints it cannot check, reads the payer from the payment, and checks the order again after the standing read), R27 (`3775bb1`: the approval renderer refuses a value it would not show as given) and R61 (`42eab83`: a failure at verify counts toward the move to the backup facilitator). R47 is a contract change, so the deployed contracts take it only with the redeploy. The tables leave those 26 out and list the other 86 (13 P2, 73 P3), grouped by part of the system, each with what can go wrong and the planned fix.
 
 Terms used below: the *mirror node* is Hedera's public REST read API; a service's *journal* is its append-only state file, and its *cursors* record how far it has read each source; the *party map* (`deployments/parties.json`) names each party's accounts and which records each may write; the *read-back* (`ops/wire/00-readback.sh`) reads every deployed setting and compares it with the deployment files; the *lock* is each contract's one-way `lockConfig`; a *facilitator* is the x402 service that verifies and settles a payment.
 
-<!-- BUILD: drop the rows fixed by commits after 3b65adb, and add any P1 finding still open after the redeploy. -->
+<!-- BUILD: drop the rows fixed by commits after 5402a69, and add any P1 finding still open after the redeploy. -->
 
 <details>
 <summary><strong>Contracts and their deploy scripts</strong> (7)</summary>
@@ -337,15 +337,10 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 </details>
 
 <details>
-<summary><strong>Shop and buying agent</strong> (13)</summary>
+<summary><strong>Shop and buying agent</strong> (8)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
-| R24 | P2 | A shop started without its party map (`deployments/parties.json`, which names each party's accounts) accepts orders from any platform address and any payer. | Refuse to start without a party map unless a local-only setting allows it. |
-| R25 | P2 | A shop running with no records topic set takes any caller's complaint pointer for a paid order, and the real complaint is then treated as a duplicate. | Refuse complaints, or refuse to start, when no records topic is set, except in local runs. |
-| R39 | P2 | If a facilitator's (the x402 service that verifies and settles a payment) settle reply leaves out the payer, every paid order is marked payer_mismatch and refused after the buyer has already paid. | Read the payer from the signed payment when the reply leaves it out. |
-| R42 | P2 | Partly fixed. Two paid requests racing for one order can both settle; the second payment is recorded as owed back, not refused. | Check the order again just before a payment is booked, and refuse the second one. |
-| R61 | P2 | A facilitator outage that fails at verify never moves the shop to the backup facilitator, so orders fail until an operator steps in. | Count a facilitator failure at verify as well as at settle, so the shop moves to the backup. |
 | R76 | P3 | An order in flight during a facilitator switch can fail at settle and must be paid again. | Settle on the same facilitator that verified the payment. |
 | R103 | P3 | An order approved just before midnight UTC and paid after it counts toward the previous day's cap, not the new day's. | Count a payment toward the day it was signed, checked against the current day. |
 | R104 | P3 | After one payment that is never confirmed, the agent gives up on the order (pay_failed) instead of paying again once that payment is dead. | Count payments actually signed rather than wait rounds, so waiting does not use up attempts. |
@@ -358,11 +353,10 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 </details>
 
 <details>
-<summary><strong>Shared packages (records, court evidence, canonical encoding)</strong> (14)</summary>
+<summary><strong>Shared packages (records, court evidence, canonical encoding)</strong> (13)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
-| R27 | P2 | A buyer's approval does not pin offer values longer than 120 characters or ones that differ only in hidden whitespace or control characters. | Refuse offer values that are too long or that differ from their cleaned form. |
 | R67 | P3 | Two commands started within a few microseconds of each other can both take the journal lock on one host. | Treat an empty or invalid process id in the lock as "not written yet" and retry. |
 | R77 | P3 | Handling amounts use testnet demo values (1 USDC base, 4 USDC cap) instead of the design's 15 and 40; they are recorded only in the interfaces spec changelog. | Add a row for them to `docs/decisions.md`. |
 | R78 | P3 | The local test relay can deliver a CCIP message whose sending transaction reverted at a higher level (local runs only). | Stop the local relay from delivering a message whose sending call failed. |
@@ -380,11 +374,10 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 </details>
 
 <details>
-<summary><strong>Status API (the read API behind the web app)</strong> (20)</summary>
+<summary><strong>Status API (the read API behind the web app)</strong> (18)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
-| R11 | P2 | Partly fixed. If a live court or bridge read fails, the page keeps showing the last value it read and does not say it may be out of date. | Mark the claim as possibly out of date while the last live read failed or is too old. |
 | R12 | P2 | On an RPC that caps log ranges, court evidence for an older case may never show, and no error says why. | Read evidence logs in chunks and report a failed read as an error. |
 | R18 | P2 | The escrow figure is taken from the index and current parameters, not the vault, and a platform's page counts its shops' court fees as its own escrow. | Take the escrow from the claim's own fee and the vault, and count only a party's own claims. |
 | R19 | P2 | An Arbitrum reorg deeper than 20 blocks would leave events from the dropped blocks in the index for good. | Keep recent block hashes, detect a fork, and drop the events of dropped blocks. |
@@ -393,7 +386,6 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 | R36 | P2 | Right after a resend, until the new message is read, a claim can show as stuck because of the old failed message. | Let only the newest message in each direction decide the status. |
 | R37 | P2 | Partly fixed. Unreachable record documents are retried every minute, and each retry can hold up indexing for a while. | Back off each missing document's retries and give document fetching its own time budget. |
 | R54 | P2 | A restart during the first full read of the chain serves incomplete data instead of answering 'rebuilding'. | Save the "rebuilding" state with the index and restore it on restart. |
-| R73 | P3 | Before the contracts are locked, a failing parameter read keeps the last values it got without saying so. | Flag the parameters as possibly out of date while their latest read failed. |
 | R74 | P3 | For a few seconds (about 20 Arbitrum blocks) the bridge can show a message as delivered while the case still reads as not received. | Read the message state at the same confirmed block as the other Arbitrum reads. |
 | R75 | P3 | On a fresh local chain with fewer than 20 blocks, every Arbitrum contract read fails. | Clamp the confirmed block number at zero. |
 | R89 | P3 | With no Hedera RPC set, deadlines and amounts come from built-in pre-lock defaults and only the /params page says so. | Flag the parameters whenever they come from the built-in defaults. |
