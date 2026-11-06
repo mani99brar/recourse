@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { VaultToken } from '@recourse/shared';
 import { isRebuilding, type ApiFailure, type Fresh } from './lib/api.js';
 import { mockNote } from './lib/format.js';
+import { useTheme } from './lib/theme.js';
 
 export function Banner({ fresh, error, token }: { fresh?: Fresh | undefined; error?: ApiFailure | null; token?: VaultToken | undefined }) {
   const notes: string[] = [];
@@ -66,7 +67,34 @@ export function Row({ label, children }: { label: string; children: ReactNode })
 }
 
 export function Loading({ what }: { what: string }) {
-  return <p className="muted">Loading {what}…</p>;
+  return (
+    <p className="muted loading" role="status">
+      Loading {what}…
+    </p>
+  );
+}
+
+/** The design's mode switch: two pressed-state buttons, dark first. */
+export function ThemeSwitch() {
+  const [theme, setTheme] = useTheme();
+  return (
+    <div className="theme" role="group" aria-label="Colour mode">
+      {(['dark', 'light'] as const).map((t) => (
+        <button key={t} type="button" aria-pressed={theme === t} onClick={() => setTheme(t)}>
+          {t === 'dark' ? 'Dark' : 'Light'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** A right-pointing arrow for links styled as buttons or doors (decorative). */
+export function Arrow() {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M2 9h13M9.5 3.5 15 9l-5.5 5.5" />
+    </svg>
+  );
 }
 
 export function ExtLink({ href, children }: { href: string | null | undefined; children: ReactNode }) {
