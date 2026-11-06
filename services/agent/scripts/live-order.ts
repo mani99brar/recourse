@@ -23,7 +23,8 @@
 // ordered record (written after payment, so the shop cannot check it before it settles) states size
 // S although the buyer asked for, and was shown, the item's own size. The shop packs and ships what
 // the ordered record says, and the buyer reports size S. The fault rule is unchanged; it answers 1
-// (the agent company) at step 2a-ii, so the shop's claim is paid from the agent company's deposit.
+// (the agent company) at step 3, shown differs from ordered (asked and shown agree, so step 2 finds
+// nothing), and the shop's claim is paid from the agent company's deposit.
 // Use an item whose size is the asked M (tee-navy-m) and a different S. Repeat it on a rerun.
 //
 // `--local-shop` runs the shop in this process (its own journal) on the facilitator rung N of
