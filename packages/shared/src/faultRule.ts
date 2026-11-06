@@ -146,7 +146,8 @@ function differs(attribute: Attribute, x: string, y: string): boolean {
 interface View {
   cell(record: AttrRecordKey, attribute: Attribute): string | undefined;
   held(record: AttrRecordKey): boolean;
-  changeFilled: boolean;
+  /** The shown record's change slot names this attribute. */
+  flagged(attribute: Attribute): boolean;
   approved: boolean;
 }
 
@@ -163,13 +164,13 @@ function view(input: RuleInput): View {
     }
   }
   const changes = input.shown?.changes;
-  const changeFilled = Array.isArray(changes) && changes.length > 0;
+  const flaggedSet = new Set<string>(Array.isArray(changes) ? changes : []);
   const holdsAttr = (r: AttrRecordKey) => ATTRIBUTES.some((a) => cells.has(`${r}.${a}`));
-  const held = (r: AttrRecordKey) => holdsAttr(r) || (r === 'shown' && changeFilled);
+  const held = (r: AttrRecordKey) => holdsAttr(r) || (r === 'shown' && flaggedSet.size > 0);
   return {
     cell: (r, a) => cells.get(`${r}.${a}`),
     held,
-    changeFilled,
+    flagged: (a) => flaggedSet.has(a),
     approved: held('shown') && input.approval?.approval === 'approved',
   };
 }
@@ -230,9 +231,11 @@ function decide(v: View): Decision {
       if (!v.held('shown')) {
         return { step: '2a-i', reasonKey: 'missing_record_platform', flaggedCells: cellsFor(off, ['asked', 'ordered']) };
       }
+      // A departure is shown only when the screen showed the ordered value and flagged that very
+      // attribute; a flag on another attribute does not cover it.
       const notShown = off.filter((a) => {
         const s = v.cell('shown', a);
-        return !v.changeFilled || s === undefined || differs(a, s, v.cell('ordered', a)!);
+        return !v.flagged(a) || s === undefined || differs(a, s, v.cell('ordered', a)!);
       });
       if (notShown.length > 0) {
         return {
@@ -246,17 +249,17 @@ function decide(v: View): Decision {
       }
       cleared = true; // 2a-iv
     }
-    // 2b: the screen departed from the request while the order kept to it.
-    if (!(v.changeFilled && v.approved)) {
-      const shownOff = ATTRIBUTES.filter((a) => {
-        const i = v.cell('asked', a);
-        const s = v.cell('shown', a);
-        const o = v.cell('ordered', a);
-        return i !== undefined && s !== undefined && o !== undefined && departs(a, i, s) && !departs(a, i, o);
-      });
-      if (shownOff.length > 0) {
-        return { step: '2b', reasonKey: 'gap1_asked_vs_shown', flaggedCells: cellsFor(shownOff, ['asked', 'shown']) };
-      }
+    // 2b: the screen departed from the request while the order kept to it. An approved change the
+    // screen flagged is no break; any other attribute the screen changed still is.
+    const shownOff = ATTRIBUTES.filter((a) => {
+      const i = v.cell('asked', a);
+      const s = v.cell('shown', a);
+      const o = v.cell('ordered', a);
+      if (i === undefined || s === undefined || o === undefined) return false;
+      return departs(a, i, s) && !departs(a, i, o) && !(v.flagged(a) && v.approved);
+    });
+    if (shownOff.length > 0) {
+      return { step: '2b', reasonKey: 'gap1_asked_vs_shown', flaggedCells: cellsFor(shownOff, ['asked', 'shown']) };
     }
   }
 

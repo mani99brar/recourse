@@ -34,6 +34,27 @@ describe('fault rule fixtures', () => {
     expect(parsePrice(text)).toBe(parsed);
   });
 
+  it('an approval clears only the change the shown record flags', () => {
+    const asked = { attrs: { size: 'm', colour: 'red' } };
+    const approval = { approval: 'approved' as const, approvalBasis: 'buyer' as const };
+    const l = { attrs: { size: 'l', colour: 'red' } };
+    const base: RuleInput = { asked, approval, ordered: l, packed: l, arrived: l };
+    // The size changed and the screen flagged size: cleared.
+    expect(runFaultRule({ ...base, shown: { ...l, changes: ['size'] } })).toMatchObject({ step: '11', answer: 3 });
+    // The size changed but the screen flagged colour: the size change was never shown as a change.
+    expect(runFaultRule({ ...base, shown: { ...l, changes: ['colour'] } })).toMatchObject({
+      step: '2a-ii',
+      answer: 1,
+      flaggedCells: [
+        { record: 'asked', attribute: 'size' },
+        { record: 'shown', attribute: 'size' },
+        { record: 'ordered', attribute: 'size' },
+      ],
+    });
+    // Flagging every attribute is still a flag on the one that changed.
+    expect(runFaultRule({ ...base, shown: { ...l, changes: ['brand', 'size', 'colour', 'quantity', 'price', 'merchant'] } })).toMatchObject({ step: '11' });
+  });
+
   it('is deterministic and does not mutate its input', () => {
     const row = fixtures.rows[0]!;
     const before = JSON.stringify(row.input);

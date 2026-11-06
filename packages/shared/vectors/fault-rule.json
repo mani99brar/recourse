@@ -920,6 +920,51 @@
         "notCompared": ["colour"],
         "unreadPrice": []
       }
+    },
+    {
+      "id": 119,
+      "name": "ordered departs from asked on size; shown matches ordered but its change slot flags only colour; approved",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "colour": "red", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "l", "colour": "red", "price": "95.50"}, "changes": ["colour"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "l", "colour": "red", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "l", "colour": "red"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "l", "colour": "red"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2a-ii",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "size"},
+          {"record": "shown", "attribute": "size"},
+          {"record": "ordered", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
+    },
+    {
+      "id": 120,
+      "name": "shown departs from asked on size and colour, flags and gets approval for colour only; ordered takes the colour but keeps the asked size",
+      "input": {
+        "asked": {"attrs": {"brand": "northwind", "size": "m", "colour": "red", "price": "120"}},
+        "shown": {"attrs": {"brand": "northwind", "size": "l", "colour": "blue", "price": "95.50"}, "changes": ["colour"]},
+        "approval": {"approval": "approved", "approvalBasis": "buyer"},
+        "ordered": {"attrs": {"brand": "northwind", "size": "m", "colour": "blue", "price": "95.50"}},
+        "packed": {"attrs": {"brand": "northwind", "size": "m", "colour": "blue"}},
+        "arrived": {"attrs": {"brand": "northwind", "size": "m", "colour": "blue"}}
+      },
+      "expect": {
+        "gap": 1, "answer": 1, "side": "platform",
+        "reasonKey": "gap1_asked_vs_shown", "step": "2b",
+        "flaggedCells": [
+          {"record": "asked", "attribute": "size"},
+          {"record": "shown", "attribute": "size"}
+        ],
+        "notCompared": [],
+        "unreadPrice": []
+      }
     }
   ],
   "priceParse": [
