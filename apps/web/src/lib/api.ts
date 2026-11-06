@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { VaultToken } from '@recourse/shared';
 
 const BASE = (import.meta.env?.VITE_STATUS_API_URL as string | undefined) ?? '/api';
@@ -100,36 +100,36 @@ export interface PollState<T> {
   loading: boolean;
 }
 
-/** Reads a /v1 path (see READS) now and every POLL_MS, unwrapped. Keeps the last good data when a later read fails. */
+/**
+ * Reads a /v1 path (see READS) now and every POLL_MS, unwrapped. Keeps the last good data when a later read of
+ * the same path fails. The state is kept with the path it was read for, so after a move to another path (another
+ * claim or party) the page shows nothing of the last one, even in the render before the new read starts, and a
+ * read of the last path that lands after the move is dropped.
+ */
 export function usePoll<T>(path: string | null, ms: number = POLL_MS): PollState<T> {
-  const [state, setState] = useState<PollState<T>>({ data: null, error: null, loading: path !== null });
-  const alive = useRef(true);
+  const [state, setState] = useState<PollState<T> & { path: string | null }>({ path, data: null, error: null, loading: path !== null });
   useEffect(() => {
-    alive.current = true;
-    if (path === null) {
-      setState({ data: null, error: null, loading: false });
-      return;
-    }
-    setState((s) => ({ ...s, loading: true }));
+    if (path === null) return;
     const ctl = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const run = async () => {
       try {
         const data = await getRead<T>(path, ctl.signal);
-        if (alive.current) setState({ data, error: null, loading: false });
+        if (ctl.signal.aborted) return;
+        setState({ path, data, error: null, loading: false });
       } catch (e) {
-        if (!alive.current || ctl.signal.aborted) return;
+        if (ctl.signal.aborted) return;
         const err = e instanceof ApiFailure ? e : new ApiFailure(0, 'unreachable');
-        setState((s) => ({ data: s.data, error: err, loading: false }));
+        setState((s) => ({ path, data: s.path === path ? s.data : null, error: err, loading: false }));
       }
-      if (alive.current) timer = setTimeout(run, ms);
+      timer = setTimeout(run, ms);
     };
     void run();
     return () => {
-      alive.current = false;
       ctl.abort();
       clearTimeout(timer);
     };
   }, [path, ms]);
+  if (state.path !== path) return { data: null, error: null, loading: path !== null };
   return state;
 }

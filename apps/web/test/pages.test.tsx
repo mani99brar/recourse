@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { CIRCLE_VAULT_TOKEN, STATUS_KEYS, vaultTokenOf } from '@recourse/shared';
 import { renderToString } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Shell, route } from '../src/App.js';
 import { Banner, lateWords } from '../src/components.js';
 import { ApiFailure, READS, failureFrom, fromV1, isRebuilding } from '../src/lib/api.js';
@@ -250,5 +250,121 @@ describe('the read pages call the documented /v1 API, as the agents do', () => {
     const down = failureFrom(503, { error: { code: 'upstream_unavailable', message: 'Hedera is not answering.', details: { upstream: 'hedera_rpc' } } });
     expect(isRebuilding(down)).toBe(false);
     expect(renderToString(<Banner error={down} />)).toContain('cannot be reached');
+  });
+});
+
+/**
+ * usePoll as a page renders it, driven by a stand-in for React's hooks (these tests have no DOM): state and refs
+ * keep their slot from one render to the next, and an effect whose deps changed runs after the last one's cleanup.
+ * fetch answers each path from `answers`: a body, a failing status, or a promise the test settles itself.
+ */
+async function pollPage(answers: Record<string, unknown>) {
+  vi.stubGlobal('fetch', async (url: string) => {
+    const path = Object.keys(answers).find((p) => url.endsWith(p));
+    const a = path === undefined ? 404 : answers[path];
+    const body = a instanceof Promise ? await a : a;
+    if (typeof body === 'number') return { ok: false, status: body, json: async () => ({ error: { code: 'upstream_unavailable', message: 'down' } }) };
+    return { ok: true, status: 200, json: async () => body };
+  });
+  const slots: unknown[] = [];
+  const effects = new Set<number>();
+  let at = 0;
+  let due: (() => void)[] = [];
+  type Effect = { deps: unknown[]; cleanup: (() => void) | void };
+  vi.resetModules();
+  vi.doMock('react', async (real: () => Promise<typeof import('react')>) => ({
+    ...(await real()),
+    useState: (init: unknown) => {
+      const k = at++;
+      if (!(k in slots)) slots[k] = typeof init === 'function' ? (init as () => unknown)() : init;
+      return [slots[k], (v: unknown) => void (slots[k] = typeof v === 'function' ? (v as (s: unknown) => unknown)(slots[k]) : v)];
+    },
+    useRef: (init: unknown) => {
+      const k = at++;
+      if (!(k in slots)) slots[k] = { current: init };
+      return slots[k];
+    },
+    useEffect: (fn: () => (() => void) | void, deps: unknown[]) => {
+      const k = at++;
+      const last = slots[k] as Effect | undefined;
+      if (last && deps.every((d, j) => Object.is(d, last.deps[j]))) return;
+      effects.add(k);
+      due.push(() => {
+        last?.cleanup?.();
+        slots[k] = { deps, cleanup: fn() } satisfies Effect;
+      });
+    },
+  }));
+  const { usePoll } = await import('../src/lib/api.js');
+  vi.doUnmock('react');
+  return {
+    /** One render for `path` and then its effects; what the page shows in that render. */
+    render(path: string | null, ms?: number) {
+      at = 0;
+      const seen = usePoll<{ claimId: string }>(path, ms);
+      const run = due;
+      due = [];
+      for (const f of run) f();
+      return seen;
+    },
+    /** The page goes away: each effect's cleanup runs. */
+    leave() {
+      for (const k of effects) (slots[k] as Effect).cleanup?.();
+    },
+  };
+}
+const settle = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+describe('a page moved to another claim or party', () => {
+  const A = READS.claim('0x' + 'aa'.repeat(32));
+  const B = READS.claim('0x' + 'bb'.repeat(32));
+  const claimA = { claim: { claimId: 'A' }, meta: {} };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows nothing of the claim it left while the next one loads, or when that read fails', async () => {
+    const page = await pollPage({ [A]: claimA, [B]: 503 });
+    page.render(A);
+    await settle();
+    expect(page.render(A).data?.claimId).toBe('A');
+    const moved = page.render(B);
+    expect(moved.data).toBeNull();
+    expect(moved.loading).toBe(true);
+    await settle();
+    const failed = page.render(B);
+    expect(failed.error?.status).toBe(503);
+    expect(failed.data).toBeNull();
+    page.leave();
+  });
+
+  it('a read of the claim it left that lands after the move is dropped', async () => {
+    let land!: (body: unknown) => void;
+    const page = await pollPage({ [A]: new Promise((r) => (land = r)), [B]: new Promise(() => {}) });
+    page.render(A);
+    page.render(B);
+    land(claimA);
+    await settle();
+    expect(page.render(B).data).toBeNull();
+    page.leave();
+  });
+
+  it('keeps the last good data of the same claim when a later read of it fails', async () => {
+    const answers: Record<string, unknown> = { [A]: claimA };
+    const page = await pollPage(answers);
+    page.render(A, 1);
+    await settle();
+    answers[A] = 503;
+    await settle(20);
+    const s = page.render(A, 1);
+    expect(s.data?.claimId).toBe('A');
+    expect(s.error?.status).toBe(503);
+    page.leave();
+  });
+
+  it('a path of null reads nothing and shows nothing', async () => {
+    const page = await pollPage({ [A]: claimA });
+    page.render(A);
+    await settle();
+    expect(page.render(null)).toEqual({ data: null, error: null, loading: false });
+    page.leave();
   });
 });
