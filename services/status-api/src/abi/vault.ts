@@ -15,6 +15,7 @@ export const vaultAbi = parseAbi([
   'event TopUpCleared(address indexed platform)',
   'event ExitRequested(address indexed platform, uint256 availableAt)',
   'event Exited(address indexed platform, uint256 amount)',
+  'event ExitCancelled(address indexed platform)',
   'event ParamsSet(uint64 topUpWindow, uint64 exitDelay, uint256 minDeposit)',
   'event ConfigLocked()',
   'function params() view returns (uint64 topUpWindow, uint64 exitDelay, uint256 minDeposit)',

@@ -165,6 +165,42 @@
   },
   {
     "type": "function",
+    "name": "claimTermsOf",
+    "inputs": [
+      {
+        "name": "claimId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IRecourseClaims.ClaimTerms",
+        "components": [
+          {
+            "name": "contestWindow",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "claimTimeout",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "handling",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "closeUncontested",
     "inputs": [
       {
