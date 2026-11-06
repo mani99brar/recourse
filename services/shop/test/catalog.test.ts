@@ -1,6 +1,9 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { HBAR_ASSET_ID, toMicroUsdcEquivalent } from '@recourse/shared';
-import { CATALOG, MAX_QUANTITY, basketPrice } from '../src/catalog.js';
+import { BUILT_IN_CATALOG, CATALOG, MAX_QUANTITY, basketPrice, loadCatalog, offerAttrs, parseCatalog } from '../src/catalog.js';
 import { loadShopConfig } from '../src/config.js';
 import { USDC_TOKEN_ID } from '../src/payments.js';
 import { fakeFacilitator } from './fake-facilitator.js';
@@ -28,6 +31,48 @@ describe('basket prices', () => {
         expect(toMicroUsdcEquivalent(BigInt(hbar.amount), hbar.asset), `${item.sku} x${q}`).toBe(item.unitUsdc * BigInt(q));
       }
     }
+  });
+});
+
+describe('SHOP_CATALOG_FILE', () => {
+  const beans = { sku: 'beans-250g', title: 'Whole coffee beans', brand: 'Fernhill Roasters', size: '250 g', colour: 'Medium roast', unitUsdc: '2500000' };
+
+  test('unset, the built-in catalogue is sold, and it passes the file validation itself', () => {
+    expect(CATALOG).toBe(BUILT_IN_CATALOG);
+    expect(loadCatalog({})).toBe(BUILT_IN_CATALOG);
+    const asJson = JSON.parse(JSON.stringify(BUILT_IN_CATALOG, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v))) as unknown;
+    expect(parseCatalog(asJson)).toEqual({ ok: true, value: [...BUILT_IN_CATALOG] });
+  });
+
+  test('set, its items replace the built-in ones and price and describe orders the same way', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'catalog-'));
+    const file = join(dir, 'catalogue.json');
+    writeFileSync(file, JSON.stringify([beans, { ...beans, sku: 'beans-1kg', size: '1 kg', unitUsdc: 8_000_000 }]));
+    const items = loadCatalog({ SHOP_CATALOG_FILE: file });
+    expect(items.map((i) => i.sku)).toEqual(['beans-250g', 'beans-1kg']);
+    expect(basketPrice(items[1]!, 2, 'usdc')).toEqual({ amount: '16000000', asset: USDC_TOKEN_ID });
+    expect(offerAttrs(items[0]!, 1, 'Example Shop')).toEqual({ brand: 'Fernhill Roasters', size: '250 g', colour: 'Medium roast', quantity: '1', merchant: 'Example Shop' });
+  });
+
+  test.each([
+    ['an empty list', []],
+    ['an object', { items: [] }],
+    ['a sku the order route cannot carry', [{ ...beans, sku: 'Beans 250' }]],
+    ['a duplicate sku', [beans, beans]],
+    ['an empty size', [{ ...beans, size: ' ' }]],
+    ['a missing colour', [{ ...beans, colour: undefined }]],
+    ['a price in USDC rather than micro-USDC', [{ ...beans, unitUsdc: '2.50' }]],
+    ['a zero price', [{ ...beans, unitUsdc: 0 }]],
+    ['an unknown field', [{ ...beans, lateRefund: true }]],
+  ])('refuses %s', (_label, json) => {
+    expect(parseCatalog(JSON.parse(JSON.stringify(json))).ok).toBe(false);
+  });
+
+  test('a file that is missing or not JSON stops the shop, naming the variable', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'catalog-'));
+    writeFileSync(join(dir, 'bad.json'), '[{');
+    expect(() => loadCatalog({ SHOP_CATALOG_FILE: join(dir, 'missing.json') })).toThrow(/^SHOP_CATALOG_FILE: /);
+    expect(() => loadCatalog({ SHOP_CATALOG_FILE: join(dir, 'bad.json') })).toThrow(/^SHOP_CATALOG_FILE: /);
   });
 });
 
