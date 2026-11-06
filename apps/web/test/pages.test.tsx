@@ -7,7 +7,7 @@ import { ApiFailure } from '../src/lib/api.js';
 import { mockNote, parseUsdc, usdc } from '../src/lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, FATE_WORDS, GROUP_WORDS, REASON_WORDS, STATUS_WORDS } from '../src/lib/words.js';
 import { CaseView, type CaseDetail } from '../src/pages/Case.js';
-import { Finding } from '../src/pages/File.js';
+import { Finding, chainNote, standingWords } from '../src/pages/File.js';
 import { ClaimList } from '../src/pages/Party.js';
 import { RateTable } from '../src/pages/Docket.js';
 import { REASON_KEYS } from '@recourse/shared';
@@ -99,6 +99,17 @@ describe('pages render', () => {
     expect(renderToString(<RateTable rates={[]} />)).toContain('No ruled cases');
     expect(renderToString(<ClaimList rows={[]} />)).toContain('No claims');
   });
+  it('a deposit that could not be read is unknown, never "not in good standing"', () => {
+    const unread = standingWords({ role: 'platform', displayName: null, balance: null, required: null, inGoodStanding: null });
+    expect(unread).toContain('not read right now');
+    expect(unread).not.toContain('not in good standing');
+    expect(standingWords({ role: 'platform', displayName: null, balance: '5000000', required: '10000000', inGoodStanding: false })).toBe('not in good standing; holds 5.00 USDC of 10.00 USDC required');
+    expect(standingWords({ role: 'platform', displayName: null, balance: '20000000', required: '10000000', inGoodStanding: true })).toContain('in good standing; holds 20.00');
+    // Built-in defaults are labelled as such; live values carry no label.
+    expect(chainNote(true)).toContain('default, not read from the chain');
+    expect(chainNote(false)).toBe('');
+    expect(chainNote(undefined)).toBe('');
+  });
   it('explains a finding in plain words', () => {
     const html = renderToString(<Finding result={{ gap: 255, answer: 0, side: 'none', reasonKey: 'not_enough_record', step: '1', flaggedCells: [], notCompared: [], unreadPrice: [] }} />);
     expect(html).toContain('not enough records');
@@ -130,6 +141,13 @@ describe('helpers', () => {
     expect(usdc('3000000', CIRCLE_VAULT_TOKEN)).toBe('3.00 USDC');
     expect(usdc(1_234_560_000n, { label: 'mUSDC (testnet mock)' })).toBe('1,234.56 mUSDC (testnet mock)');
     expect(usdc(null, { label: 'mUSDC (testnet mock)' })).toBe('not yet known');
+    // Exact, never truncated: a sub-cent shortfall is not 0.00, and a handling fee keeps its decimals.
+    expect(usdc('4000')).toBe('0.004 USDC');
+    expect(usdc('51617283')).toBe('51.617283 USDC');
+    expect(usdc('1075000')).toBe('1.075 USDC');
+    expect(usdc('1')).toBe('0.000001 USDC');
+    expect(usdc('0')).toBe('0.00 USDC');
+    expect(usdc('12500000')).toBe('12.50 USDC');
     expect(mockNote({ mode: 'mock' })).toContain('mUSDC');
     expect(mockNote({ mode: 'circle' })).toBeNull();
     expect(mockNote(undefined)).toBeNull();

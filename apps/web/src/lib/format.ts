@@ -3,13 +3,16 @@ import type { VaultToken } from '@recourse/shared';
 /**
  * A vault amount in micro-units (decimal text or bigint) with the deployment's token label:
  * "12.50 USDC", or "12.50 mUSDC (testnet mock)" on the testnet mock. USDC when no token is known.
+ * Exact: every significant decimal is shown (at least two), so a sub-cent amount never reads as
+ * 0.00 and figures match the chain ("51.617283", "0.004").
  */
 export function usdc(v: string | bigint | null | undefined, token?: Pick<VaultToken, 'label'> | null): string {
   if (v === null || v === undefined) return 'not yet known';
-  const n = BigInt(v);
+  const raw = BigInt(v);
+  const n = raw < 0n ? -raw : raw;
   const whole = n / 1_000_000n;
-  const frac = (n % 1_000_000n).toString().padStart(6, '0').slice(0, 2);
-  return `${whole.toLocaleString('en-US')}.${frac} ${token?.label ?? 'USDC'}`;
+  const frac = (n % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '').padEnd(2, '0');
+  return `${raw < 0n ? '-' : ''}${whole.toLocaleString('en-US')}.${frac} ${token?.label ?? 'USDC'}`;
 }
 
 /** The note a page carries when the vault runs on the testnet mock; null on Circle USDC. */

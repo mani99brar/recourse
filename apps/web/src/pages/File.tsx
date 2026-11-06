@@ -13,10 +13,11 @@ interface OrderRecords {
   records: ServedRecord[];
 }
 interface ParamsBody extends Fresh {
-  params: { claims: { courtFeeUsdc: string; contestWindow: string; handlingBase: string; handlingBps: string; handlingCap: string } };
+  /** `defaulted`: the chain has not been read yet, so these are the built-in defaults. */
+  params: { claims: { courtFeeUsdc: string; contestWindow: string; handlingBase: string; handlingBps: string; handlingCap: string }; defaulted?: boolean };
   vaultToken?: VaultToken;
 }
-interface PartyBody {
+export interface PartyBody {
   role: string;
   displayName: string | null;
   balance: string | null;
@@ -46,6 +47,17 @@ export function Finding({ result }: { result: PrecheckResult }) {
   );
 }
 
+/** Defaults stand in when the chain has never been read: say so rather than show them as live. */
+export function chainNote(defaulted: boolean | undefined): string {
+  return defaulted === true ? ' (default, not read from the chain yet)' : '';
+}
+
+/** The agent company's deposit in words. A standing that could not be read says so; it is never "not in good standing". */
+export function standingWords(s: PartyBody, token?: VaultToken): string {
+  if (s.inGoodStanding === null) return 'not read right now; its standing is not known';
+  return `${s.inGoodStanding ? 'in good standing' : 'not in good standing'}; holds ${usdc(s.balance, token)} of ${usdc(s.required, token)} required`;
+}
+
 export function FilePage() {
   const [orderId, setOrderId] = useState('');
   const [basket, setBasket] = useState('');
@@ -72,6 +84,7 @@ export function FilePage() {
 
   const outcome = state.data ? precheckFromRecords(state.data.orderId, state.data.records) : null;
   const p = params.data?.params.claims;
+  const fromChain = chainNote(params.data?.params.defaulted);
   const token = params.data?.vaultToken;
   return (
     <>
@@ -138,13 +151,9 @@ export function FilePage() {
         </div>
         {lossProblem && <p className="error">{lossProblem}</p>}
         <dl>
-          <Row label="Court fee you escrow">{p ? usdc(p.courtFeeUsdc, token) : 'loading'}</Row>
-          <Row label="Contest window">{p ? `${Number(p.contestWindow) / 60} minutes after the pre-check` : 'loading'}</Row>
-          {standing.data && (
-            <Row label="Agent company deposit">
-              {standing.data.inGoodStanding ? 'in good standing' : 'not in good standing'}; holds {usdc(standing.data.balance, token)} of {usdc(standing.data.required, token)} required
-            </Row>
-          )}
+          <Row label="Court fee you escrow">{p ? `${usdc(p.courtFeeUsdc, token)}${fromChain}` : 'loading'}</Row>
+          <Row label="Contest window">{p ? `${Number(p.contestWindow) / 60} minutes after the pre-check${fromChain}` : 'loading'}</Row>
+          {standing.data && <Row label="Agent company deposit">{standingWords(standing.data, token)}</Row>}
           {standing.data && standing.data.role === 'unknown' && <Row label="Note">This address is not on Recourse. A claim against it can still be filed, but any payout may be short (nothing is held for it).</Row>}
         </dl>
         <p className="muted small">The court fee comes back to you if the claim closes uncontested, expires, or is not drawn.</p>
