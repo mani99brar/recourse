@@ -2,7 +2,8 @@
 // deployments directory or party file is reported by /health, never fatal. A malformed `usdc`
 // object in the Hedera file stops startup: the vault token is never guessed.
 
-import { ipfsOptionsFromEnv, type IpfsOptions } from '@recourse/records';
+// The records ipfs module, not the barrel (see ipfs.ts: the barrel adds 87 MB at startup).
+import { ipfsOptionsFromEnv, type IpfsOptions } from '../../../packages/records/src/ipfs.js';
 import { readParties } from '@recourse/shared/node';
 import type { Parties } from '@recourse/shared';
 import { createApp } from './app.js';

@@ -4,7 +4,10 @@
 // capped at MAX_DOCUMENT_BYTES while it is read. Results are kept in a cache bounded by bytes;
 // documents that can never match are remembered, fetches that failed are retried after a pause.
 
-import { IpfsError, MAX_DOCUMENT_BYTES, fetchDocument, type IpfsOptions } from '@recourse/records';
+// Imported from the records ipfs module itself, not the @recourse/records barrel: the barrel also
+// loads the Hedera SDK, which took this service from 64 to 152 MB of anonymous memory at startup,
+// over its 160M unit cap; this module alone costs about 23 MB.
+import { IpfsError, MAX_DOCUMENT_BYTES, fetchDocument, type IpfsOptions } from '../../../packages/records/src/ipfs.js';
 import { isCanonical, parseCanonical } from '@recourse/shared';
 import type { Hex } from 'viem';
 
