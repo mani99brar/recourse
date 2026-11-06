@@ -133,6 +133,8 @@ Each service gets only the key paths, secrets and keyed URLs its own code reads;
 
 ## Checks
 
+`bash ops/watch/log-secret-scan.sh` reads every `recourse-*` journal and every file under `~/.local/state/recourse/*/` and `services/*/state/`, and looks for the values of the secret-looking variables in `~/.config/recourse/*.env` (compared inside one node process, never printed), 64-hex strings next to "key" or "private", and token, JWT, API-key and private-key shapes. It prints only the source, line numbers, the variable or pattern name and a count, and exits 1 on a hit (`node --test ops/watch/log-secret-scan.test.mjs` runs it on fixtures).
+
 ```
 systemd-analyze --user verify ~/.config/systemd/user/recourse-*.service
 systemctl --user kill -s KILL recourse-keeper; sleep 10; systemctl --user is-active recourse-keeper   # active again
