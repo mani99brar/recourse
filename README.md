@@ -288,19 +288,19 @@ Taken from `deployments/`, `deployments/wiring.json`, `packages/records/h0-ids.j
 
 ## Known limits
 
-A code review of commit `f05649d` (6 Nov 2026, by four AI models, with every finding then checked against the code) confirmed 157 findings. Each has a review finding id, R01 to R157, and a severity: P0 loses or locks funds or forges a ruling, P1 gives a wrong outcome or breaks a flow, P2 is a robustness gap, P3 is minor. There was no P0. The tables below list every P2 and P3 finding that was still present, or only partly fixed, when the findings were checked against the code at about 15:00 UTC that day: 112 of them (38 P2, 74 P3), grouped by part of the system, each with what can go wrong and the planned fix. Fixes made after that check are not reflected here yet.
+A code review of commit `f05649d` (6 Nov 2026, by four AI models, with every finding then checked against the code) confirmed 157 findings. Each has a review finding id, R01 to R157, and a severity: P0 loses or locks funds or forges a ruling, P1 gives a wrong outcome or breaks a flow, P2 is a robustness gap, P3 is minor. There was no P0. When the findings were checked against the code again at about 15:00 UTC that day, 112 P2 and P3 findings were still present or only partly fixed (38 P2, 74 P3).
+
+Since then, 18 of them have been fixed in the source by commits that name the finding or its fix: R13 (`873f6d3`, `fdf4b43`), R14 (`9fe5855`), R21 (`873f6d3`), R22 (`5e58081`), R26 (`bb5f16c`), R28 (`5a35970`), R29 (`5719e73`, `bc0175e`), R30 (`cb3b065`, `6e9f5c3`), R31 (`de695b3`), R32 (`46444f3`), R38 (`5e58081`, `e36767c`), R43 (`9fb4f9b`, `1068b29`), R47 (`108adcf`), R51 (`56fd0f6`), R53 (`109d794`), R56 (`5e58081`, `e36767c`), R57 (`873f6d3`), R58 (`5843978`). R47 is a contract change, so the deployed contracts take it only with the redeploy. The tables below list the other 94 (20 P2, 74 P3), grouped by part of the system, each with what can go wrong and the planned fix.
 
 Terms used below: the *mirror node* is Hedera's public REST read API; a service's *journal* is its append-only state file, and its *cursors* record how far it has read each source; the *party map* (`deployments/parties.json`) names each party's accounts and which records each may write; the *read-back* (`ops/wire/00-readback.sh`) reads every deployed setting and compares it with the deployment files; the *lock* is each contract's one-way `lockConfig`; a *facilitator* is the x402 service that verifies and settles a payment.
 
-<!-- BUILD: drop the rows fixed by later commits, and add any P1 finding still open after the redeploy. -->
+<!-- BUILD: drop the rows fixed by commits after 3b65adb, and add any P1 finding still open after the redeploy. -->
 
 <details>
-<summary><strong>Contracts and their deploy scripts</strong> (9)</summary>
+<summary><strong>Contracts and their deploy scripts</strong> (7)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
-| R31 | P2 | The Hedera lock script does not check that the peer and the pre-check signer are the recorded ones; a stale address locked in by mistake needs a full redeploy, unless the read-back (`ops/wire/00-readback.sh`) is run first. | Make the lock script compare the peer and the signer with the deployment files and refuse on a mismatch. |
-| R47 | P2 | If a platform posts a partial deposit before its required amount is first set, it reads as in good standing for the whole top-up window. | Start the top-up clock only for a platform that was in good standing before (needs a contract redeploy). |
 | R48 | P2 | If the pre-check signer is down for the claim timeout (18 h), a filed claim can be expired with its fee refunded, and that order can never be claimed again. | Let a claim that expired before its pre-check be filed again, or let only the shop expire it (needs a contract redeploy). |
 | R69 | P3 | Partly fixed. `hedera.sh check` passes a deployment whose signer, relayer, pool or peer is a wrong but non-zero address, for example a claims contract still pointed at the retired case contract. | Compare the signer, relayer, pool and peer with the party map and the Arbitrum deployment file. |
 | R70 | P3 | With a wrong RPC URL, the CCIP ping scripts can deploy or fund a ping on the wrong network and record it as the expected chain. | Check the RPC's chain id before a ping is deployed or funded. |
@@ -312,31 +312,22 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 </details>
 
 <details>
-<summary><strong>Keeper (the service that moves a claim between the two chains)</strong> (6)</summary>
+<summary><strong>Keeper (the service that moves a claim between the two chains)</strong> (4)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
 | R34 | P2 | If a Kleros nudge (a public call that moves a dispute along: passPeriod, executeRuling, draw, passPhase) goes pending and later fails, the keeper never retries it. An executeRuling stuck this way holds the claim until the operator steps in. | Keep a nudge open until its transaction succeeds, and retry it when it reverts or is dropped. |
 | R49 | P2 | A call that is accepted, then mines reverted, is retried forever and never counts toward the failure limits that hold the claim and alert the operator. | Count a mined revert like any other failure, so the hold and the alert apply. |
-| R51 | P2 | A `--dry-run` writes to the live keeper's journal and cursors and can settle its open transactions, so run it only with a copy of the state folder (`KEEPER_STATE_DIR` pointed elsewhere). | Point a dry run's journal and cursors at a copy, so it never writes to the live state. |
-| R53 | P2 | A mirror node (Hedera's public REST read API) or pre-check endpoint that sends headers and then stalls mid-body blocks the keeper's tick until the runtime's own body timeout ends it. | Keep the request timeout running until the whole body is read. |
 | R87 | P3 | If the keeper crashes between reading a bridge-wide event (a rejected CCIP message or an appeal contribution) and handling it, that event's alert is never raised. | Journal a marker after each such event is handled, and raise any unhandled alert on replay. |
 | R88 | P3 | While the parameter read fails, the keeper keeps using the last bridge mode it read. If the mode changed before the lock during such an outage, its relay calls revert and count as failures. | Forget the mode when the read fails, and send no relay call until it is read again. |
 
 </details>
 
 <details>
-<summary><strong>Pre-check, intake and docket services</strong> (12)</summary>
+<summary><strong>Pre-check, intake and docket services</strong> (5)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
-| R13 | P2 | After a crash mid-write, or during an RPC error or indexer lag, the docket can create a second Arkiv entity for the same case or count. | Keep a write's intent until its transaction is known to have failed or is found. |
-| R21 | P2 | If pinning the reason document fails once, the case is published with no reason CID and its reviews carry an empty feedback link, permanently. | Retry the pin, and hold the case's reviews until the reason document is pinned. |
-| R22 | P2 | Once the shared ERC-8004 registry has more than 5,000 logs, a retry or restart can send a duplicate review. | Search the registry from the review's own time, and retry rather than resend when the search is cut short. |
-| R38 | P2 | A single RPC timeout during the agent-id check can skip a review permanently or turn reviews off until restart. | Treat only a contract revert as "not registered", and check again on the next pass after any other error. |
-| R56 | P2 | If the receipt wait times out after a review is broadcast, the tx hash is not recorded and a retry may send the review again. | Journal the transaction hash before waiting for its receipt, and check that receipt before sending again. |
-| R57 | P2 | If the "did it land?" lookup fails after a create whose reply was lost, the docket can create the entity a second time. | Skip that write for the pass when the lookup fails, and try again on the next. |
-| R58 | P2 | If a shop's claim names a record sequence number that does not exist yet, its pre-check retries until the claim expires, even when the record is in the index. | Reject a reference to a record written after the filing, and fall back to the indexed records. |
 | R65 | P3 | Batch draws (a Kleros option where jurors are drawn later) are not built, so the docket's handling of a case closed before any juror was drawn is unused code. | Remove it, or wire it in when batch draws are built. No effect today. |
 | R66 | P3 | Intake (the feedback tagger) answers 500 for a non-text order id, and records sent only by CID are not used unless an order id is given. | Answer 400 for a bad order id, and take the order id from a fetched document when none is given. |
 | R99 | P3 | Arkiv entities expire 182 days after creation even if they were updated later, and extension is not built. | Correct `arkiv/schema.md`, or extend an entity's life when it is updated. |
@@ -367,14 +358,11 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 </details>
 
 <details>
-<summary><strong>Shared packages (records, court evidence, canonical encoding)</strong> (17)</summary>
+<summary><strong>Shared packages (records, court evidence, canonical encoding)</strong> (14)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
-| R14 | P2 | If evidence posting fails after a test dispute is created, a rerun will not post it; it must be posted by hand. | On a rerun, post the missing evidence for the stored dispute. |
-| R26 | P2 | For a court case that can no longer proceed, the status API and Case page can offer 'end the claim' up to about 16 h before Hedera accepts it, and that transaction reverts. | Use the contract's own cut-off for a dead case, and offer "end the claim" only once Hedera accepts it. |
 | R27 | P2 | A buyer's approval does not pin offer values longer than 120 characters or ones that differ only in hidden whitespace or control characters. | Refuse offer values that are too long or that differ from their cleaned form. |
-| R28 | P2 | Two concurrent commits of different documents for the same order record in one process: the second gets the first one's commit instead of a conflict error. | Compare the document hash before reusing a commit in flight, and fail with a conflict on a mismatch. |
 | R67 | P3 | Two commands started within a few microseconds of each other can both take the journal lock on one host. | Treat an empty or invalid process id in the lock as "not written yet" and retry. |
 | R77 | P3 | Handling amounts use testnet demo values (1 USDC base, 4 USDC cap) instead of the design's 15 and 40; they are recorded only in the interfaces spec changelog. | Add a row for them to `docs/decisions.md`. |
 | R78 | P3 | The local test relay can deliver a CCIP message whose sending transaction reverted at a higher level (local runs only). | Stop the local relay from delivering a message whose sending call failed. |
@@ -420,11 +408,10 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 </details>
 
 <details>
-<summary><strong>Web app</strong> (17)</summary>
+<summary><strong>Web app</strong> (16)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
-| R32 | P2 | After moving from one claim or party to another, the page can show the previous one's figures until the new read arrives, or for good if it fails. | Clear the old figures when the page moves to another claim or party. |
 | R64 | P2 | There is no approval page: the buyer approves with the agent CLI and cannot check the rendered offer and its hash in the browser. | Add an approval page that re-renders the offer and checks its hash in the browser. |
 | R71 | P3 | If the status API is down or rebuilding, a search for a real claim says nothing matches. | Say the search could not run, instead of showing no matches. |
 | R85 | P3 | A status the web bundle does not know (API newer than the page) or a malformed reply blanks the whole site. | Show an unknown status by its raw name, and catch page errors in an error card. |
@@ -445,14 +432,11 @@ Terms used below: the *mirror node* is Hedera's public REST read API; a service'
 </details>
 
 <details>
-<summary><strong>Operations scripts (funding, wiring, checks, secret scan)</strong> (18)</summary>
+<summary><strong>Operations scripts (funding, wiring, checks, secret scan)</strong> (15)</summary>
 
 | Id | Sev. | Limit | Plan |
 |---|---|---|---|
 | R15 | P2 | Partly fixed. Until the next read-back with `--record`, `deployments/wiring.json` still names the retired claims contract as the case contract's peer (with a note); the chain itself is correct. | Run the read-back with `--record` once; the redeploy rewrites the file anyway. |
-| R29 | P2 | The funding scripts trust the RPC env vars: a swapped or mistyped endpoint would send the deployer's HBAR/ETH on another chain where the same keys hold funds. | Check each RPC's chain id before any funding send. |
-| R30 | P2 | Partly fixed. A short (12-19 character) or punctuated secret caught by the env-assignment rule is still printed in the secret scan's output. | Redact the whole value on a matching line, and add a test for short secrets. |
-| R43 | P2 | If an RPC URL with an API key in it is set and a call fails, the check table (and `docs/checks.md`) can show the key from cast's error text. | Cut every URL in error text to its host. |
 | R80 | P3 | `02-fund-hedera-roles.sh --send` stops with a cast error if the buyer or the facilitator has no Hedera account yet. | Skip a role with no account, with a note, instead of sending. |
 | R81 | P3 | Each re-run of `03-fund-arbitrum.sh --send` moves another 0.035 ETH from the deployer to ops-arb. | Send only the shortfall up to the target balance. |
 | R83 | P3 | While a wiring, funding or check script runs, any local user can read a keyed RPC URL from the process list. | Pass the RPC URL in the environment instead of on the command line. |

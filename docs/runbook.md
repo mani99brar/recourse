@@ -8,7 +8,7 @@ How to start, stop, check and recover each service on this host. The unit files,
 |---|---|---|---|
 | `recourse-keeper` | 8706 | moves claims between Hedera and Arbitrum Sepolia: CCIP sends, opening cases, evidence, ruling relay, settle | `~/.local/state/recourse/keeper` (journal, control file) |
 | `recourse-precheck` | 8705 | records the rule-based answer on each filed claim | `~/.local/state/recourse/precheck` |
-| `recourse-shop` | 8720 | x402 seller and claim filer; public through a tunnel | `~/.local/state/recourse/shop` (`services/shop/state` until its journals are moved) |
+| `recourse-shop` | 8720 | x402 seller and claim filer; public through a tunnel | `~/.local/state/recourse/shop` (`SHOP_STATE_DIR`; the journals have been moved there from `services/shop/state`) |
 | `recourse-status-api` | 8787 | claims, chain state and documents for the web app | `~/.local/state/recourse/status-api` |
 | `recourse-docket` | 8707 | fault rates | `~/.local/state/recourse/docket` |
 | `recourse-intake` | 8716 | tags public feedback text | `~/.local/state/recourse/intake` |
@@ -53,7 +53,7 @@ bash ops/watch/log-secret-scan.sh     # no key, token or keyed URL in any journa
 - **precheck**: `ok` (false while a source is failing), `errors` (the failing sources), `lastError` (the latest, kept after it clears), `lag.mirrorS`, `queue` (claims still open), `claims` by state, `pause`.
 - **shop**: `facilitator` (`rung`, `consecutiveFailures`), `lastError`.
 - **status-api**: `sources.hedera|arbitrum|hcs` (`lagS`, `lastError`, `decodeFailures`), `degraded` (sources behind or failing), `rebuilding`, `asOf`.
-- **docket**: `failedWrites`, `lastEventAt`, `cursors`; its last poll failure is at `GET /sources` (`lastError`, cleared as soon as any source polls cleanly, so a failure of an early source can be gone by the end of the same tick; the journal's `poll_failed` lines keep each one), which `ctl.sh health` shows as `sources.lastError`. **intake**: `llmStatus` (`disabled` with no LLM key or model, `paused` after a 402 or 429, `error`, `invalid_output`). **web**: `ok`. **tunnels**: `readyConnections`.
+- **docket**: `failedWrites`, `lastEventAt`, `cursors`; its last poll failure is at `GET /sources` (`lastError`: the last failure of the latest poll pass, kept even when a later source in that pass answers, and null once a whole pass polls cleanly; the journal's `poll_failed` lines keep each one), which `ctl.sh health` shows as `sources.lastError`. **intake**: `llmStatus` (`disabled` with no LLM key or model, `paused` after a 402 or 429, `error`, `invalid_output`). **web**: `ok`. **tunnels**: `readyConnections`.
 
 The running keeper may predate some of these fields (`problems` and the 503 came with a later commit); `ctl.sh health` copes with either.
 
