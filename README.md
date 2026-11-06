@@ -6,7 +6,7 @@ An agent pays a shop over x402 on Hedera. Before it pays, it commits what it was
 
 Built at ETHGlobal Mumbai, 5-7 Nov 2026. Testnets only. All shop and agent-company names are fictional.
 
-> **Status: nothing is deployed yet.** The contracts, services and web app are written and tested locally. No contract has been deployed to a testnet, no account is funded, and no claim has been filed on a live network. See [What is live and what is not](#what-is-live-and-what-is-not). Every address and transaction section below is a placeholder until that changes.
+> **Status, 6 Nov 2026: running on testnets, configuration not locked.** The contracts are deployed on Hedera testnet and Arbitrum Sepolia, the services run on one host, and one contested claim has been ruled by Kleros court 8 (dispute 212), with the ruling on its way back to Hedera. None of the three contracts is locked yet, so the deployer key can still change every setting, including ones that decide claims ([owner powers](#owner-powers-and-spend-paths)). See [What is live and what is not](#what-is-live-and-what-is-not).
 
 ## Contents
 
@@ -152,7 +152,7 @@ The local runs use mock HTS, a mock arbitrator and the CCIP local simulator. The
 
 ## Owner powers and spend paths
 
-The deployer key owns all three contracts (two-step ownership transfer only). The owner can configure, never rule. Each contract has a one-way `lockConfig`; the table shows what is possible before and after it.
+The deployer key owns all three contracts (two-step ownership transfer only). Each contract has a one-way `lockConfig`; the tables show what is possible before and after it. After the lock the owner can configure only the settings marked "yes" in the right-hand column, and none of them decides a claim. **Before the lock it can decide claims**: on `RecourseClaims` it can make itself the pre-check signer (`setPreCheckSigner`) and sign any finding, switch to a one-leg bridge mode with itself as the ruling relayer (`setBridgeMode`) and record any ruling, or point `setPeer` at a contract it controls and send a ruling back over CCIP; `settle`, which anyone may call, then pays from the platform's deposit. On 6 Nov 2026 none of the three contracts is locked (`configLocked()` and `locked()` read false), and the deployer keystore sits on the host that runs the services, including the two reached through public tunnels ([ops/units/README.md](ops/units/README.md#what-a-unit-can-see)). Until the lock, treat every claim as decided at the deployer's discretion.
 
 ### `RecourseClaims` (Hedera)
 
@@ -164,7 +164,7 @@ The deployer key owns all three contracts (two-step ownership transfer only). Th
 | `setFeeToken` (LINK or HBAR for CCIP fees) | yes | yes |
 | `lockConfig` | once | |
 
-The owner cannot change a recorded finding or ruling, file or settle a claim for a shop, or touch the vault's USDC. Trusted roles: the **pre-check signer** is the one trusted step (it signs the finding; anyone can re-run the check from the public records, and a wrong finding can be contested). The **ruling relayer** can record rulings only in the one-leg modes; in the default two-way mode that call is refused.
+The owner cannot change a finding or ruling once it is recorded, file a claim for a shop, or move the vault's USDC itself; before the lock it can still choose who records the findings and rulings of claims not yet decided, as above. Trusted roles: the **pre-check signer** is the one trusted step (it signs the finding; anyone can re-run the check from the public records, and a wrong finding can be contested). The **ruling relayer** can record rulings only in the one-leg modes; in the default two-way mode that call is refused, and only the owner can change the mode, before the lock.
 
 Spend paths: LINK or HBAR leaves for CCIP fees only, through `sendToCourt` and `resend` (permissionless, at most `maxSends` per claim and `resendGap` apart), and through `sweepLink` and `sweepNative` before the lock. No function accepts USDC.
 
@@ -201,13 +201,13 @@ Ten roles, each with its own Foundry keystore kept outside the repo ([docs/keys.
 | Part | State |
 |---|---|
 | Solidity contracts (Claims, Vault, Case) | Written. Unit, fuzz and invariant tests pass locally. DepositVault (`0.0.11336129`) and RecourseClaims (`0.0.11336130`) are deployed on Hedera testnet on a testnet mock USDC (`mUSDC`), because Circle's testnet USDC faucet did not deliver; config not locked yet; see `deployments/hedera.json` (`usdc.mode` is `mock`, with the mock's address). The first deployment (`0.0.11329716`, `0.0.11329717`, on Circle USDC `0.0.429274`) is retired and listed in `deployments/retired.json`. RecourseCase (`0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8`) is deployed on Arbitrum Sepolia; see `deployments/arbitrum.json`. |
-| Deploy and wiring scripts | Written and rehearsed on local anvils. The Hedera deploy, USDC association and parameter steps have run on testnet, and so has the Arbitrum deploy; the wiring steps run so far are listed in `deployments/wiring.json`. |
+| Deploy and wiring scripts | Written and rehearsed on local anvils. The Hedera deploy, USDC association and parameter steps have run on testnet, and so has the Arbitrum deploy. `deployments/wiring.json` lists the wiring steps run through the scripts; its first Hedera rows were sent to the retired claims contract and are marked `retired`. The replacement claims contract was wired outside the scripts (its peer, its LINK, and RecourseCase repointed to it in `0x0bf1a1f62c9a62066128d31de5a26e637b2616044d4c93ddee6b5bc3d4ad1e8f`, see `deployments/retired.json`). |
 | TypeScript services (shop, pre-check, keeper, docket, intake, status API) | Running on one host against Hedera testnet and Arbitrum Sepolia, as systemd user units ([ops/units/README.md](ops/units/README.md)). The buying agent has no long-running service; it places one order per run from the command line. |
 | Web app | Built and served from the same host by `recourse-web`, reached through a Cloudflare quick tunnel. A quick tunnel's name changes on every restart, so no URL is pinned here; `bash ops/units/ctl.sh urls` prints the current one. |
-| Orders and claims | Two x402 payments have settled on Hedera testnet in HBAR through the x402.org facilitator (listed below). The second paid for a demo order, which the shop then claimed against. The pre-check answered 3 ("neither": the agent's mandate had approved the size change the claim was about), nobody contested within the window, and the keeper closed the claim; the 1 mUSDC court fee went back to the shop as credit. No claim has reached a court yet. |
-| Funding | Small. The Hedera roles hold a few HBAR each from the faucet (at most 10 HBAR per address). On Arbitrum Sepolia the deployer and `ops-arb` hold test ETH and RecourseCase's fee pool holds 0.01 ETH for Kleros fees; the claims contract holds test LINK for CCIP fees (`ops/wire/12-set-fee-token.sh` switches it between LINK and HBAR). Circle testnet USDC was requested for the platform, shop and agent and never arrived; the vault's `mUSDC` is minted by the deployer, the mock's owner. With orders paid in HBAR (`PRICE_ASSET=hbar`) the agent needs no USDC; its HBAR floor is then 8 (`ops/fund/lib.sh`). |
-| CCIP lanes | Public lanes exist on both testnets and the peers are set both ways; no message from this project has been sent, because the one claim so far settled on Hedera alone. |
-| Kleros dispute | No dispute has been created by this project. |
+| Orders and claims | Two x402 payments have settled on Hedera testnet in HBAR through the x402.org facilitator (listed below). The second paid for a demo order, which the shop then claimed against. The pre-check answered 3 ("neither": the agent's mandate had approved the size change the claim was about), nobody contested within the window, and the keeper closed the claim; the 1 mUSDC court fee went back to the shop as credit. A second claim (`0x392d6f13…7c3c50`, a second demo order) was also pre-checked 3; the shop contested it, it went to Arbitrum over CCIP and became Kleros dispute 212, and the court ruled 3 ("neither"). When this was written (6 Nov, 10:56 UTC) the ruling had been relayed back over CCIP but not yet executed on Hedera, so the claim was not settled and its court fee was still in escrow. |
+| Funding | Small. The Hedera roles hold a few HBAR each from the faucet (at most 10 HBAR per address). On Arbitrum Sepolia the deployer and `ops-arb` hold test ETH and RecourseCase's fee pool, funded with 0.01 ETH for Kleros fees, held 0.00919 ETH after dispute 212; RecourseCase holds no LINK, so the keeper pays the ruling's CCIP fee in ETH from `ops-arb`. The claims contract holds test LINK for CCIP fees (`ops/wire/12-set-fee-token.sh` switches it between LINK and HBAR). Circle testnet USDC was requested for the platform, shop and agent and never arrived; the vault's `mUSDC` is minted by the deployer, the mock's owner. With orders paid in HBAR (`PRICE_ASSET=hbar`) the agent needs no USDC; its HBAR floor is then 8 (`ops/fund/lib.sh`). |
+| CCIP lanes | Public lanes exist on both testnets and the peers are set both ways. Two messages so far, both for claim `0x392d…`: `ClaimToCourt` to Arbitrum (executed) and `RulingBack` to Hedera (sent 6 Nov 10:51 UTC, not yet executed when this was written). |
+| Kleros dispute | Dispute 212 in court 8, opened by RecourseCase on 6 Nov at 09:08 UTC and ruled 3 ("neither") at 10:43 UTC. |
 | Arkiv docket | The docket runs on its local store; no entity has been written to the Arkiv testnet. |
 | ERC-8004 identities | Registered in the identity registry `0x8004A818BFB912233c491871b3d84c89A494BD9e` on Hedera testnet: agent 149 is the platform ("Parcel Minds"), agent 150 the shop ("Halden Supply"). No review has been written; reviews follow a case on the docket. |
 | Source verification | Not done for any contract yet. |
@@ -217,7 +217,7 @@ What is mocked in tests and local runs, which deploy their own mocks: HTS and th
 
 ## Deployed addresses and transactions
 
-Taken from `deployments/`, `deployments/wiring.json`, `packages/records/h0-ids.json` and the Hedera mirror node. All testnet.
+Taken from `deployments/`, `deployments/wiring.json`, `packages/records/h0-ids.json`, the Hedera mirror node and the status API's chain reads (`GET /claims/<id>`). All testnet.
 
 | Item | Chain | Address or id | Transaction | Explorer | Source verification |
 |---|---|---|---|---|---|
@@ -230,13 +230,15 @@ Taken from `deployments/`, `deployments/wiring.json`, `packages/records/h0-ids.j
 | First settled x402 payment (0.1 HBAR, agent `0.0.11329682` to shop `0.0.11329680`) | Hedera testnet | n/a | `0.0.9185802@1793949477.114377745` | [HashScan](https://hashscan.io/testnet/transaction/1793949483.409917104) | n/a |
 | First demo order payment (1.5 HBAR, same accounts) | Hedera testnet | order `0x1bf80d52b5b114f4318d40259c3bc2990db86f8e82a5101abafb337f4f3ad802` | `0.0.9185802@1793954349.706075765` | [HashScan](https://hashscan.io/testnet/transaction/1793954357.635329575) | n/a |
 | First claim: filed, pre-checked, closed uncontested | Hedera testnet | claim `0x9cd704684c56a0ba1ff17ba9765d7c1e8521e78a3d0a4bbe7935d5a2a87e412c` | `0x8b1c0ace74283adc097c8f557b4adffaac2dcab530467d58b92a50612297c789`, `0x2c8d558a26cd071e74cac125179fc51b592c83f9bd3af96db2a7bf69b37a1deb`, `0x243c3b5403d70a87dc78713ab337e97386c2ea37683fcb87245b68d58f3e9665` | [HashScan](https://hashscan.io/testnet/contract/0.0.11336130) | n/a |
-| First CCIP message each way | both | not sent | not sent | not sent | n/a |
-| First Kleros case | Arbitrum Sepolia | not opened | not opened | not opened | n/a |
+| First claim taken to court: filed, pre-checked, contested, sent | Hedera testnet | claim `0x392d6f13cdf5fe1ca93289d143e51b511f333de3d6d1769c72ddd0039c7f3c50` | `0xb0486c1e1cec26ef8910dceb092888e00ad2f798590531f36fe56ceb99679776`, `0x22454f7e9df75d5052a39a8c7cfa0a74c3696ebaf9f6e75d6adcd40621990810`, `0xd4b1351daa9bf82b3bc6bf086b80e7117e7e84cda66ea20e1db3d33f6453fec3`, `0xcf5236a69f8c8a0d8c4d537993692e41bdd4194ba2b2027eaea0037bebe933c4` | [HashScan](https://hashscan.io/testnet/contract/0.0.11336130) | n/a |
+| First CCIP message to Arbitrum (`ClaimToCourt`) | Hedera to Arbitrum Sepolia | message `0x6631dc70a8a954c4e442cb8104af8d5c45b2117724d6deea096e9a8d6bc60adc` | sent in `0xcf5236a6…e933c4`, received in `0x27555711edfb76427d17b791aec8bc25c6ab7e70a33e19588aa9e662da3bd7db` | [CCIP Explorer](https://ccip.chain.link/msg/0x6631dc70a8a954c4e442cb8104af8d5c45b2117724d6deea096e9a8d6bc60adc) | n/a |
+| First Kleros case | Arbitrum Sepolia | dispute 212, court 8 | opened `0x993c49af2b77ed0710c5e3f5d17efc9789e80333a488ca3f894058ae6eb83a42`, ruled `0xeebfe2fea6267ecc3acbdc30a6ab74981ed653b4efba12c0abae86f06e41d417` | [Kleros](https://v2-testnet.kleros.builders/#/cases/212/overview) | n/a |
+| First CCIP message to Hedera (`RulingBack`) | Arbitrum Sepolia to Hedera | message `0xbc0bb5f319c9045d70576b7a906c84b149a10c6de6638eda8eb4148e29d52ff3` | sent in `0x6d471236aac5149728e96e977fc492ff2b5536fefeb8c545bf121e29a8f13c0d`; not executed on Hedera when this was written | [CCIP Explorer](https://ccip.chain.link/msg/0xbc0bb5f319c9045d70576b7a906c84b149a10c6de6638eda8eb4148e29d52ff3) | n/a |
 | Arkiv writer wallet | Arkiv testnet | `0x54E4545AFcf8960884A750320e70aFE16b2b3CaE` (address only, no entity written yet) | n/a | n/a | n/a |
 
 ## Disclosures
 
-- Records are public by CID. Buyer fields inside them are salted, but the documents themselves are readable by anyone who has the CID.
+- Records are meant to be public by CID. Each record's CID and SHA-256 are on the public HCS topic, but the documents are not on public IPFS yet: Filebase pinning is not configured, so the demo host keeps them in its own content store and nobody off the host can fetch them. Buyer fields inside them are salted; once they are pinned publicly, anyone who has the CID can read them.
 - The shop attests its own net loss when it files (capped at the basket value); the pre-check signer is a trusted step; the docket is de-identified, and the scheme wallet that writes it also receives any unrefunded escrow.
 - A platform with no deposit can still be claimed against; the shortfall is shown, not hidden.
 - The court is Kleros testnet court 8, a test court with test jurors, not a production one.

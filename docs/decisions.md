@@ -39,8 +39,8 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 | Facilitator | x402.org first, then Blocky402, then self-hosted. |
 | Order payments | x402 orders on the testnet demo are priced and paid in HBAR (1 HBAR per 1 USDC of list price), set by PRICE_ASSET=hbar. Agent spend limits stay in USDC and the HBAR amount is converted before comparison. The deposit, court fee and payouts stay in the vault's token (see Vault token). |
 | Vault token | The testnet demo's vault runs on a mock 6-decimal USDC (mUSDC, owner-minted) because the Circle faucet did not deliver to our accounts. deployments/hedera.json records usdc.mode; every reader takes the token from that record, so one deployment never mixes tokens. The first deployment, on Circle USDC, is retired (deployments/retired.json). |
-| Privacy | Record docs are public by CID (disclosed). Buyer fields are salted. The docket is de-identified. |
-| Contest | The losing side contests, within a 30-minute window. |
+| Privacy | Record docs are named by CID and SHA-256 on the public HCS topic and are meant to be public by CID (disclosed). Until a public pin (Filebase) is configured they sit in the demo host's own content store, so nobody off the host can fetch them. Buyer fields are salted. The docket is de-identified. |
+| Contest | The losing side contests within the contest window, counted from `preCheckedAt`: 600 s (10 minutes) on the live contract until the config lock, 1,800 s (30 minutes) after it (`params.json`, `preLock` and `locked`). Read it from `params().contestWindow`; the lock changes it for claims already pre-checked, so lock only when none is open. |
 | Good standing | The shop checks `inGoodStanding` before it accepts an order. |
 | Top-up | Derived on every read, with a `topUpDeadline` view and a `TopUpCleared` event. |
 | Unknown platform | Claims against a platform with no deposit are allowed. The `Shortfall` is shown. |
@@ -63,4 +63,5 @@ Build defaults taken on 5 Nov 2026. The operator can change any row; open questi
 - Circle testnet USDC is no longer needed for the demo: the faucet did not deliver, so the vault runs on the mock mUSDC (see Vault token). Moving to Circle's token later is a new deployment recorded with `usdc.mode` `circle`, after the accounts are associated.
 - An Arkiv Hub access key. Until then, the docket writes to the local store.
 - An LLM key for the intake classifier. Until then, intake runs the shared rule only.
+- A public IPFS pin (the Filebase key, secret and bucket). Until then, record documents stay in the demo host's content store.
 - A public HTTPS URL for the shop and status API (tunnel by default).

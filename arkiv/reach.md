@@ -1,8 +1,11 @@
 # Reach
 
-Who can read and build on the docket, and how.
+Who can read and build on the docket, and how, once it writes to Arkiv. On 6 Nov 2026 it does not
+yet: the docket service runs on its local store and no entity exists on the Arkiv testnet, so every
+read below returns no rows until `DOCKET_STORE=arkiv` is set with an access key (see
+`readme-section.md`).
 
-- **Anyone with an RPC endpoint.** The entities are public. A reader needs no account, only the
+- **Anyone with an RPC endpoint.** The entities will be public. A reader needs no account, only the
   writer's address, which the README publishes. A query by owner and tier returns every ruled case.
 - **The docket page.** It reads the `case` entities straight from Arkiv in the browser and computes
   each party's fault rate with a Wilson interval from them, so the numbers can be rechecked from

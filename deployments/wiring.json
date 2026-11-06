@@ -9,7 +9,8 @@
     "casePeer": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
     "arbSelector": "3478487238524512106",
     "claimsPeer": "0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
-    "hederaSelector": "222782988166878823"
+    "hederaSelector": "222782988166878823",
+    "note": "claimsPeer is the retired claims contract 0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C (retired.json). RecourseCase.peer() has read the live claims 0xc4d457991eE42438EA433773e491ba8F2B27dDee since tx 0x0bf1a1f62c9a62066128d31de5a26e637b2616044d4c93ddee6b5bc3d4ad1e8f (read-only check, 2026-11-06). 00-readback.sh --record rewrites this block from the chain."
   },
   "extraArgs": {
     "toArbitrum": "0x181dcf1000000000000000000000000000000000000000000000000000000000000249f00000000000000000000000000000000000000000000000000000000000000001",
@@ -38,7 +39,9 @@
       "tx": "0xafb362f6359a431922572bc9eda21dab4e817ccf94e6f0dc8459a0b8f923d40a",
       "at": "2026-11-06T06:31:26Z",
       "result": "peer = 0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
-      "by": "agentops"
+      "by": "agentops",
+      "retired": true,
+      "retiredNote": "sent to the retired claims contract 0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C, not to the live 0xc4d457991eE42438EA433773e491ba8F2B27dDee"
     },
     {
       "id": "W3-case-peer",
@@ -48,7 +51,9 @@
       "tx": "0x8dede3bb76a399c8d07f72befa2f4645c5ec8120ad84955ff69060d0298a7163",
       "at": "2026-11-06T06:31:37Z",
       "result": "peer = 0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
-      "by": "agentops"
+      "by": "agentops",
+      "retired": true,
+      "retiredNote": "pointed RecourseCase at the retired claims contract; superseded by setPeer(0xc4d457991eE42438EA433773e491ba8F2B27dDee) in tx 0x0bf1a1f62c9a62066128d31de5a26e637b2616044d4c93ddee6b5bc3d4ad1e8f"
     },
     {
       "id": "W3a-claims-fee-token",
@@ -58,7 +63,9 @@
       "tx": "0x421418ee2557c7acc3da4009ad94d9b69794cd2d4a300c96e1fd4cd1cd0de75f",
       "at": "2026-11-06T06:33:03Z",
       "result": "feeToken = 0x0000000000000000000000000000000000000000 (native)",
-      "by": "agentops"
+      "by": "agentops",
+      "retired": true,
+      "retiredNote": "sent to the retired claims contract 0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C, not to the live 0xc4d457991eE42438EA433773e491ba8F2B27dDee"
     },
     {
       "id": "W5-claims-native",
@@ -68,7 +75,9 @@
       "tx": "0x3d7d12dc7b29bfd2912f80ec6a190d379388cd5c3eb96189299eb55b8e5279e2",
       "at": "2026-11-06T06:33:29Z",
       "result": "balance 3000000000000000000 weibar",
-      "by": "agentops"
+      "by": "agentops",
+      "retired": true,
+      "retiredNote": "sent to the retired claims contract 0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C, not to the live 0xc4d457991eE42438EA433773e491ba8F2B27dDee"
     },
     {
       "id": "W6-fee-pool",
@@ -80,5 +89,6 @@
       "result": "feePool 10000000000000000",
       "by": "agentops"
     }
-  ]
+  ],
+  "stepsNote": "Rows marked retired describe the first Hedera deployment, retired 2026-11-06 (retired.json). The replacement claims contract was wired outside these scripts: its setPeer and its LINK funding are not rows here, and RecourseCase was repointed to it in tx 0x0bf1a1f62c9a62066128d31de5a26e637b2616044d4c93ddee6b5bc3d4ad1e8f. Since then Claims pays CCIP fees in LINK (feeToken = Hedera LINK), not in HBAR."
 }
