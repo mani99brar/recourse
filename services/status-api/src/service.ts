@@ -9,10 +9,12 @@ import {
   deriveStatus,
   externalIdUint,
   hcsWritersFor,
+  orderWritersFor,
   partyByAddress,
   partiesByRole,
   sideOf,
   type Answer,
+  type OrderParties,
   type Parties,
   type Party,
   type StatusKey,
@@ -379,9 +381,15 @@ export class StatusService {
     return `${prefix}.${num}`;
   }
 
-  async recordInfo(orderId: Hex, kind: number, ref?: { topicNum: bigint; seq: bigint; hash: Hex }): Promise<RecordInfo> {
+  /**
+   * One record of an order. With `order` (the platform and shop the claim names), only that
+   * platform's or shop's own hcsWriters count as payers, as in the pre-check; without it (an order
+   * with no claim yet), a writer of any party of the role does.
+   */
+  async recordInfo(orderId: Hex, kind: number, ref?: { topicNum: bigint; seq: bigint; hash: Hex }, order?: OrderParties): Promise<RecordInfo> {
     const key = RECORD_KEYS[kind] ?? 'unknown';
     const parties = this.d.parties();
+    const writers = parties === null ? null : order ? orderWritersFor(parties, kind, order) : hcsWritersFor(parties, kind);
     const store = this.d.store;
     let msg: HcsRecord | undefined;
     // True when the topic has not been read far enough to say whether the message exists.
@@ -394,10 +402,9 @@ export class StatusService {
     }
     if (!msg && !(ref && ref.seq > 0n)) {
       // The topic has no submit key: anyone can post a well-formed record for any order. The
-      // earliest message from a configured writer of this kind counts; a stranger's is shown only
-      // when no writer's exists.
+      // earliest message from a writer of this kind (the order's own platform or shop when the
+      // claim names them) counts; anyone else's is shown only when no writer's exists.
       const cand = (this.ordersIndex().get(orderId) ?? []).filter((r) => r.kind === kind).sort((a, b) => a.seq - b.seq);
-      const writers = parties ? hcsWritersFor(parties, kind) : null;
       msg = (writers ? cand.find((r) => writers.has(r.payer)) : undefined) ?? cand[0];
       const st = store.status.hcs;
       if (!msg && this.d.cfg.recordsTopic !== '' && (st.indexedThrough === null || st.failing)) unread = true;
@@ -406,7 +413,7 @@ export class StatusService {
     if (!msg) {
       return { kind, key, seq: Number(ref?.seq ?? 0n), payer: null, payerOk: false, hash: refHash === ZERO32 ? null : refHash, cid: null, held: unread ? null : false, hashOk: null, refsMatch: false, doc: null, unread };
     }
-    const payerOk = parties !== null && hcsWritersFor(parties, kind).has(msg.payer);
+    const payerOk = writers !== null && writers.has(msg.payer);
     let hashOk: boolean | null = null;
     let doc: unknown | null = null;
     if (payerOk) {
@@ -437,9 +444,18 @@ export class StatusService {
   async recordsOfOrder(orderId: string) {
     if (!HEX32.test(orderId)) throw new ApiError(400, 'bad_id');
     const id = orderId.toLowerCase() as Hex;
+    let claimId: string | null = null;
+    let order: OrderParties | undefined;
+    for (const cid of this.d.store.claimIds()) {
+      const c = this.foldOf(cid);
+      if (c?.orderId === id) {
+        claimId = cid;
+        order = { platform: c.platform, shop: c.shop };
+        break;
+      }
+    }
     const records = [];
-    for (let k = 0; k < 6; k++) records.push(await this.recordInfo(id, k));
-    const claimId = this.d.store.claimIds().find((cid) => this.foldOf(cid)?.orderId === id) ?? null;
+    for (let k = 0; k < 6; k++) records.push(await this.recordInfo(id, k, undefined, order));
     return { orderId: id, claimId, records };
   }
 
@@ -467,7 +483,9 @@ export class StatusService {
     const live = this.d.store.live.get(id);
     const records = [];
     for (let k = 0; k < 6; k++) {
-      records.push(await this.recordInfo(c.orderId, k, { topicNum: c.refs.topicNum, seq: c.refs.seq[k] ?? 0n, hash: (c.refs.hashes[k] ?? ZERO32) as Hex }));
+      records.push(
+        await this.recordInfo(c.orderId, k, { topicNum: c.refs.topicNum, seq: c.refs.seq[k] ?? 0n, hash: (c.refs.hashes[k] ?? ZERO32) as Hex }, { platform: c.platform, shop: c.shop }),
+      );
     }
     const dep = this.d.deployments;
     const attemptsOpened = events.filter((e) => e.name === 'CaseOpened');
