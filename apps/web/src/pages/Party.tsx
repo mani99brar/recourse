@@ -1,6 +1,6 @@
 import { WithdrawAction } from '../actions/forms.js';
 import { Banner, Card, Loading, Pill, Row } from '../components.js';
-import { usePoll, type Fresh } from '../lib/api.js';
+import { READS, usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when } from '../lib/format.js';
 import { GROUP_WORDS, STATUS_WORDS } from '../lib/words.js';
 import type { StatusKey, VaultToken } from '@recourse/shared';
@@ -50,7 +50,7 @@ export function ClaimList({ rows }: { rows: RowT[] }) {
 }
 
 export function PartyPage({ address }: { address: string }) {
-  const { data, error } = usePoll<ClaimsBody>(`/claims?party=${address}`);
+  const { data, error } = usePoll<ClaimsBody>(READS.partyClaims(address));
   return (
     <>
       <Banner fresh={data ?? undefined} error={error} />

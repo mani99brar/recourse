@@ -17,8 +17,8 @@ export function injectedProvider(): EIP1193Provider | null {
 /** Why a wallet step stopped. `rejected`: the person said no in the wallet. */
 export class WalletStop extends Error {
   constructor(
-    readonly kind: 'no_wallet' | 'no_account' | 'rejected' | 'wrong_chain' | 'wrong_account' | 'reverted' | 'timeout' | 'wallet' | 'too_late' | 'stale',
-    readonly facts: { need?: string; have?: string; hash?: Hash; chainId?: number; said?: string } = {},
+    readonly kind: 'no_wallet' | 'no_account' | 'rejected' | 'wrong_chain' | 'wrong_account' | 'reverted' | 'timeout' | 'wallet' | 'too_late' | 'stale' | 'fee_changed',
+    readonly facts: { need?: string; have?: string; hash?: Hash; chainId?: number; said?: string; gas?: string; budget?: string } = {},
   ) {
     super(kind);
   }
@@ -233,6 +233,8 @@ export function stopWords(s: WalletStop): string {
       return 'The deadline for this call has passed, so it would fail. Build it again to see where the claim stands.';
     case 'stale':
       return 'This preview is more than five minutes old. Build it again so the amounts and fees are current.';
+    case 'fee_changed':
+      return `Now that the step before it has mined, the next step needs more gas (${s.facts.gas ?? 'more'}) than the preview allowed for (${s.facts.budget ?? 'its budget'}), so nothing more was sent. Build it again to see the new fee; the steps already mined stay on chain.`;
     default:
       return `Your wallet stopped the request: ${s.facts.said ?? 'no reason given'}.`;
   }

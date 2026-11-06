@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Banner, Card, Loading } from '../components.js';
-import { getApi, usePoll } from '../lib/api.js';
+import { READS, getRead, usePoll } from '../lib/api.js';
 import { ClaimList, type ClaimsBody } from './Party.js';
 
 interface SearchBody {
@@ -12,12 +12,12 @@ const TYPE_WORDS: Record<string, string> = {
 };
 
 export function HomePage() {
-  const { data, error } = usePoll<ClaimsBody>('/claims');
+  const { data, error } = usePoll<ClaimsBody>(READS.claims());
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<SearchBody['hits'] | null>(null);
   async function search() {
     try {
-      setHits((await getApi<SearchBody>(`/search?q=${encodeURIComponent(q.trim())}`)).hits);
+      setHits((await getRead<SearchBody>(READS.search(q.trim()))).hits);
     } catch {
       setHits([]);
     }

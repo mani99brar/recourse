@@ -11,7 +11,7 @@ import { ActionFlowView, type Phase } from '../src/actions/ActionFlow.js';
 import { ClaimActions, EvidenceAction, FileClaimAction, WithdrawAction, contesterOf, evidenceBytes, evidenceProblem, fileRequest, rememberStep } from '../src/actions/forms.js';
 import { ApiFailure, failureFrom } from '../src/lib/api.js';
 import {
-  ACTION_NAMES, ERROR_WORDS, amountText, errorWords, hasCredit, looksBuilt, postAction, readBackPath, readBackShows, signingProblems,
+  ACTION_NAMES, ERROR_WORDS, amountText, errorWords, hasCredit, looksBuilt, postAction, readBackPath, readBackShows, sameCallGas, signingProblems,
   type ActionName, type ActionResponse, type ReadBody,
 } from '../src/lib/actions.js';
 import { ACTION_CALLS, CALL_ABIS, callProblem } from '../src/lib/calls.js';
@@ -336,6 +336,71 @@ describe('signing in order', () => {
     const { ops } = fakeOps({ wait: async (_id, _h, onHash) => (onHash?.(hash(7)), { status: 'success', hash: hash(7) }) });
     expect(await signAll(c, ops, () => {}, () => Number(c.builtAt))).toEqual([hash(7)]);
   });
+  describe('a step built with a gas budget, estimated again once the step before it has mined', () => {
+    const sentGas = () => {
+      const gas: string[] = [];
+      let n = 0;
+      return { gas, send: async (tx: ActionResponse['transactions'][number]) => (gas.push(tx.gas), hash(++n)) };
+    };
+    it('signs fileClaim with the lower estimate, asked for only after approve has mined', async () => {
+      const f = example('fileClaim');
+      const budget = f.transactions[1]!.gas;
+      expect(f.transactions[1]!.simulated).toBe(false);
+      const order: string[] = [];
+      const s = sentGas();
+      const { ops } = fakeOps({ send: async (tx) => (order.push(`send ${tx.call.function}`), s.send(tx)), wait: async (_id, h) => (order.push('mined'), { status: 'success', hash: h }) });
+      const t = track();
+      const regas = async (tx: ActionResponse['transactions'][number]) => (order.push(`estimate ${tx.call.function}`), '731000');
+      await signAll(f, ops, t.on, () => Number(f.builtAt), regas);
+      expect(order).toEqual(['send approve', 'mined', 'estimate fileClaim', 'send fileClaim', 'mined']);
+      expect(s.gas).toEqual([f.transactions[0]!.gas, '731000']);
+      expect(BigInt('731000')).toBeLessThan(BigInt(budget));
+      expect(t.seen.some((steps) => steps[1]?.state === 'estimating')).toBe(true);
+    });
+    it('keeps the budget when the API has no estimate, cannot be reached or answers nonsense', async () => {
+      for (const regas of [async () => null, async () => Promise.reject(new ApiFailure(0, 'unreachable')), async () => '0x10', async () => '0']) {
+        const f = example('fileClaim');
+        const s = sentGas();
+        const { ops } = fakeOps({ send: s.send });
+        await signAll(f, ops, () => {}, () => Number(f.builtAt), regas);
+        expect(s.gas[1]).toBe(f.transactions[1]!.gas);
+      }
+    });
+    it('stops before the second signature when the estimate is above the budget the preview showed', async () => {
+      const f = example('fileClaim');
+      const s = sentGas();
+      const { ops } = fakeOps({ send: s.send });
+      const t = track();
+      const above = (BigInt(f.transactions[1]!.gas) + 1n).toString();
+      const e = (await signAll(f, ops, t.on, () => Number(f.builtAt), async () => above).catch((x: unknown) => x)) as WalletStop;
+      expect(e.kind).toBe('fee_changed');
+      expect(stopWords(e)).toContain('Build it again to see the new fee');
+      expect(s.gas).toHaveLength(1);
+      expect(t.seen.at(-1)!.map((x) => x.state)).toEqual(['mined', 'failed']);
+      expect(t.seen.at(-1)![0]!.hash).toBe(hash(1));
+    });
+    it('never asks again for a step the API already simulated', async () => {
+      const c = example('contest');
+      let asked = 0;
+      const { ops } = fakeOps();
+      await signAll(c, ops, () => {}, () => Number(c.builtAt), async () => (asked++, '1'));
+      expect(asked).toBe(0);
+    });
+    it('takes the estimate only for the same call, simulated, built for the same action and account', () => {
+      const f = example('fileClaim');
+      const file = f.transactions[1]!;
+      const again = (over: Partial<typeof file> = {}, top: Partial<ActionResponse> = {}): ActionResponse => ({ ...f, ...top, transactions: [{ ...file, simulated: true, gas: '731000', ...over }] });
+      expect(sameCallGas(f, again(), file)).toBe('731000');
+      expect(sameCallGas(f, again({ to: file.to.toLowerCase() as typeof file.to, data: file.data.toUpperCase().replace('0X', '0x') as typeof file.data }), file)).toBe('731000');
+      expect(sameCallGas(f, again({ simulated: false }), file)).toBeNull();
+      expect(sameCallGas(f, again({ data: (file.data.slice(0, -1) + (file.data.endsWith('0') ? '1' : '0')) as typeof file.data }), file)).toBeNull();
+      expect(sameCallGas(f, again({ value: '1' }), file)).toBeNull();
+      expect(sameCallGas(f, again({ to: OTHER as typeof file.to }), file)).toBeNull();
+      expect(sameCallGas(f, again({ chainId: 421614 }), file)).toBeNull();
+      expect(sameCallGas(f, again({}, { from: OTHER as ActionResponse['from'] }), file)).toBeNull();
+      expect(sameCallGas(f, again({}, { action: 'contest' }), file)).toBeNull();
+    });
+  });
   it('will not sign past the deadline or an old preview', async () => {
     const c = example('contest');
     const { ops, log } = fakeOps();
@@ -406,7 +471,7 @@ describe('what the person sees', () => {
     expect(html).not.toMatch(/\d mUSDC(?! \(testnet mock\))/);
     expect(html).toContain('Leaves your wallet into the claim&#x27;s escrow');
     expect(html).toContain('Held from the agent company&#x27;s deposit in the vault');
-    expect(html).toContain('At most 0.36068 HBAR');
+    expect(html).toContain('At most 0.60918 HBAR');
     expect(html).toContain('at least 80% of the gas limit');
     expect(html).toContain('fixed budget');
     expect(html).toContain('2 transactions, signed in this order');

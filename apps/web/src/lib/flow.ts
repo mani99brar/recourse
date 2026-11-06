@@ -3,10 +3,17 @@
 // the account the API built for. Then the API's readBack path is polled until it shows the change.
 import type { Hash } from 'viem';
 import { getApi } from './api.js';
-import { readBackPath, readBackShows, sameAddress, isStale, type ActionResponse, type ReadBody } from './actions.js';
+import { readBackPath, readBackShows, sameAddress, isStale, type ActionResponse, type ReadBody, type UnsignedTx } from './actions.js';
 import { WalletStop, type WalletOps } from './wallet.js';
 
-export type StepState = 'waiting' | 'chain' | 'sign' | 'mining' | 'mined' | 'failed';
+export type StepState = 'waiting' | 'estimating' | 'chain' | 'sign' | 'mining' | 'mined' | 'failed';
+
+/**
+ * For a step the API could not simulate (it needs the step before it mined, as fileClaim needs its
+ * approve): asks the API to build the action again now, and answers the gas it estimates for the
+ * same call, or null when it has none.
+ */
+export type Regas = (tx: UnsignedTx) => Promise<string | null>;
 export interface Step {
   state: StepState;
   hash: Hash | null;
@@ -19,17 +26,36 @@ export function freshSteps(resp: ActionResponse): Step[] {
 /**
  * Signs and sends every transaction, waiting for each receipt. Throws a WalletStop (with the hash
  * when one exists) at the first step that cannot go on; the steps before it stay sent.
+ *
+ * A step built with a fixed gas budget because it could not be simulated takes the API's estimate
+ * once the steps before it have mined (`regas`), when that is at most the budget. Above the budget
+ * the preview's fee no longer holds, so it stops there (`fee_changed`); with no estimate it keeps the
+ * budget.
  */
-export async function signAll(resp: ActionResponse, ops: WalletOps, on: (i: number, step: Step) => void, nowS: () => number = () => Date.now() / 1000): Promise<Hash[]> {
+export async function signAll(
+  resp: ActionResponse,
+  ops: WalletOps,
+  on: (i: number, step: Step) => void,
+  nowS: () => number = () => Date.now() / 1000,
+  regas?: Regas,
+): Promise<Hash[]> {
   // A passed deadline is the more useful thing to say, so it is checked before the preview's age.
   if (resp.notAfter !== null && nowS() > Number(resp.notAfter)) throw new WalletStop('too_late');
   if (isStale(resp, nowS())) throw new WalletStop('stale');
   const hashes: Hash[] = [];
   for (let i = 0; i < resp.transactions.length; i++) {
-    const tx = resp.transactions[i]!;
+    let tx = resp.transactions[i]!;
     let hash: Hash | null = null;
     try {
       if (resp.notAfter !== null && nowS() > Number(resp.notAfter)) throw new WalletStop('too_late');
+      if (!tx.simulated && i > 0 && regas) {
+        on(i, { state: 'estimating', hash: null });
+        const gas = await regas(tx).catch(() => null);
+        if (gas !== null && /^[0-9]+$/.test(gas) && BigInt(gas) > 0n) {
+          if (BigInt(gas) > BigInt(tx.gas)) throw new WalletStop('fee_changed', { gas, budget: tx.gas });
+          tx = { ...tx, gas };
+        }
+      }
       on(i, { state: 'chain', hash: null });
       await ops.ensureChain(tx.chainId);
       const [account] = await ops.accounts();

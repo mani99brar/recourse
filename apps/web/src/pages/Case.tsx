@@ -2,7 +2,7 @@ import { recordHash, utf8ToBytes } from '@recourse/shared';
 import { useState } from 'react';
 import { ClaimActions, EvidenceAction, anyoneAction } from '../actions/forms.js';
 import { Banner, Card, ExtLink, Loading, Pill, Row } from '../components.js';
-import { usePoll, type Fresh } from '../lib/api.js';
+import { READS, usePoll, type Fresh } from '../lib/api.js';
 import { short, usdc, when, whenS } from '../lib/format.js';
 import { ACTOR_WORDS, CALL_WORDS, COURT_PERIODS, FATE_WORDS, KIND_WORDS, SIDE_WORDS, STATUS_WORDS, deadlineLabel, statusPlain } from '../lib/words.js';
 import type { NextActor, NextCall, StatusKey } from '@recourse/shared';
@@ -270,7 +270,7 @@ export function RecordCheck({ hashes }: { hashes: string[] }) {
 }
 
 export function CasePage({ id }: { id: string }) {
-  const { data, error } = usePoll<CaseDetail>(`/claims/${id}`);
+  const { data, error } = usePoll<CaseDetail>(READS.claim(id));
   return (
     <>
       <Banner fresh={data ?? undefined} error={error} />

@@ -130,6 +130,17 @@ export function sameAddress(a: string | null | undefined, b: string | null | und
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }
 
+/**
+ * The gas the API now estimates for `tx`, from a fresh answer built for the same action and account:
+ * only for the same call (network, target, data and value) and only when it was simulated. Null
+ * otherwise, and the step keeps the gas it was built with.
+ */
+export function sameCallGas(resp: ActionResponse, again: ActionResponse, tx: UnsignedTx): string | null {
+  if (again.action !== resp.action || !sameAddress(again.from, resp.from)) return null;
+  const t = again.transactions.find((x) => x.simulated && x.chainId === tx.chainId && sameAddress(x.to, tx.to) && x.data.toLowerCase() === tx.data.toLowerCase() && x.value === tx.value);
+  return t ? t.gas : null;
+}
+
 /** A read-back path is one of the API's own /v1 reads, never a URL somewhere else. */
 export function readBackPath(path: string): string | null {
   return /^\/v1\/(claims|parties)\/0x[0-9a-fA-F]+$/.test(path) ? path : null;
@@ -249,7 +260,7 @@ export function movementWords(a: Pick<PreviewAmount, 'movement' | 'account'>, fr
 
 export function feeWords(fee: NativeFee, chainId: number): string[] {
   const out = [`At most ${units(fee.amount, fee.decimals, fee.symbol)} on ${chainLabel(chainId)}, for ${BigInt(fee.gas).toLocaleString('en-US')} gas at the price when this was built.`];
-  out.push(fee.basis === 'budget' ? 'Part of it is a fixed budget: a later step cannot be simulated until the step before it has mined.' : 'Estimated by simulating the call against the latest block.');
+  out.push(fee.basis === 'budget' ? 'Part of it is a fixed budget: a later step cannot be simulated until the step before it has mined. Once it has, this page asks for an estimate and uses it when it is lower.' : 'Estimated by simulating the call against the latest block.');
   if (chainId === 296) out.push('Hedera charges at least 80% of the gas limit.');
   out.push('Your wallet shows the final fee before you sign, and may set its own price.');
   return out;

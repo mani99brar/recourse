@@ -5,7 +5,7 @@ import type { VaultToken } from '@recourse/shared';
 import { Card, ExtLink, Pill, Row } from '../components.js';
 import { ApiFailure } from '../lib/api.js';
 import {
-  ACTION_WORDS, amountName, amountText, errorWords, feeWords, mockLabelled, movementWords, postAction, sameAddress, signingProblems,
+  ACTION_WORDS, amountName, amountText, errorWords, feeWords, mockLabelled, movementWords, postAction, sameAddress, sameCallGas, signingProblems,
   type ActionName, type ActionResponse, type ReadBody,
 } from '../lib/actions.js';
 import { CHAINS, addressLink, chainLabel, chainName, explorerName, isOurChain, txLink, units } from '../lib/chains.js';
@@ -71,13 +71,17 @@ export function ActionFlow(p: ActionFlowProps) {
   const show = (next: Phase) => {
     if (alive.current) setPhase(next);
   };
+  /** The body the shown preview was built from: a later step is estimated again from the same one. */
+  const sent = useRef<Record<string, unknown> | null>(null);
 
   async function build() {
     const from = wallet.account;
     if (!from || !p.request) return;
     show({ kind: 'building' });
     try {
-      const resp = await postAction(p.name, { from, ...p.request });
+      const body = { from, ...p.request };
+      sent.current = body;
+      const resp = await postAction(p.name, body);
       show({ kind: 'preview', resp, problems: signingProblems(resp, { name: p.name, from, claimId: p.claimId ?? null }) });
     } catch (e) {
       const f = e instanceof ApiFailure ? e : new ApiFailure(0, 'unreachable');
@@ -95,10 +99,18 @@ export function ActionFlow(p: ActionFlowProps) {
     }
     show({ kind: 'signing', resp, steps });
     try {
-      const hashes = await signAll(resp, walletOps(provider), (i, step) => {
-        steps = steps.map((s, j) => (j === i ? step : s));
-        show({ kind: 'signing', resp, steps });
-      });
+      const body = sent.current;
+      const regas = body ? async (tx: ActionResponse['transactions'][number]) => sameCallGas(resp, await postAction(p.name, body), tx) : undefined;
+      const hashes = await signAll(
+        resp,
+        walletOps(provider),
+        (i, step) => {
+          steps = steps.map((s, j) => (j === i ? step : s));
+          show({ kind: 'signing', resp, steps });
+        },
+        undefined,
+        regas,
+      );
       show({ kind: 'reading', resp, steps });
       const r = await readBack(resp, hashes, { alive: () => alive.current });
       show({ kind: 'done', resp, steps, after: r.body, shows: r.shows });
@@ -299,7 +311,7 @@ export function PreviewView({ resp, names = {} }: { resp: ActionResponse; names?
               </span>{' '}
               at <ExtLink href={addressLink(t.chainId, t.to)}>{short(t.to)}</ExtLink>
               {t.value !== '0' && <>; sends {units(t.value, 18, native)}</>}
-              {!t.simulated && '; checked by the API but not simulated, because it needs the step before it mined first'}
+              {!t.simulated && '; checked by the API but not simulated, because it needs the step before it mined first: its gas is estimated again once that step has mined'}
             </span>
           </li>
         ))}
@@ -327,6 +339,7 @@ export function PreviewView({ resp, names = {} }: { resp: ActionResponse; names?
 
 const STEP_WORDS: Record<StepState, string> = {
   waiting: 'waiting',
+  estimating: 'estimating its gas now that the step before it has mined',
   chain: 'checking the network',
   sign: 'waiting for your signature',
   mining: 'sent, waiting to be mined',

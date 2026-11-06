@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { RateResult } from '@recourse/docket';
 import { Banner, Card, Loading, Pill } from '../components.js';
-import { usePoll, type Fresh } from '../lib/api.js';
+import { READS, usePoll, type Fresh } from '../lib/api.js';
 import { readDocket } from '../lib/arkiv.js';
 import { short } from '../lib/format.js';
 import type { Address } from 'viem';
@@ -74,7 +74,7 @@ export function LocalStoreNote() {
 }
 
 export function DocketPage() {
-  const params = usePoll<ParamsBody>('/params', 60000);
+  const params = usePoll<ParamsBody>(READS.params(), 60000);
   const writer = params.data?.schemeWallet ?? null;
   const threshold = params.data?.docket?.rateConfig?.publishThreshold ?? 20;
   const store = params.data?.docket?.store ?? null;
