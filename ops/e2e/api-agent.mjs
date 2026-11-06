@@ -124,7 +124,7 @@ function judge(method, template, r, expect = {}) {
   // An upstream outage that was not what the check is about: the path could not be tested this time.
   const upstreamDown = (r.status === 502 || r.status === 503) && code === 'upstream_unavailable' && !(codes ?? []).includes('upstream_unavailable');
   if (upstreamDown) {
-    if (r.status === 502) notes.push('502 from the web server: openapi documents upstream_unavailable at 503, and API.md says details.upstream status_api');
+    if (r.status === 502) notes.push('502 from the web server: the status API did not answer it within 15 s');
     return { result: 'blocked', problems, notes, code };
   }
   return { result: problems.length ? 'fail' : 'pass', problems, notes, code };
@@ -234,7 +234,7 @@ async function getRetry(path, tries = 4) {
   for (let i = 0; i < tries; i++) {
     r = await http.request('GET', path);
     if (r.status === 200) return r;
-    if (r.status === 502 || r.status === 503 || r.status === 0) upstreamSeen.push({ path, http: r.status, ms: r.ms, code: r.json?.error?.code ?? null, message: r.json?.error?.message ?? r.error ?? null });
+    if (r.status === 502 || r.status === 503 || r.status === 0) upstreamSeen.push({ path, http: r.status, ms: r.ms, code: r.json?.error?.code ?? null, message: r.json?.error?.message ?? r.error ?? null, details: r.json?.error?.details ?? null });
     else return r;
     await sleep(5000);
   }
@@ -862,10 +862,12 @@ async function main() {
   if (only.has('shop')) await shop();
   if (only.has('rate')) await rate();
   // Every upstream failure the run waited through, judged against the contract for it: the web server
-  // answers its own 502 as upstream_unavailable with details.upstream status_api (API.md), and the
-  // OpenAPI file documents upstream_unavailable at 503.
+  // answers its own 502 as upstream_unavailable, message "status API unreachable", with no details
+  // (API.md's error table, OpenAPI's ProxyUnavailable).
   const proxy = upstreamSeen.filter((u) => u.http === 502);
-  const problems = proxy.filter((u) => u.details?.upstream !== 'status_api').map((u) => `${u.path}: 502 after ${u.ms} ms, "${u.message}", no details.upstream`);
+  const problems = proxy
+    .filter((u) => u.code !== 'upstream_unavailable' || u.message !== 'status API unreachable' || (u.details ?? null) !== null)
+    .map((u) => `${u.path}: 502 after ${u.ms} ms, code ${u.code ?? 'none'}, "${u.message}"${u.details ? ', with details' : ''}`);
   res.add({
     test: 'upstream failures during the run use the documented shape', path: 'proxy /api -> status API', result: problems.length ? 'fail' : 'pass',
     data: { seen: upstreamSeen.length, by502: proxy.length, by503: upstreamSeen.filter((u) => u.http === 503).length, noAnswer: upstreamSeen.filter((u) => u.http === 0).length },
