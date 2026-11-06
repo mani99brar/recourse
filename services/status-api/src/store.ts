@@ -52,6 +52,12 @@ export interface LiveState {
   /** By dispute id (decimal text). */
   kleros: Record<string, KlerosRead>;
   at: number;
+  /**
+   * `getClaim(claimId).preCheckedAt`, the block time the contract checks the contest window and
+   * the timeout against. The mirror's consensus time of PreCheckRecorded can run 1-2 s later.
+   * Absent until read (and in older snapshots): the mirror time stands in.
+   */
+  preCheckedAt?: bigint;
 }
 
 export interface EvidenceItem {

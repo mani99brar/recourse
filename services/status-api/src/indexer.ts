@@ -8,7 +8,7 @@ import type { Config } from './config.js';
 import type { Deployments } from './deployments.js';
 import type { FetchLike } from './http.js';
 import type { DocFetcher } from './ipfs.js';
-import { refreshLive, type Reader } from './live.js';
+import { refreshLive, refreshPreChecks, type Reader } from './live.js';
 import { pollArbitrum, pollEvidence, type ArbDeps, type ArbRpc } from './sources/arbitrum.js';
 import { pollHcs } from './sources/hcs.js';
 import { pollHedera, type MirrorDeps } from './sources/hedera.js';
@@ -75,7 +75,10 @@ export class Indexer {
       this.settle('arbitrum');
       if (!store.status.arbitrum.failing) await this.evidence(arb);
     }
-    if (this.d.reader) await refreshLive(store, this.d.reader, this.d.nowS);
+    if (this.d.reader) {
+      await refreshLive(store, this.d.reader, this.d.nowS);
+      await refreshPreChecks(store, this.d.reader, this.d.nowS);
+    }
     await this.prefetchDocs();
     if (store.rebuilding && this.caughtUp()) store.rebuilding = false;
   }

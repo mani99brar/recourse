@@ -81,6 +81,8 @@ export interface Reader {
   party(address: Address): Promise<PartyViews>;
   /** The three config locks alone (three calls, against about fifteen for `facts`). */
   locks(): Promise<ConfigLocks>;
+  /** `getClaim(claimId).preCheckedAt`; 0 while the chain has no pre-check for it. */
+  preCheckedAt(claimId: Hex): Promise<bigint>;
 }
 
 /** Claims and vault `configLocked`, case `locked`. A lock is one-way: once true it stays true. */
@@ -212,6 +214,11 @@ export class ViemReader implements Reader {
       this.arb.readContract({ address: this.cfg.caseAddress, abi: caseAbi, functionName: 'locked', blockNumber }),
     ]);
     return { claims, vault, case: kase };
+  }
+
+  async preCheckedAt(claimId: Hex): Promise<bigint> {
+    const c = await this.hedera.readContract({ address: this.cfg.claims, abi: claimsAbi, functionName: 'getClaim', args: [claimId] });
+    return c.preCheckedAt;
   }
 
   async caseOf(claimId: Hex): Promise<RawCaseView> {
@@ -377,6 +384,28 @@ export async function refreshLive(store: Store, reader: Reader, nowS: () => numb
     const st = store.status.arbitrum;
     st.lastError = errors[0] ?? null;
     st.lastErrorAt = nowS();
+  }
+}
+
+/**
+ * Reads the chain's preCheckedAt once for each pre-checked claim that does not have it yet, at
+ * most `budget` a poll. A claim the chain does not show as pre-checked yet is read again later.
+ */
+export async function refreshPreChecks(store: Store, reader: Reader, nowS: () => number, budget = 20): Promise<void> {
+  for (const id of store.claimIds()) {
+    if (budget <= 0) return;
+    const live = store.live.get(id);
+    if (live?.preCheckedAt !== undefined) continue;
+    const claim = foldClaim(store.eventsOf(id));
+    if (!claim || !claim.preChecked) continue;
+    budget--;
+    try {
+      const at = await reader.preCheckedAt(claim.claimId);
+      if (at === 0n) continue;
+      store.live.set(id, { ...(live ?? { caseView: null, exec: {}, kleros: {}, at: nowS() }), preCheckedAt: at });
+    } catch {
+      // read again next poll; the mirror time stands in meanwhile
+    }
   }
 }
 

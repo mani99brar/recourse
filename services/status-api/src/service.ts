@@ -224,7 +224,11 @@ export class StatusService {
   // ------------------------------------------------------------------ claims
 
   private foldOf(claimId: string): FoldedClaim | null {
-    return foldClaim(this.d.store.eventsOf(claimId));
+    const c = foldClaim(this.d.store.eventsOf(claimId));
+    // The contract's own preCheckedAt when read: the contest window and the timeout count from it.
+    const chainAt = this.d.store.live.get(claimId)?.preCheckedAt;
+    if (c && c.preChecked && chainAt !== undefined && chainAt > 0n) c.preCheckedAt = chainAt;
+    return c;
   }
 
   private nameOf(a: Address): string | null {

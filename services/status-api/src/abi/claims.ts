@@ -23,6 +23,8 @@ export const claimsAbi = parseAbi([
   'event LinkSwept(address indexed to, uint256 amount)',
   'event NativeSwept(address indexed to, uint256 amount)',
   'event ConfigLocked()',
+  'struct Claim { bytes32 orderId; address shop; address platform; RecordRefs refs; uint256 basketUsdc; uint256 netLossUsdc; uint64 filedAt; uint64 preCheckedAt; uint8 gap; uint8 answer; bytes32 packHash; address contestedBy; uint8 sendCount; uint64 lastSendAt; bytes32 lastMessageId; uint256 disputeId; uint8 ruling; uint8 attempts; uint8 status; }',
+  'function getClaim(bytes32 claimId) view returns (Claim)',
   'function params() view returns (Params)',
   'function configLocked() view returns (bool)',
   'function preCheckSigner() view returns (address)',

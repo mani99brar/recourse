@@ -2,7 +2,8 @@ import { STATUS_KEYS } from '@recourse/shared';
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/store.js';
 import { Sim } from './helpers/encode.js';
-import { STAGES, buildClaim, ingest, type Stage } from './helpers/fixtures.js';
+import { STAGES, WINDOW, buildClaim, fakeReader, ingest, type Stage } from './helpers/fixtures.js';
+import { refreshPreChecks } from '../src/live.js';
 import { harness } from './helpers/service.js';
 
 async function rowFor(stage: Stage) {
@@ -105,5 +106,58 @@ describe('expiry', () => {
     store.live.set(b.claimId, { ...b.live!, caseView: cv });
     const h = harness({ store, now: Number(b.now) });
     expect((await h.svc.claimRows())[0]!.statusKey).toBe('stuck');
+  });
+});
+
+describe('preCheckedAt comes from the contract, not the mirror', () => {
+  it("the contest window ends where the chain's ends, though the mirror time is 2 s later", async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'finding_made', 1);
+    const store = new Store();
+    ingest(store, sim);
+    const mirrorAt = store.eventsOf(b.claimId).find((e) => e.name === 'PreCheckRecorded')!.time;
+    const chainAt = mirrorAt - 2n; // block.timestamp, as getClaim returns it
+    const reader = fakeReader({ preCheckedAt: async () => chainAt });
+    const h = harness({ store, now: Number(chainAt + WINDOW), reader });
+    // Before the read: the mirror time stands in.
+    expect((await h.svc.claimDetail(b.claimId)).contest.windowEndsAt).toBe(mirrorAt + WINDOW);
+    await refreshPreChecks(store, reader, () => 0);
+    const d = await h.svc.claimDetail(b.claimId);
+    expect(d.contest.windowEndsAt).toBe(chainAt + WINDOW);
+    expect(d.precheck!.preCheckedAt).toBe(chainAt);
+    expect(d.deadline).toBe(chainAt + WINDOW);
+    expect(d.statusKey).toBe('finding_made');
+    // One second past the chain's window the contest is closed, as contest() would revert.
+    h.clock.now = Number(chainAt + WINDOW + 1n);
+    expect((await h.svc.claimDetail(b.claimId)).statusKey).toBe('window_lapsed');
+    // Read once: a later poll does not read it again.
+    const n = reader.calls.filter((c) => c.startsWith('preCheckedAt')).length;
+    await refreshPreChecks(store, reader, () => 0);
+    expect(reader.calls.filter((c) => c.startsWith('preCheckedAt')).length).toBe(n);
+  });
+
+  it('a claim the chain does not show as pre-checked yet keeps the mirror time and is read again', async () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'finding_made', 1);
+    const store = new Store();
+    ingest(store, sim);
+    const reader = fakeReader({ preCheckedAt: async () => 0n });
+    await refreshPreChecks(store, reader, () => 0);
+    expect(store.live.get(b.claimId)?.preCheckedAt).toBeUndefined();
+    await refreshPreChecks(store, reader, () => 0);
+    expect(reader.calls.filter((c) => c.startsWith('preCheckedAt')).length).toBe(2);
+  });
+
+  it('an older snapshot without the field still loads, and a new one keeps it', () => {
+    const sim = new Sim();
+    const b = buildClaim(sim, 'finding_made', 1);
+    const store = new Store();
+    ingest(store, sim);
+    store.live.set(b.claimId, { caseView: null, exec: {}, kleros: {}, at: 1, preCheckedAt: 123n });
+    const back = Store.fromJSON(store.toJSON())!;
+    expect(back.live.get(b.claimId)!.preCheckedAt).toBe(123n);
+    const old = JSON.parse(store.toJSON());
+    delete old.live[0][1].preCheckedAt;
+    expect(Store.fromJSON(JSON.stringify(old))!.live.get(b.claimId)!.preCheckedAt).toBeUndefined();
   });
 });
