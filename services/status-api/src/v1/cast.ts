@@ -3,19 +3,20 @@
 // `recourse` object of the registration document that URI names, the orders its records name on
 // the records topic, and its claims with their outcomes.
 //
-// The registry is read through the Hedera JSON-RPC relay, at most once every REFRESH_S an agent,
-// and a request waits at most WAIT_MS on it: slower reads finish in the background and are kept.
-// A relay that fails leaves the last values read, with `identity` in meta.degraded. A document is
-// read from a `data:` URI, over HTTPS, or from IPFS through IPFS_GATEWAY_URL; nothing else is fetched.
+// The registry is read through the Hedera JSON-RPC relay, at most once every REFRESH_S an agent.
+// A request waits on it and on its other live reads for cfg.readWaitMs in all: slower reads finish
+// in the background and are kept. A relay that fails or has not answered in time leaves the last
+// values read, with `identity` in meta.degraded. A document is read from a `data:` URI, over HTTPS,
+// or from IPFS through IPFS_GATEWAY_URL; nothing else is fetched.
 
 import type { NextFunction, Request, Response } from 'express';
 import { addressBook, erc8004IdentityAbi, type Party } from '@recourse/shared';
 import { createPublicClient, fallback, http, type Address, type PublicClient } from 'viem';
 import { ChainRevert, classify } from '../chain.js';
-import { getBytes } from '../http.js';
+import { HttpError, getBytes } from '../http.js';
+import { withDeadline, within } from '../lastgood.js';
 import type { StatusService } from '../service.js';
 
-const WAIT_MS = 3_000;
 const REFRESH_S = 30;
 const MAX_DOCUMENT_BYTES = 64 * 1024;
 const KIND = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -73,6 +74,15 @@ export function registrationOf(doc: unknown): CastRegistration {
 /** An agentURI this service does not fetch: an answer, not a failure. */
 class UnsupportedUri extends Error {}
 
+/**
+ * A document error that is the host's answer, not a failure to reach it: inline JSON that does not
+ * parse, a body that is not JSON, or a 4xx other than a timeout or a rate limit.
+ */
+function definite(err: unknown): boolean {
+  if (err instanceof UnsupportedUri || err instanceof SyntaxError || err instanceof URIError) return true;
+  return err instanceof HttpError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
+}
+
 /** The registration document an agentURI names: inline, over HTTPS, or on IPFS through the gateway. */
 async function fetchRegistration(svc: StatusService, uri: string): Promise<unknown> {
   const inline = /^data:application\/json(;base64)?,(.*)$/s.exec(uri);
@@ -105,7 +115,7 @@ interface Known {
 
 interface Entry {
   known: Known | null;
-  /** The latest read failed: the relay or the document's host did not answer. */
+  /** The latest read failed (the relay or the document's host did not answer), or a request stopped waiting for it; cleared when a read succeeds. */
   failing: boolean;
   startedAt: number;
   pending: Promise<void> | null;
@@ -114,7 +124,7 @@ interface Entry {
 export interface CastOptions {
   /** Null: the registry is not read. Absent: read on HEDERA_RPC_URL_1/2. */
   identity?: IdentityReads | null;
-  /** How long a request waits on the registry (WAIT_MS when absent). */
+  /** How long a request waits on the registry (cfg.readWaitMs when absent); the request's deadline still applies. */
   waitMs?: number;
 }
 
@@ -128,7 +138,7 @@ export class Cast {
     opts: CastOptions = {},
   ) {
     this.identity = opts.identity;
-    this.waitMs = opts.waitMs ?? WAIT_MS;
+    this.waitMs = opts.waitMs ?? svc.d.cfg.readWaitMs;
   }
 
   /** Built on first use, so a router made without a relay costs nothing until /v1/cast is read. */
@@ -168,7 +178,7 @@ export class Cast {
       try {
         registration = registrationOf(await fetchRegistration(this.svc, agentURI));
       } catch (err) {
-        if (!(err instanceof UnsupportedUri)) {
+        if (!definite(err)) {
           // The document's host did not answer: the last document read from the same URI stands in.
           const last = e.known;
           e.known = { owner, agentURI, registration: last?.agentURI === agentURI ? last.registration : null, readAt };
@@ -181,7 +191,7 @@ export class Cast {
     e.failing = false;
   }
 
-  /** Each agent's registry facts, read again when due; waits at most waitMs on the reads. */
+  /** Each agent's registry facts, read again when due; waits at most waitMs (or the request's deadline) on the reads. */
   private async refresh(agentIds: string[]): Promise<void> {
     const r = this.reads();
     if (!r) return;
@@ -202,9 +212,13 @@ export class Cast {
       if (e.pending) waits.push(e.pending);
     }
     if (waits.length === 0) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([Promise.all(waits), new Promise((resolve) => (timer = setTimeout(resolve, this.waitMs)))]);
-    clearTimeout(timer);
+    const done = await within(Promise.all(waits).then(() => true), this.waitMs, false);
+    if (done) return;
+    // A read still out is not current: its last values stand until it lands, as LastGood.get does.
+    for (const id of agentIds) {
+      const e = this.entry(id);
+      if (e.pending) e.failing = true;
+    }
   }
 
   private hashscan(path: string): string | null {
@@ -216,7 +230,8 @@ export class Cast {
   async read() {
     const svc = this.svc;
     const members = (svc.d.parties() ?? []).filter((p): p is Party & { agentId: string } => p.agentId !== undefined);
-    await this.refresh(members.map((p) => p.agentId));
+    // The registry and the claims' live reads are waited on together, within the request's deadline.
+    const [, rows] = await Promise.all([this.refresh(members.map((p) => p.agentId)), svc.claimRows()]);
 
     // Orders: the distinct order ids of the records each writer account paid for on the records topic.
     const ordersOf = new Map<string, Set<string>>();
@@ -225,7 +240,6 @@ export class Cast {
       if (!s) ordersOf.set(rec.payer, (s = new Set()));
       s.add(rec.orderId);
     }
-    const rows = await svc.claimRows();
     const registry = addressBook.hedera.erc8004Identity;
     const reads = this.reads();
     let current = true;
@@ -291,15 +305,27 @@ export class Cast {
 
 type MetaOf = { degraded: string[] } & Record<string, unknown>;
 
-/** The /v1/cast handler: `{ cast, meta }`, with `identity` in meta.degraded while a registry fact is not current. */
-export function castRoute(svc: StatusService, deps: { meta: () => Promise<MetaOf>; notRebuilding: () => void }, opts: CastOptions = {}) {
+/**
+ * The /v1/cast handler: `{ cast, meta }`, with `identity` in meta.degraded while a registry fact is
+ * not current. Like the other reads, its live reads wait cfg.readWaitMs in all and the config lock
+ * is asked for alongside them.
+ */
+export function castRoute(
+  svc: StatusService,
+  deps: { meta: (lock?: ReturnType<StatusService['configLock']>) => Promise<MetaOf>; notRebuilding: () => void },
+  opts: CastOptions = {},
+) {
   const cast = new Cast(svc, opts);
   return async (_req: Request, res: Response, next: NextFunction) => {
     try {
       deps.notRebuilding();
-      const { cast: value, current } = await cast.read();
-      const meta = await deps.meta();
-      res.json({ cast: value, meta: current ? meta : { ...meta, degraded: [...meta.degraded, 'identity'] } });
+      const body = await withDeadline(svc.d.cfg.readWaitMs, async () => {
+        const lock = svc.configLock();
+        const { cast: value, current } = await cast.read();
+        const meta = await deps.meta(lock);
+        return { cast: value, meta: current ? meta : { ...meta, degraded: [...meta.degraded, 'identity'] } };
+      });
+      res.json(body);
     } catch (e) {
       next(e);
     }

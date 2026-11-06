@@ -70,10 +70,12 @@ One member for each party in `deployments/parties.json` that has an `agentId`, i
 - `claims[]`: each indexed claim that names the party, with `statusKey`, `answer` (the pre-check's), `findingSide`,
   `paid`, `filedAt` and the other side as `counterparty` and `counterpartyName`.
 
-The registry is read at most every 30 s an agent, and a request waits at most 3 s on it. A slower or failing relay
-answers with the last values read (null before any), `current: false` on those members, and `identity` in
-`meta.degraded`. An agent id the registry reverts for has `owner` and `agentURI` null and is still current. Not paged,
-like `/v1/claims`.
+The registry is read at most every 30 s an agent. A request waits on it and on its other live reads (the claims' and
+the config lock) for the read wait in all, about 3 s. A slower or failing relay, a read still out from an earlier
+request, or a registration document whose host does not answer gives the last values read (null before any),
+`current: false` on those members, and `identity` in `meta.degraded`. An agent id the registry reverts for has
+`owner` and `agentURI` null and is still current; so is a document that answers 4xx (not 408 or 429) or is not JSON, with
+`registration` null. Not paged, like `/v1/claims`.
 
 ## Actions
 

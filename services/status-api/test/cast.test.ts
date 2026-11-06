@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { addressBook, parseParties, type Parties } from '@recourse/shared';
 import { getAddress, type Address, type Hex } from 'viem';
 import { createApp } from '../src/app.js';
+import type { Config } from '../src/config.js';
 import type { FetchLike } from '../src/http.js';
 import { Store } from '../src/store.js';
+import type { Reader } from '../src/live.js';
 import { registrationOf, type IdentityReads } from '../src/v1/cast.js';
 import { Sim } from './helpers/encode.js';
-import { PLATFORM, SHOP, SHOP2, TOPIC, buildClaim, h32, ingest } from './helpers/fixtures.js';
+import { PLATFORM, SHOP, SHOP2, TOPIC, buildClaim, fakeReader, h32, ingest } from './helpers/fixtures.js';
 import { check, responseSchema } from './helpers/schema.js';
 import { harness } from './helpers/service.js';
 
@@ -34,13 +36,18 @@ const DOCS: Record<string, unknown> = {
   [SHOP_DOC_URL]: { name: 'Example Shop (sample)', description: 'Sells shirts in sizes (sample).', services: [], recourse: recourse('shop', 'apparel-sizes', 'Physical goods with sizes') },
 };
 
-/** The registry as tests want it: per agent id an owner and a URI, or an error to throw. */
-function fakeIdentity(agents: Record<string, { owner: Address; uri: string } | Error>, opts: { delayMs?: number } = {}) {
+/** A relay that takes the request and never answers. */
+const HANG = 'hang';
+const hang = () => new Promise<never>(() => undefined);
+
+/** The registry as tests want it: per agent id an owner and a URI, an error to throw, or HANG. */
+function fakeIdentity(agents: Record<string, { owner: Address; uri: string } | Error | typeof HANG>, opts: { delayMs?: number } = {}) {
   const calls: string[] = [];
   const answer = async <T>(id: bigint, pick: (a: { owner: Address; uri: string }) => T): Promise<T> => {
     calls.push(String(id));
     if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
     const a = agents[String(id)];
+    if (a === HANG) return hang();
     if (a === undefined || a instanceof Error) throw a ?? relayDown();
     return pick(a);
   };
@@ -64,7 +71,10 @@ function fullCast() {
 const closers: (() => void)[] = [];
 afterEach(() => closers.splice(0).forEach((c) => c()));
 
-async function boot(identity: IdentityReads | null, opts: { waitMs?: number; rebuilding?: boolean } = {}) {
+/** Document URLs whose host answers 503, as a host that is down. */
+const DOWN = new Set<string>();
+
+async function boot(identity: IdentityReads | null, opts: { waitMs?: number; rebuilding?: boolean; reader?: Reader; cfg?: Partial<Config> } = {}) {
   const sim = new Sim();
   const built = [buildClaim(sim, 'closed_uncontested', 1), buildClaim(sim, 'finding_made', 2, { shop: SHOP2 })];
   const store = new Store();
@@ -84,13 +94,22 @@ async function boot(identity: IdentityReads | null, opts: { waitMs?: number; reb
   const fetchDocs: FetchLike & { urls: string[] } = Object.assign(
     async (url: string) => {
       fetchDocs.urls.push(url);
-      const doc = DOCS[url];
-      const bytes = new TextEncoder().encode(JSON.stringify(doc ?? {}));
-      return { ok: doc !== undefined, status: doc === undefined ? 404 : 200, json: async () => doc, arrayBuffer: async () => bytes.buffer as ArrayBuffer };
+      const doc = DOWN.has(url) ? undefined : DOCS[url];
+      const bytes = new TextEncoder().encode(typeof doc === 'string' ? doc : JSON.stringify(doc ?? {}));
+      const status = DOWN.has(url) ? 503 : doc === undefined ? 404 : 200;
+      return { ok: status === 200, status, json: async () => doc, arrayBuffer: async () => bytes.buffer as ArrayBuffer };
     },
     { urls: [] as string[] },
   );
-  const h = harness({ store, now: Number(now), parties: castParties(), fetch: fetchDocs, deployments: { local: false, files: ['hedera.json'] } });
+  const h = harness({
+    store,
+    now: Number(now),
+    parties: castParties(),
+    fetch: fetchDocs,
+    deployments: { local: false, files: ['hedera.json'] },
+    ...(opts.reader ? { reader: opts.reader } : {}),
+    ...(opts.cfg ? { cfg: opts.cfg } : {}),
+  });
   const app = createApp(h.svc, { chain: null, cast: { identity, ...(opts.waitMs !== undefined ? { waitMs: opts.waitMs } : {}) } });
   const url = await new Promise<string>((resolve) => {
     const server = app.listen(0, '127.0.0.1', () => {
@@ -207,15 +226,75 @@ describe('GET /v1/cast', () => {
     expect(byId(r.body)['151']).toMatchObject({ registration: null, current: true });
     expect(fetchDocs.urls).toEqual([SHOP_DOC_URL]);
     expect(r.body.meta.degraded).not.toContain('identity');
-    const saved = DOCS[SHOP_DOC_URL];
-    delete DOCS[SHOP_DOC_URL];
+    DOWN.add(SHOP_DOC_URL);
     try {
       h.clock.now += 31;
       const gone = await get();
       expect(gone.body.meta.degraded).toContain('identity');
       expect(byId(gone.body)['150']).toMatchObject({ current: false, registration: { recourse: { kind: 'apparel-sizes' } } });
     } finally {
-      DOCS[SHOP_DOC_URL] = saved;
+      DOWN.delete(SHOP_DOC_URL);
+    }
+  });
+
+  it('takes a 404, a body that is not JSON or inline JSON that does not parse as the answer: no registration, still current', async () => {
+    const missingUrl = 'https://gone.example/.well-known/agent-registration.json';
+    const htmlUrl = 'https://html.example/.well-known/agent-registration.json';
+    DOCS[htmlUrl] = '<html>not a registration</html>';
+    try {
+      const id = fakeIdentity({
+        ...fullCast(),
+        '150': { owner: SHOP, uri: missingUrl },
+        '151': { owner: PLATFORM2, uri: htmlUrl },
+        '152': { owner: PLATFORM, uri: 'data:application/json,%7B%22name%22' },
+      });
+      const { get } = await boot(id.reads);
+      const r = await get();
+      conforms(r);
+      expect(r.body.meta.degraded).not.toContain('identity');
+      for (const k of ['150', '151', '152']) expect(byId(r.body)[k], k).toMatchObject({ registration: null, current: true });
+    } finally {
+      delete DOCS[htmlUrl];
+    }
+  });
+
+  it('says a re-read that has not answered within the wait is not current while it is out', async () => {
+    const id = fakeIdentity(fullCast());
+    const { get, h } = await boot(id.reads, { waitMs: 50 });
+    const good = await get();
+    expect(good.body.meta.degraded).not.toContain('identity');
+    const readAt = byId(good.body)['149'].readAt;
+    // the relay takes the requests and hangs
+    for (const k of Object.keys(id.agents)) id.agents[k] = HANG;
+    h.clock.now += 31;
+    const t = Date.now();
+    const late = await get();
+    expect(Date.now() - t).toBeLessThan(1_000);
+    conforms(late);
+    expect(late.body.meta.degraded).toContain('identity');
+    expect(byId(late.body)['149']).toMatchObject({ owner: PLATFORM, readAt, current: false });
+    expect(late.body.cast.members.every((m: any) => m.current === false)).toBe(true);
+    // still out a refresh later: one read at a time, still not current
+    const calls = id.calls.length;
+    h.clock.now += 31;
+    const still = await get();
+    expect(id.calls.length).toBe(calls);
+    expect(still.body.meta.degraded).toContain('identity');
+  });
+
+  it('answers within one read wait in all when the relay and the claims reads both hang', async () => {
+    const base = fakeReader();
+    const reader: Reader = { ...base, claimsParams: hang, caseParams: hang, vaultParams: hang, facts: hang, locks: hang, party: hang, claimTerms: hang };
+    const id = fakeIdentity(Object.fromEntries(Object.keys(fullCast()).map((k) => [k, HANG] as const)));
+    const { get } = await boot(id.reads, { reader, cfg: { readWaitMs: 200 } });
+    for (let i = 0; i < 2; i++) {
+      const t = Date.now();
+      const r = await get();
+      expect(Date.now() - t).toBeLessThan(400);
+      expect(r.status).toBe(200);
+      conforms(r);
+      expect(r.body.meta.degraded).toContain('identity');
+      expect(r.body.cast.members).toHaveLength(4);
     }
   });
 
