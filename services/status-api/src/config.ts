@@ -112,7 +112,15 @@ export function loadConfig(env: Env = process.env): Config {
     actionsPerMin: 30,
     actionBurst: 10,
     actionConcurrency: 4,
-    actionDeadlineMs: 12_000,
-    readWaitMs: 3_000,
+    // How long an action may take in all, and how long it waits on one chain read; raise both for a slow relay.
+    actionDeadlineMs: positiveMs(env.ACTION_DEADLINE_MS, 12_000),
+    readWaitMs: positiveMs(env.READ_WAIT_MS, 3_000),
   };
+}
+
+function positiveMs(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`expected a positive whole number of milliseconds, got ${raw}`);
+  return n;
 }
