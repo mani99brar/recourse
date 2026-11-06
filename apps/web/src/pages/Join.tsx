@@ -92,7 +92,7 @@ function endpointProblem(v: string): string | null {
  */
 export function joinProblems(f: JoinForm): Partial<Record<JoinField, string>> {
   const out: Partial<Record<JoinField, string>> = {};
-  const name = lengthProblem(f.name.trim(), LIMITS.name, 'the name', 'Name the shop: agent companies and the cast page show this name.');
+  const name = lengthProblem(f.name.trim(), LIMITS.name, 'the name', 'Name the shop: agent companies and the Shops and agents page show this name.');
   if (name) out.name = name;
   const sells = lengthProblem(f.sells.trim(), LIMITS.sells, 'the line on what it sells', 'Say in one line what the shop sells, for example "Sells tees and caps in sizes S to XL."');
   if (sells) out.sells = sells;
@@ -141,11 +141,11 @@ export function spanWords(seconds: string | number): string {
 /** Defaults stand in when the chain has never been read: say so rather than show them as read. */
 const chainNote = (p: JoinParams | undefined) => (p?.defaulted === true ? ' (default, not read from the chain yet)' : '');
 
-/** The parameters a sentence names, or what stands in until the API answers. */
+/** The parameters a sentence names, or what stands in until the API answers; `fee` is null until read, as each sentence words it its own way. */
 function paramWords(p: JoinParams | undefined, token: VaultToken | undefined) {
   const note = chainNote(p);
   return {
-    fee: p ? `${usdc(p.claims.courtFeeUsdc, token)}${note}` : 'the court fee (not read yet)',
+    fee: p ? `${usdc(p.claims.courtFeeUsdc, token)}${note}` : null,
     window: p ? `${spanWords(p.claims.contestWindow)}${note}` : 'not read yet',
     timeout: p ? `${spanWords(p.claims.claimTimeout)}${note}` : 'not read yet',
   };
@@ -173,7 +173,7 @@ export function Agreement({ params, token }: { params?: JoinParams | undefined; 
           <b>Each claim has a time limit.</b> The claim timeout is {w.timeout}. A filed claim not pre-checked within it, or a contested claim not ruled on within it, can be ended, and your court fee comes back in full.
         </li>
         <li>
-          <b>Each claim you file holds a court fee of {w.fee}.</b> It comes back when nobody contests the pre-check within the contest window ({w.window}) and the claim closes, when the claim expires, or when the court (Kleros jurors, on
+          <b>Each claim you file holds a court fee{w.fee ? ` of ${w.fee}` : ' (amount not read yet)'}.</b> It comes back when nobody contests the pre-check within the contest window ({w.window}) and the claim closes, when the claim expires, or when the court (Kleros jurors, on
           Arbitrum Sepolia) finds the agent company at fault. It goes to the court-fee pool, the scheme's account that keeps court fees, when the court finds you at fault, or finds neither side at fault and the pre-check had not flagged the agent company's part of the order.
         </li>
       </ul>
@@ -193,7 +193,7 @@ export function Costs({ params, token }: { params?: JoinParams | undefined; toke
         <Row label="Registering">
           One transaction on Hedera testnet. You pay its network fee (gas) in HBAR, Hedera's own coin. This page estimates the fee through your wallet before you sign, and your wallet shows its own figure. Once sent, you can follow it on HashScan, Hedera's public block explorer.
         </Row>
-        <Row label="Each claim you file">The court fee, {w.fee}, held while the claim is open, and the gas of filing, in HBAR.</Row>
+        <Row label="Each claim you file">The court fee{w.fee ? `, ${w.fee},` : ' (amount not read yet),'} held while the claim is open, and the gas of filing, in HBAR.</Row>
         <Row label="Anything else">Nothing: there is no joining, listing or monthly fee.</Row>
       </dl>
       <p className="muted small">The court fee is paid in mUSDC, which only the operator can mint. See the operator steps below.</p>
@@ -213,6 +213,7 @@ export function RecordView({ doc }: { doc: RegistrationDoc }) {
         <b className="num">{`${size.bytes.toLocaleString('en-US')} bytes`}</b> of the {MAX_URI_BYTES.toLocaleString('en-US')} this page allows. It is public once registered.
       </p>
       <pre className="join-json">{json}</pre>
+      {doc.description.includes('HCS') && <p className="muted small">HCS in the description is the Hedera Consensus Service, where the records topic is kept.</p>}
       {size.problem && (
         <p className="error" role="alert">
           {`The registration is ${size.bytes.toLocaleString('en-US')} bytes; it is stored on chain, so this page keeps it to ${MAX_URI_BYTES.toLocaleString('en-US')}. Shorten the name, the line on what it sells, the type name or the endpoint.`}
@@ -269,7 +270,7 @@ export function JoinFields({ form, set, touched, touch }: { form: JoinForm; set:
           <fieldset>
             <legend className="vh">Your shop</legend>
             {field('name', 'Shop name', { placeholder: 'For example, Harbour Linen', auto: 'organization', words: true })}
-            {field('sells', 'What it sells, in one line', { placeholder: 'For example, Sells shirts and tees in sizes S to XL.', hint: 'The cast page shows this line under the name.', words: true })}
+            {field('sells', 'What it sells, in one line', { placeholder: 'For example, Sells shirts and tees in sizes S to XL.', hint: 'The Shops and agents page shows this line under the name.', words: true })}
           </fieldset>
           <fieldset className="join-types">
             <legend>What type of shop</legend>
@@ -368,12 +369,12 @@ export function ListingCard({ doc, agentId = null, owner = null }: { doc: Regist
   );
 }
 
-/** What the operator does after a shop registers; each is the operator's alone in this demo. */
+/** What the operator does after a shop registers; each is the operator's alone in this demo. Bond.tsx states its own the same way. */
 export function OperatorSteps() {
   return (
     <ul className="join-list">
       <li>
-        <b>Party map:</b> the operator adds your new identity to the party map (deployments/parties.json). Until then the shop service, the agent and the cast page do not know it.
+        <b>Party map:</b> the operator adds your new identity to the party map (deployments/parties.json). Until then the shop service, the agent and the Shops and agents page do not know it.
       </li>
       <li>
         <b>mUSDC:</b> only the operator, as the mock's owner, can mint it. Ask the operator for the court fee before you file a claim.
@@ -440,7 +441,7 @@ export function RegisteredView({ hash, reg, sent, failed }: { hash: Hash; reg: R
       )}
       {doc && <ListingCard doc={doc} agentId={reg.agentId} owner={reg.owner} />}
       <p className="next">
-        <strong>Next:</strong> ask the operator to add agent {reg.agentId} to the party map. The cast page lists your shop from then on.
+        <strong>Next:</strong> ask the operator to add agent {reg.agentId} to the party map. The Shops and agents page lists your shop from then on.
       </p>
     </div>
   );
@@ -467,12 +468,12 @@ export function JoinView({ params, token, form, set, touched, touch, owner, flow
       {flow(<JoinFields form={form} set={set} touched={touched} touch={touch} />)}
       <div className="grid join-after">
         <Card title="What agent companies see" id="join-see">
-          <p className="muted small">The cast page (Shops and agents) shows each registered shop like this, once the operator has added it to the party map. This is your registration as the form stands.</p>
+          <p className="muted small">The Shops and agents page shows each registered shop like this, once the operator has added it to the party map. This is your registration as the form stands.</p>
           <ListingCard doc={joinDoc(form)} owner={owner} />
         </Card>
         <Card title="Next step" id="join-next">
           <p>
-            To take orders and claims in this demo, the operator adds the shop to the party map. The <a href="#/cast">cast page</a> lists shops from that map, so yours appears there once it is added.
+            To take orders and claims in this demo, the operator adds the shop to the party map. The <a href="#/cast">Shops and agents page</a> lists shops from that map, so yours appears there once it is added.
           </p>
           <h3>Operator steps</h3>
           <OperatorSteps />
@@ -525,11 +526,11 @@ export function JoinPage() {
   return (
     <div className="join-page">
       <div className="page-head">
-        <p className="eyebrow">Join as a shop</p>
+        <p className="eyebrow">For shops</p>
         <h1>I run a shop</h1>
         <p className="lead">
           Register your shop in the ERC-8004 identity registry on Hedera testnet, from your own wallet. ERC-8004 is a standard registry of identities for agents and the businesses behind them: each entry has a number, the account that owns
-          it, and a registration document that says what it is. Shopping agents and the cast page read it from there.
+          it, and a registration document that says what it is. Shopping agents and the Shops and agents page read it from there.
         </p>
       </div>
       <Banner fresh={params.data ?? undefined} error={params.error} token={token} />

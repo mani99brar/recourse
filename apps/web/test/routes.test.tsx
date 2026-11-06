@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { renderToString } from 'react-dom/server';
 import { prerender } from 'react-dom/static';
 import { describe, expect, it } from 'vitest';
-import { Shell, route } from '../src/App.js';
+import { PageBoundary, Shell, route } from '../src/App.js';
 
 /** The whole page once every lazy part has loaded (renderToString would stop at the Suspense fallback). */
 async function full(hash: string): Promise<string> {
@@ -42,8 +42,20 @@ describe('story, join and bond routes', () => {
     expect(app).toContain('<Suspense fallback={<Loading what="the page" />}>');
   });
 
+  it('a page that fails to load says so in a line with a way to reload, inside the shell', () => {
+    // the boundary keys on the route, so moving to another page tries again
+    expect(readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')).toContain('<PageBoundary key={r.name}>');
+    const b = new PageBoundary({ children: <p>the page</p> });
+    expect(renderToString(<>{b.render()}</>)).toBe('<p>the page</p>');
+    b.state = PageBoundary.getDerivedStateFromError();
+    const failed = renderToString(<>{b.render()}</>).replaceAll('<!-- -->', '');
+    expect(failed).toContain('<p class="empty" role="alert">This page could not load; reload to get the latest version. <button type="button" class="linkish">Reload the page</button></p>');
+  });
+
   it('the home page links to all three, and the nav to the story', () => {
     const home = renderToString(<Shell hash="#/" />);
+    // a plain link under the hero's two buttons, as well as the row of three further down
+    expect(home).toMatch(/<p class="hero-more">New here\? (<!-- -->)?<a href="#\/story">How it works<\/a>/);
     expect(home).toContain('href="#/story"');
     expect(home).toContain('href="#/join"');
     expect(home).toContain('href="#/bond"');

@@ -76,6 +76,15 @@ export function localProblems(txs: readonly UnsignedTx[]): string[] {
   return out;
 }
 
+/**
+ * Why a plan could not be built, in words: a wallet stop's own words, else the error's first line. A
+ * plan's own sentence is one line; an RPC client's error runs on (arguments, docs, version).
+ */
+export function refusal(e: unknown): Problem {
+  if (e instanceof WalletStop) return { text: stopWords(e), code: e.kind };
+  return { text: e instanceof Error ? e.message.split('\n')[0]! : 'The plan could not be built.' };
+}
+
 /** Hedera's margin on the node's estimate, as the API and the shop sign with it (x1.3). */
 const withMargin = (gas: bigint): bigint => (gas * 13n + 9n) / 10n;
 
@@ -151,8 +160,7 @@ export function LocalFlow(p: LocalFlowProps) {
       const built = await estimatePlan(provider, from, plan);
       show({ kind: 'preview', built, problems: [...localProblems(built.transactions), ...(p.problems?.(built.transactions) ?? [])] });
     } catch (e) {
-      const stop = e instanceof WalletStop ? e : null;
-      show({ kind: 'refused', problem: stop ? { text: stopWords(stop), code: stop.kind } : { text: e instanceof Error ? e.message : 'The plan could not be built.' } });
+      show({ kind: 'refused', problem: refusal(e) });
     }
   }
 
@@ -220,7 +228,12 @@ export function LocalFlowView(v: LocalFlowViewProps) {
       <h2>{v.title}</h2>
       <Stages at={stageOf(phase)} />
       {v.intro && <p className="act-intro">{v.intro}</p>}
-      <WalletLine wallet={wallet} onConnect={v.onConnect} />
+      {/* the plans built here act on Hedera testnet only, so the no-wallet line names that network alone */}
+      {wallet.available ? (
+        <WalletLine wallet={wallet} onConnect={v.onConnect} />
+      ) : (
+        <p className="muted small">To do this, open the page in a browser with a wallet that can add Hedera testnet. Everything else on this site works without one.</p>
+      )}
       {editing && (
         <>
           {v.children}

@@ -9,14 +9,14 @@ import { prerender } from 'react-dom/static';
 import { decodeFunctionData, encodeFunctionResult, erc20Abi, type Abi, type AbiFunction, type EIP1193Provider, type Hash, type Hex } from 'viem';
 import { describe, expect, it } from 'vitest';
 import { Shell } from '../src/App.js';
-import { LocalFlowView, estimatePlan, localProblems } from '../src/actions/LocalFlow.js';
+import { LocalFlowView, estimatePlan, localProblems, refusal } from '../src/actions/LocalFlow.js';
 import { ApiFailure } from '../src/lib/api.js';
 import { POST_DEPOSIT_BUDGET, depositProblems } from '../src/lib/deposit.js';
 import { REGISTRY, docFromUri } from '../src/lib/identity.js';
-import { NO_WALLET, type WalletState } from '../src/lib/wallet.js';
+import { NO_WALLET, WalletStop, type WalletState } from '../src/lib/wallet.js';
 import {
   BondView, DepositedView, EXAMPLE_NUMBERS, NumbersCard, OPERATOR_STEPS, RegisteredView, SeenCard, VAULT_READS,
-  afterRegister, depositPlan, duration, estimate, handlingFor, percentBps, registerPlan, vaultNow,
+  HBAR_PER_USDC, afterRegister, depositPlan, duration, estimate, handlingFor, percentBps, platformOf, registerPlan, vaultNow,
   type BondParams,
 } from '../src/pages/Bond.js';
 import type { CastBody, CastMember } from '../src/pages/Cast.js';
@@ -99,6 +99,11 @@ describe('the bond page', () => {
     for (const line of Object.values(OPERATOR_STEPS)) expect(page).toContain(html(line));
     expect(page).toContain('Nothing is signed yet');
     for (const claim of ['Mined', 'Registered:', 'Posted.', 'Confirm and sign']) expect(page).not.toContain(claim);
+    // with no wallet, the panels name only the network their plans act on
+    expect(page).toContain('open the page in a browser with a wallet that can add Hedera testnet.');
+    expect(page).not.toContain('Arbitrum Sepolia');
+    expect(page).toContain('<b>Party map:</b>');
+    expect(page).toContain('<p class="eyebrow">For agent companies</p>');
   });
 
   it('reads every figure from the parameters, and labels the suggestion as an estimate', () => {
@@ -110,7 +115,14 @@ describe('the bond page', () => {
     expect(page).toContain('30.90 mUSDC');
     expect(page).toMatch(/Suggested deposit<small>An estimate, not the required amount<\/small><\/span><b>31\.00<small> mUSDC<\/small>/);
     expect(page).toContain('Months of payouts the deposit covers (an assumption of this page, not a rule)');
-    expect(page).toContain('Orders here are paid in HBAR (this deployment&#x27;s price setting: 1 HBAR per 1 USDC of list price)');
+    // the rate is the demo's fixed one from the shared price code, the list price's own unit named as such
+    expect(HBAR_PER_USDC).toBe(1);
+    expect(page).toContain('Orders in this demo are paid in HBAR, at its fixed rate of 1 HBAR per 1 USDC of list price (the shop&#x27;s price unit); claims and deposits count in mUSDC.');
+    // the terms the page uses are defined where they first appear
+    expect(page).toContain('ERC-8004 is a standard public registry of identities for agents and the businesses');
+    expect(page).toContain('in the vault: the contract that holds the deposits and pays claims from them');
+    expect(page).toContain('plus handling, the claims contract&#x27;s allowance for the');
+    expect(page).toContain('Each card links to the company&#x27;s worklist');
     expect(page).toContain('the operator cannot set a required deposit below 5.00 mUSDC');
     expect(page).toContain('Top-up window: 7 days');
     expect(page).toContain('1.00 plus 5% of the order, at most 4.00');
@@ -131,6 +143,11 @@ describe('the bond page', () => {
 
   it('says what it is waiting for while the parameters are not read', () => {
     const page = render(<BondView p={null} pError={null} cast={null} castError={null} />);
+    // the vault token is named mUSDC before it is read, never bare USDC
+    expect(page).toContain('Average order value (mUSDC)');
+    expect(page).toContain('Amount (mUSDC)');
+    expect(page).toContain('Rounded up to a whole mUSDC');
+    expect(page).not.toMatch(/\(USDC\)|whole USDC|in USDC\b/);
     expect(page).toContain('Reading the claims contract&#x27;s handling rule');
     expect(page).toContain('The vault&#x27;s floor for a required deposit is not read yet.');
     expect(page).toContain('Top-up window: not read yet.');
@@ -187,7 +204,10 @@ describe('what a shop sees', () => {
   it('shows a bonded company with the vault figures', () => {
     const page = seen(standing({}));
     expect(page).toContain('pill-ok">Bonded</span>');
-    expect(page).toContain('Bonded: it holds 10.00 mUSDC (testnet mock) of 10.00 mUSDC (testnet mock) required.');
+    // the section says once that amounts are the testnet mock; each card names the symbol alone
+    expect(page).toContain('Bonded: it holds 10.00 mUSDC of 10.00 mUSDC required.');
+    expect(page).toContain('<dt>Deposit held</dt><dd>10.00 mUSDC</dd>');
+    expect(page).not.toContain('(testnet mock)');
     expect(page).toContain('<dt>Shops accept its orders</dt><dd>yes</dd>');
     expect(page).toContain('aria-label="Bonded mark for Example Errands (sample): 10.00 mUSDC deposit"');
     expect(page).toContain('href="#/party/0x0101010101010101010101010101010101010101"');
@@ -269,6 +289,24 @@ describe('your deposit', () => {
     const plan = await depositPlan({ ...args, platform: OTHER, names: { [OTHER]: 'Example Buying Desk (sample)' } }, wallet(12_000_000n))(FROM);
     expect(plan.transactions[1]?.call.args.platform).toBe(OTHER);
     expect(plan.changes?.join(' ')).toContain("The deposit is Example Buying Desk (sample)'s from then on: only that company can take it out, by exiting.");
+  });
+
+  it('refuses the zero address or a non-address as the company, and takes an empty field as the signer', () => {
+    expect(platformOf('')).toEqual({ platform: null, problem: null });
+    expect(platformOf(` ${OTHER} `)).toEqual({ platform: OTHER, problem: null });
+    expect(platformOf('0x1234').problem).toContain('not an address');
+    expect(platformOf('0x0000000000000000000000000000000000000000')).toEqual({ platform: null, problem: "That is the zero address; type the agent company's account, or leave it empty for your own." });
+  });
+
+  it('says in a sentence when the wallet balance cannot be read, rather than the RPC error', async () => {
+    const down = { request: async ({ method }: { method: string }) => (method === 'eth_chainId' ? '0x128' : Promise.reject(new Error('HTTP request failed.\n\nURL: x\nRequest body: {}\n\nVersion: viem@2'))), on: () => undefined, removeListener: () => undefined } as unknown as EIP1193Provider;
+    await expect(depositPlan(args, down)(FROM)).rejects.toThrow("Your wallet's mUSDC balance could not be read on Hedera testnet just now; try again.");
+  });
+
+  it('shows a plan that could not be built as one sentence: the wallet stop in words, or the first line of the error', () => {
+    expect(refusal(new Error('HTTP request failed.\n\nURL: https://testnet.hashio.io/api\nRequest body: {}\n\nVersion: viem@2'))).toEqual({ text: 'HTTP request failed.' });
+    expect(refusal(new WalletStop('rejected'))).toEqual({ text: 'You declined in your wallet, so nothing was sent for this step.', code: 'rejected' });
+    expect(refusal('odd')).toEqual({ text: 'The plan could not be built.' });
   });
 
   it('stops before building when the wallet holds less than the deposit, and names the operator', async () => {

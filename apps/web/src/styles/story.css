@@ -27,7 +27,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--sp-6) clamp(32px, 5vw, 88px);
-  align-items: center;
+  align-items: start;
   padding: clamp(48px, 10vh, 120px) 0;
   box-shadow: inset 0 1px var(--line);
 }
@@ -39,6 +39,7 @@
   font-stretch: var(--semi);
   line-height: 1.04;
   letter-spacing: -0.024em;
+  text-wrap: balance;
 }
 /* red is the fault: one word per line, at display size (large-text contrast) */
 .story-page .beat h2 em {
@@ -66,9 +67,10 @@
   font-weight: 500;
 }
 
-/* the art: a raised sheet, as the home page's doors sit */
+/* the art: a raised sheet, as the home page's doors sit; its top lines up with the headline, under the eyebrow */
 .story-page .beat-art {
   min-width: 0;
+  margin-top: 32px;
   padding: clamp(20px, 2.6vw, 36px);
   background: var(--g);
   border-radius: var(--radius);
@@ -107,6 +109,11 @@
 .story-page .sizes .off .v,
 .story-page .rail .off .v {
   color: var(--r);
+}
+/* the story's own letters, before the claim is read: muted, so they never pass for read values */
+.story-page .sizes li.told .v,
+.story-page .rail-fig.told .rail .v {
+  color: var(--fg3);
 }
 
 /* ---------- 1: the size in each record ---------- */
@@ -372,10 +379,11 @@
   padding: 20%;
   text-align: center;
 }
+/* sized to the ring and to the figure's length (--chars), so a longer amount stays inside the inner circle */
 .story-page .pay-n {
   color: var(--s);
-  font-size: 28px;
-  font-size: 17cqi;
+  font-size: 24px;
+  font-size: min(17cqi, calc(76cqi / var(--chars, 5)));
   white-space: nowrap;
   font-weight: 800;
   font-stretch: var(--wide);
@@ -400,6 +408,22 @@
 }
 .story-page .ledger dt {
   color: var(--fg2);
+}
+/* each row's swatch, drawn as its part of the bar under the ledger */
+.story-page .ledger .sw {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 1px;
+  background: var(--s);
+}
+.story-page .ledger .sw-2 {
+  opacity: 0.55;
+}
+.story-page .ledger .sw-3 {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--s);
 }
 .story-page .ledger dd {
   font-weight: 500;
@@ -439,7 +463,7 @@
   margin-top: 0;
 }
 
-/* ---------- the ways out: rows on the home page's door scale ---------- */
+/* ---------- the ways out: the two claims in one row, the docket and the two sign-up pages in the next ---------- */
 .story-page .story-next {
   padding-top: var(--sp-7);
   box-shadow: inset 0 1px var(--line);
@@ -448,8 +472,8 @@
   margin-bottom: var(--sp-5);
 }
 .story-page .story-doors {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
   margin: 0 0 var(--sp-5);
   padding: 1px;
@@ -458,9 +482,12 @@
   border-radius: var(--radius);
 }
 .story-page .story-doors > li {
-  flex: 1 1 210px;
+  grid-column: span 2;
   min-width: 0;
   background: var(--g);
+}
+.story-page .story-doors > li:nth-child(-n + 2) {
+  grid-column: span 3;
 }
 .story-page .story-door {
   display: flex;
@@ -487,10 +514,9 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
+/* inline, so a title that wraps keeps its arrow after the last word */
 .story-page .sd-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  display: inline;
   font-size: 19px;
   font-weight: 600;
   font-stretch: 112%;
@@ -501,9 +527,11 @@
   text-decoration-color: rgba(var(--t), 0.4);
 }
 .story-page .sd-title svg {
+  display: inline;
   width: 15px;
   height: 15px;
-  flex: none;
+  margin-left: 8px;
+  vertical-align: -2px;
   transition: transform var(--t-mid) var(--ease);
 }
 .story-page .story-door:hover .sd-title {
@@ -588,6 +616,18 @@
     grid-template-columns: minmax(0, 1fr);
     gap: var(--sp-5);
     padding: var(--sp-7) 0;
+  }
+  .story-page .beat-art {
+    margin-top: 0;
+  }
+}
+@media (max-width: 720px) {
+  .story-page .story-doors {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .story-page .story-doors > li,
+  .story-page .story-doors > li:nth-child(-n + 2) {
+    grid-column: auto;
   }
 }
 @media (max-width: 560px) {

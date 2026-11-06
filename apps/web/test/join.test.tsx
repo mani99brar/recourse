@@ -180,6 +180,10 @@ describe('what a shop agrees to and what joining costs', () => {
   it('shows no figure before the API answers, and marks defaults that were not read from the chain', async () => {
     const unread = text(<Costs />) + text(<Agreement />);
     expect(unread).toContain('not read yet');
+    // the stand-in fits each sentence it sits in, rather than naming the court fee twice
+    expect(unread).toContain('Each claim you file holds a court fee (amount not read yet).');
+    expect(unread).toContain('The court fee (amount not read yet), held while the claim is open');
+    expect(unread).not.toMatch(/court fee,? (of )?the court fee/);
     expect(unread).not.toMatch(/\d\.\d\d mUSDC/);
     expect(unread).not.toContain('18 hours');
     const body = await readParams();
@@ -268,8 +272,12 @@ describe('the page as a whole', () => {
     expect(html).toContain('<h1>I run a shop</h1>');
     const h2 = [...html.matchAll(/<h2>([^<]+)<\/h2>/g)].map((m) => m[1]);
     expect(h2).toEqual(['What you agree to', 'What joining costs', 'Register your shop', 'What agent companies see', 'Next step']);
-    expect(html).toContain('the operator adds the shop to the party map. The <a href="#/cast">cast page</a> lists shops from that map');
-    expect(html).toContain('the operator adds your new identity to the party map (deployments/parties.json). Until then the shop service, the agent and the cast page do not know it.');
+    expect(html).toContain('the operator adds the shop to the party map. The <a href="#/cast">Shops and agents page</a> lists shops from that map');
+    expect(html).toContain('the operator adds your new identity to the party map (deployments/parties.json). Until then the shop service, the agent and the Shops and agents page do not know it.');
+    // the page names the cast page as the nav does, and spells out HCS beside the document that uses it
+    expect(html).not.toContain('cast page');
+    expect(html).toContain('HCS in the description is the Hedera Consensus Service');
+    expect(html).toContain('<p class="eyebrow">For shops</p>');
     expect(html).toContain('only the operator, as the mock&#x27;s owner, can mint it');
     expect(html).toContain('only the operator sets how much each agent company must hold in the vault (setRequired)');
     expect(html).toContain('Nothing is signed yet');

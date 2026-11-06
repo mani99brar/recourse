@@ -8,7 +8,8 @@ import { prerender } from 'react-dom/static';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Shell } from '../src/App.js';
 import { READS, apiUrl, fromV1, getRead } from '../src/lib/api.js';
-import { COURT_CLAIM, PAYOUT_CLAIM, STORY_READS, StoryView, WITHDRAW_TX, payoutMoney, sizesOf, windowWords, type StoryClaim } from '../src/pages/Story.js';
+import { ApiFailure } from '../src/lib/api.js';
+import { COURT_CLAIM, PAYOUT_CLAIM, STORY_READS, StoryBody, StoryView, WITHDRAW_TX, courtOutcome, payoutMoney, sizesOf, windowWords, type StoryClaim } from '../src/pages/Story.js';
 
 const mock: VaultToken = { mode: 'mock', address: `0x${'6d'.repeat(20)}`, decimals: 6, symbol: 'mUSDC', label: 'mUSDC (testnet mock)', tokenId: null };
 const SHOP = '0x' + '0d'.repeat(20);
@@ -118,7 +119,9 @@ describe('the story page', () => {
     const text = words(html);
     expect(text).toContain('The records show the first place they differ.');
     expect(text).toContain('a signed check of the records against the fault rule');
-    expect(text).toContain('What the agent was shown differs from what it ordered.');
+    // the Shown record is what the agent showed the buyer
+    expect(text).toContain('What the agent showed differs from what it ordered.');
+    expect(text).not.toContain('was shown');
     expect(html).toMatch(/<li class="cut"><span class="k">Shown<\/span><span class="v">M<\/span><\/li><li class="off"><span class="k">Ordered<\/span><span class="v">L<\/span>/);
     expect(html).toContain('At fault: <span class="fault">the agent company</span>');
   });
@@ -127,6 +130,9 @@ describe('the story page', () => {
     const html = render(payout(), court());
     const text = words(html);
     expect(text).toContain('If a side disagrees, a Kleros court decides.');
+    // only the side the finding goes against may contest it (the shop, when it finds neither side at fault)
+    expect(text).toContain("The side the pre-check finds at fault can contest it within the claim's contest window (when it finds neither side at fault, the shop can).");
+    expect(text).not.toContain('Either side can contest');
     expect(text).toContain('human jurors in a Kleros court decide');
     expect(text).toContain('Chainlink CCIP, a service that carries messages between chains');
     expect(text).toContain("approved under the buyer's standing spending mandate");
@@ -135,9 +141,29 @@ describe('the story page', () => {
     expect(text).toContain('The shop contested. In dispute 212 the jurors ruled that neither side was at fault');
     expect(text).toContain('went to the fee pool');
     expect(text).toContain('Ruling applied: neither side at fault');
+    expect(text).toContain('Kleros dispute 212: the jurors ruled that neither side was at fault.');
     expect(html).toContain(`href="${KLEROS}"`);
     expect(html).toContain(`href="https://ccip.chain.link/msg/${hex(3)}"`);
     expect(html).toContain(`href="https://ccip.chain.link/msg/${hex(4)}"`);
+  });
+
+  it('beat 4: the ruling and the court fee are told from the court claim read, not fixed in the page', () => {
+    expect(courtOutcome(court())).toEqual({ ruled: 'neither side was at fault', applied: 'neither side at fault', fee: 'went to the fee pool' });
+    const other = court();
+    other.court.ruling = 1;
+    other.money.escrow.fate = 'refunded';
+    expect(courtOutcome(other)).toEqual({ ruled: 'the agent company was at fault', applied: 'the agent company at fault', fee: 'came back to the shop' });
+    const text = words(render(payout(), other));
+    expect(text).toContain('In dispute 212 the jurors ruled that the agent company was at fault, and the court fee, which the shop pays when it files a claim, came back to the shop.');
+    expect(text).toContain('Ruling applied: the agent company at fault');
+    expect(text).toContain('Kleros dispute 212: the jurors ruled that the agent company was at fault.');
+    expect(text).not.toContain('neither side was at fault');
+    expect(text).not.toContain('fee pool');
+    // before the read, the outcome is not stated
+    const before = words(render(payout(), null));
+    expect(before).toContain('In its dispute the jurors ruled on the records.');
+    expect(before).toContain('The ruling settles the claim');
+    expect(before).not.toMatch(/neither side was at fault|fee pool/);
   });
 
   it('beat 5: the deposit paid the shop, every figure from the claim read', () => {
@@ -153,6 +179,9 @@ describe('the story page', () => {
     expect(text).toContain('mUSDC is a testnet mock of USDC that only the operator can mint.');
     expect(text).toContain('paid in HBAR');
     expect(html).toContain(`href="https://hashscan.io/testnet/transaction/${WITHDRAW_TX}"`);
+    // the figure is sized to its length; each part of the bar has its swatch beside its row
+    expect(html).toContain('<span class="pay-n" style="--chars:5">2.575</span>');
+    for (const n of [1, 2, 3]) expect(html).toContain(`<i class="sw sw-${n}" aria-hidden="true"></i>`);
     // the one image: lazy, with its size set so nothing shifts when it lands
     const img = html.match(/<img [^>]+>/g) ?? [];
     expect(img).toHaveLength(1);
@@ -181,9 +210,32 @@ describe('the story page', () => {
     expect(text).not.toContain('10-minute');
     expect(text).not.toContain('read from the claim');
     expect(html).not.toContain('<img');
+    // the story's own letters and finding are muted and said to be unread, never shown as read values
+    expect(html.match(/<li class="[^"]*told[^"]*"/g)).toHaveLength(5);
+    expect(html).toContain('<figure class="rail-fig told">');
+    expect(text).toContain('as the story tells it; the claim is not read yet');
+    expect(text).toContain('At fault, as the story tells it: the agent company. The claim is not read yet.');
+    expect(html).not.toContain('class="fault"');
+    expect(text).not.toMatch(/neither side was at fault|fee pool/);
     // the prose still names the operator steps and every way out
     expect(text).toContain('Only the operator can mint mUSDC');
     for (const href of ['#/docket', '#/join', '#/bond']) expect(html).toContain(`href="${href}"`);
+  });
+
+  it("shows the site-wide notice from the claim read's meta (the owner's remaining powers), and one notice when the reads fail", () => {
+    const notice = 'The owner can still change the contest window, the court fee and the handling.';
+    const lock = { allLocked: false, notice };
+    const p = fromV1({ ...structuredClone(payoutBody), meta: { ...payoutBody.meta, configLock: lock } }) as StoryClaim;
+    const html = renderToString(<StoryBody payout={p} court={court()} error={null} />);
+    expect(html).toContain('<div class="banner" role="status">');
+    expect(html).toContain(notice);
+    expect(html).toContain('a testnet mock of USDC');
+    // the API down before any read: the dashed box says so, and the banner does not say it again
+    const down = words(renderToString(<StoryBody payout={null} court={null} error={new ApiFailure(0, 'unreachable')} />));
+    expect(down).toContain('The status service did not return the claims');
+    expect(down).not.toContain('cannot be reached');
+    // a read that later fails, with the claims already read: the banner says the figures may be out of date
+    expect(words(renderToString(<StoryBody payout={payout()} court={court()} error={new ApiFailure(0, 'unreachable')} />))).toContain('cannot be reached');
   });
 
   it('nothing here signs or claims to be signed: no wallet control, and the only signature named is the pre-check service', () => {

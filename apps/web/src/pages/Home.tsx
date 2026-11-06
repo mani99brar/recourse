@@ -98,6 +98,9 @@ export function HomePage() {
                 Check or file an order
               </a>
             </div>
+            <p className="hero-more">
+              New here? <a href="#/story">How it works</a>, told through one claim from start to end.
+            </p>
           </div>
           <img className="hero-art" src={hand} width={880} height={700} alt="" aria-hidden="true" decoding="async" />
         </div>

@@ -44,6 +44,10 @@
 .join-page .act {
   margin-top: var(--sp-5);
 }
+/* the panel spans the page: its small notes keep to a readable line */
+.join-page .act .muted.small {
+  max-width: 72ch;
+}
 .join-page .join-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -117,7 +121,7 @@
   font-weight: 500;
 }
 
-/* the registration document, as JSON: wraps rather than scrolls, so a phone never scrolls sideways */
+/* the registration document, as JSON: its indents hold, and a long line scrolls inside the block, never the page */
 .join-page .join-record h3,
 .join-page .join-done h3 {
   margin: 0 0 6px;
@@ -140,8 +144,8 @@
   font: 500 13px/1.5 var(--font);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
+  overflow-x: auto;
   tab-size: 2;
 }
 .join-page .join-record p.error {

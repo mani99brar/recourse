@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'rea
 import type { StatusKey } from '@recourse/shared';
 import ring from '../assets/ring.webp';
 import { Arrow, Banner, ExtLink, Loading, Pill, SideWords } from '../components.js';
-import { POLL_MS, READS, usePoll, type Fresh } from '../lib/api.js';
+import { POLL_MS, READS, usePoll, type ApiFailure, type Fresh } from '../lib/api.js';
 import { HEDERA_CHAIN_ID, txLink } from '../lib/chains.js';
 import { short, usdc, when } from '../lib/format.js';
 import { KIND_WORDS, REASON_WORDS, STATUS_WORDS } from '../lib/words.js';
@@ -94,6 +94,26 @@ function at(d: StoryClaim | null, name: string): string | null {
   return e ? when(e.time) : null;
 }
 
+/** A ruling as the second claim's prose and its route panel say it (1 the agent company, 2 the shop, 3 neither). */
+const RULED: Record<number, string> = { 1: 'the agent company was at fault', 2: 'the shop was at fault', 3: 'neither side was at fault' };
+const APPLIED: Record<number, string> = { 1: 'the agent company at fault', 2: 'the shop at fault', 3: 'neither side at fault' };
+/** Where the shop's court fee went, by its escrow's fate. */
+const FEE_WENT: Record<string, string> = {
+  kept_by_pool: 'went to the fee pool',
+  refunded: 'came back to the shop',
+  split: 'was partly returned to the shop and partly kept by the fee pool',
+};
+
+/** What the court claim's read says the jurors decided and where the court fee went; null for what it does not say yet. */
+export function courtOutcome(d: StoryClaim | null): { ruled: string | null; applied: string | null; fee: string | null } {
+  const ruling = d?.court.ruling ?? null;
+  return {
+    ruled: ruling === null ? null : (RULED[ruling] ?? null),
+    applied: ruling === null ? null : (APPLIED[ruling] ?? null),
+    fee: d ? (FEE_WENT[d.money.escrow.fate] ?? null) : null,
+  };
+}
+
 /** Adds .reveal to the page once an observer can run, and .in to each beat as it scrolls into view. */
 function useReveal() {
   const ref = useRef<HTMLDivElement>(null);
@@ -163,17 +183,30 @@ function PayArt({ d, money }: { d: StoryClaim; money: NonNullable<ReturnType<typ
       <div className="pay-ring">
         <img src={ring} width={640} height={640} alt="" loading="lazy" decoding="async" />
         <p>
-          <span className="pay-n">{money.paid === null ? 'not yet known' : figure(money.paid)}</span>
+          {money.paid === null ? (
+            <span className="pay-u">not yet known</span>
+          ) : (
+            // sized to its length, so a longer figure stays inside the ring
+            <span className="pay-n" style={{ '--chars': figure(money.paid).length } as CSSProperties}>
+              {figure(money.paid)}
+            </span>
+          )}
           <span className="pay-u">{d.vaultToken?.symbol ?? 'mUSDC'} paid</span>
         </p>
       </div>
       <dl className="ledger">
         <div>
-          <dt>Basket claimed</dt>
+          <dt>
+            {parts && <i className="sw sw-1" aria-hidden="true" />}
+            Basket claimed
+          </dt>
           <dd>{sum(money.basket)}</dd>
         </div>
         <div>
-          <dt>Handling</dt>
+          <dt>
+            {parts && <i className="sw sw-2" aria-hidden="true" />}
+            Handling
+          </dt>
           <dd>{sum(money.handling) ?? 'not yet known'}</dd>
         </div>
         <div className="tot">
@@ -181,7 +214,10 @@ function PayArt({ d, money }: { d: StoryClaim; money: NonNullable<ReturnType<typ
           <dd>{sum(money.paid) ?? 'not yet known'}</dd>
         </div>
         <div>
-          <dt>Court fee returned</dt>
+          <dt>
+            {parts && <i className="sw sw-3" aria-hidden="true" />}
+            Court fee returned
+          </dt>
           <dd>{sum(money.fee) ?? 'not returned'}</dd>
         </div>
         <div className="tot">
@@ -189,6 +225,7 @@ function PayArt({ d, money }: { d: StoryClaim; money: NonNullable<ReturnType<typ
           <dd>{sum(money.credited) ?? 'not yet known'}</dd>
         </div>
       </dl>
+      {/* the three parts in proportion, each drawn as the swatch beside its row */}
       {parts && (
         <div className="bar" aria-hidden="true">
           {parts.map((p, i) => (
@@ -217,6 +254,9 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
   const dispute = court?.court.disputeIds[0] ?? null;
   const disputeUrl = court?.court.courtLinks.find((l) => l.disputeId === dispute)?.url ?? null;
   const by = court ? contestedBy(court) : null;
+  const outcome = courtOutcome(court);
+  // until the payout claim is read, its letters and its finding are the story's, shown muted
+  const sizesRead = sizes.every((s) => s.read);
   const toCourt = court?.messages.find((m) => m.direction === 'toArbitrum') ?? null;
   const back = court?.messages.find((m) => m.direction === 'toHedera') ?? null;
   return (
@@ -249,13 +289,13 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
           <figure className="sizes-fig">
             <ol className="sizes">
               {sizes.map((s, i) => (
-                <li key={s.kind} className={s.size === asked ? undefined : 'off'} style={{ '--i': i } as CSSProperties}>
+                <li key={s.kind} className={[s.size === asked ? '' : 'off', s.read ? '' : 'told'].filter(Boolean).join(' ') || undefined} style={{ '--i': i } as CSSProperties}>
                   <span className="k">{s.label}</span>
                   <span className="v">{s.size}</span>
                 </li>
               ))}
             </ol>
-            <figcaption>{sizes.every((s) => s.read) ? 'The size each record of the order states, read from the claim.' : 'The size each record of the order states.'}</figcaption>
+            <figcaption>{sizesRead ? 'The size each record of the order states, read from the claim.' : 'The size each record of the order states, as the story tells it; the claim is not read yet.'}</figcaption>
           </figure>
         }
       >
@@ -312,7 +352,7 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
           </>
         }
         art={
-          <figure className="rail-fig">
+          <figure className={sizesRead ? 'rail-fig' : 'rail-fig told'}>
             <ol className="rail">
               <li>
                 <span className="k">Asked</span>
@@ -328,10 +368,18 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
               </li>
             </ol>
             <p className="rail-gap">
-              <span className="rail-mark">First difference</span> {reason && REASON_WORDS[reason] ? REASON_WORDS[reason] : 'What the agent showed differs from what it ordered.'}
+              {/* the Shown record is what the agent showed the buyer, so this claim's gap is told in the story's own words */}
+              <span className="rail-mark">First difference</span>{' '}
+              {reason && reason !== 'gap2_shown_vs_ordered' && REASON_WORDS[reason] ? REASON_WORDS[reason] : 'What the agent showed differs from what it ordered.'}
             </p>
             <p className="rail-fault">
-              At fault: <SideWords side={payout?.precheck?.side ?? 'platform'} />
+              {payout?.precheck ? (
+                <>
+                  At fault: <SideWords side={payout.precheck.side} />
+                </>
+              ) : (
+                <span className="muted">At fault, as the story tells it: the agent company. The claim is not read yet.</span>
+              )}
             </p>
           </figure>
         }
@@ -380,7 +428,7 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
               </li>
               <li className="stop">
                 <span className="net">Hedera testnet</span>
-                <span className="what">{court?.court.ruling === 3 ? 'Ruling applied: neither side at fault' : 'The ruling settles the claim'}</span>
+                <span className="what">{outcome.applied ? `Ruling applied: ${outcome.applied}` : 'The ruling settles the claim'}</span>
                 {at(court, 'Settled') && <span className="t">{at(court, 'Settled')}</span>}
               </li>
             </ol>
@@ -389,11 +437,12 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
         }
       >
         <p className="note">
-          Either side can contest the pre-check's finding within the claim's contest window. A contested claim travels from Hedera to Arbitrum Sepolia, another test network, over Chainlink CCIP, a service that carries messages between chains. There human jurors in a Kleros court decide, and the ruling comes back over CCIP to settle the claim on Hedera.
+          The side the pre-check finds at fault can contest it within the claim's contest window (when it finds neither side at fault, the shop can). A contested claim travels from Hedera to Arbitrum Sepolia, another test network, over Chainlink CCIP, a service that carries messages between chains. There human jurors in a Kleros court decide, and the ruling comes back over CCIP to settle the claim on Hedera.
         </p>
         <p className="note small-note">
           That is what happened to a second claim. The agent showed {courtShown} where the buyer asked for {courtAsked}, and the records showed the change was approved under the buyer's standing spending mandate, the limits the buyer set in advance for what the agent may buy.{' '}
-          {by ? `${by[0]!.toUpperCase()}${by.slice(1)} contested.` : 'A side contested.'} In {dispute ? `dispute ${dispute}` : 'its dispute'} the jurors ruled that neither side was at fault, and the court fee, which the shop pays when it files a claim, went to the fee pool.
+          {by ? `${by[0]!.toUpperCase()}${by.slice(1)} contested.` : 'A side contested.'} In {dispute ? `dispute ${dispute}` : 'its dispute'} {outcome.ruled ? `the jurors ruled that ${outcome.ruled}` : 'the jurors ruled on the records'}
+          {outcome.fee && `, and the court fee, which the shop pays when it files a claim, ${outcome.fee}`}.
         </p>
         <p className="beat-links">
           <a href={`#/claim/${COURT_CLAIM}`}>Open the second claim</a>
@@ -431,7 +480,7 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
             Asked M, ordered L. Nobody contested, so the agent company's deposit paid the shop.
           </Door>
           <Door href={`#/claim/${COURT_CLAIM}`} kicker="The second claim" title="Decided in court">
-            {dispute ? `Kleros dispute ${dispute}` : 'A Kleros dispute'}: the jurors ruled neither side at fault.
+            {dispute ? `Kleros dispute ${dispute}` : 'A Kleros dispute'}: {outcome.ruled ? `the jurors ruled that ${outcome.ruled}.` : 'human jurors ruled on the records.'}
           </Door>
           <Door href="#/docket" kicker="Everyone" title="The docket">
             Ruled cases and monthly counts, read from Arkiv testnet, a public data store.
@@ -452,25 +501,37 @@ export function StoryView({ payout, court }: { payout: StoryClaim | null; court:
   );
 }
 
+/**
+ * The story under the page head: the site-wide notice (the owner's remaining powers and late sources,
+ * from the claim read's meta) and the five beats. With no claim read, one notice says why.
+ */
+export function StoryBody({ payout, court, error }: { payout: StoryClaim | null; court: StoryClaim | null; error: ApiFailure | null }) {
+  return (
+    <>
+      <Banner fresh={payout ?? court ?? undefined} error={payout ? error : null} />
+      {!payout && !error && <Loading what="the two claims" />}
+      {!payout && error && <p className="empty">The status service did not return the claims, so their names and amounts are not shown.</p>}
+      <StoryView payout={payout} court={court} />
+    </>
+  );
+}
+
 /** How a claim runs, told through two real cases on the test networks. */
 export function StoryPage() {
   const ref = useReveal();
   // both claims are finished, so a slow re-read is enough
   const payout = usePoll<StoryClaim>(STORY_READS[0], POLL_MS * 12);
   const court = usePoll<StoryClaim>(STORY_READS[1], POLL_MS * 12);
-  const error = payout.error ?? court.error;
   return (
     <div className="story-page" ref={ref}>
       <div className="page-head">
+        <p className="eyebrow">The story</p>
         <h1>How it works</h1>
         <p className="lead">
           A shopping agent is software that buys for a person, and the agent company that runs it answers for what it buys. When it buys the wrong thing, who pays the shop? Here is one claim from start to end in five steps, and a second claim that went to court, both read from the test networks.
         </p>
       </div>
-      <Banner error={error} />
-      {!payout.data && !error && <Loading what="the two claims" />}
-      {!payout.data && error && <p className="empty">The status service did not return the claims, so their names and amounts are not shown.</p>}
-      <StoryView payout={payout.data} court={court.data} />
+      <StoryBody payout={payout.data} court={court.data} error={payout.error ?? court.error} />
     </div>
   );
 }

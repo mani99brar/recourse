@@ -205,16 +205,24 @@
   grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: var(--sp-5) var(--sp-6);
 }
+/* each card a column: the pill always under the name, and the link at the foot, so the cards line up */
 .bond-page .seen {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding-top: 16px;
   border-top: 1px solid var(--rule);
 }
 .bond-page .seen-head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+/* a narrow card: each figure under its label */
+.bond-page .seen .kv {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
 }
 .bond-page .card .seen-head h3 {
   margin: 0;
@@ -231,9 +239,11 @@
 }
 .bond-page a.read {
   display: inline-flex;
+  align-self: flex-start;
   align-items: center;
   min-height: 44px;
-  margin-top: 4px;
+  margin-top: auto;
+  padding-top: 4px;
   font-weight: 600;
   text-underline-offset: 4px;
 }
@@ -267,7 +277,7 @@ html:not([data-theme='light']) .bond-page .mark image {
   filter: invert(1) brightness(0.86);
 }
 
-/* ---------- the operator's steps: three lines, an aside on the sheet ---------- */
+/* ---------- the operator's steps: three lines, each led by its word in bold, as on the shop's page ---------- */
 .bond-page .bond-ops ul {
   max-width: 80ch;
   margin: 0;
@@ -277,22 +287,15 @@ html:not([data-theme='light']) .bond-page .mark image {
   line-height: 1.42;
 }
 .bond-page .bond-ops li {
-  position: relative;
-  padding: 9px 0 9px 22px;
+  padding: 10px 0;
   border-top: 1px solid var(--rule);
 }
 .bond-page .bond-ops li:last-child {
   border-bottom: 1px solid var(--rule);
 }
-.bond-page .bond-ops li::before {
-  content: '';
-  position: absolute;
-  left: 2px;
-  top: 17px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--s);
+.bond-page .bond-ops b {
+  color: var(--fg);
+  font-weight: 600;
 }
 
 /* ---------- the two actions, side by side on a wide screen ---------- */
@@ -313,6 +316,16 @@ html:not([data-theme='light']) .bond-page .mark image {
 .bond-page .bond-held {
   margin: 0 0 14px;
   color: var(--fg2);
+}
+.bond-page .bond-held p + p {
+  margin-top: 6px;
+}
+/* the panels' small notes keep to a readable line, and stand apart when they stack */
+.bond-page .act .muted.small {
+  max-width: 72ch;
+}
+.bond-page .act > .muted.small + .bond-held {
+  margin-top: 6px;
 }
 .bond-page .act .hint .linkish {
   font-size: inherit;

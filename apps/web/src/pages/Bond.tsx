@@ -4,8 +4,8 @@
 // chain, or is a number the person typed; the suggestion is labelled an estimate. Nothing here
 // signs: the wallet does, after the preview (actions/LocalFlow.tsx).
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { createPublicClient, custom, erc20Abi, getAddress, isAddress, parseAbi, type Address, type EIP1193Provider, type Hash } from 'viem';
-import type { VaultToken } from '@recourse/shared';
+import { createPublicClient, custom, erc20Abi, getAddress, isAddress, parseAbi, zeroAddress, type Address, type EIP1193Provider, type Hash } from 'viem';
+import { TINYBAR_PER_MICRO_USDC, type VaultToken } from '@recourse/shared';
 import { LocalFlow, type LocalPlan } from '../actions/LocalFlow.js';
 import { Banner, ExtLink, Loading, Pill, Row, lateWords } from '../components.js';
 import { READS, usePoll, type ApiFailure, type Fresh } from '../lib/api.js';
@@ -52,6 +52,14 @@ export function duration(sec: string | number): string {
   if (s > 0 && s % 60 === 0) return unit(s / 60, 'minute');
   return unit(s, 'second');
 }
+
+/** The vault token's symbol until GET /v1/params or /v1/cast names it: the demo's vault runs on the mUSDC testnet mock. */
+const UNIT = 'mUSDC';
+/** The token as usdc() and bondedMark() label it, with the mock's own label as the fallback, so no amount is ever labelled bare USDC. */
+const labelled = (t: VaultToken | undefined): Pick<VaultToken, 'label'> => t ?? { label: 'mUSDC (testnet mock)' };
+
+/** HBAR per 1 USDC of list price at the demo's fixed rate for orders priced in HBAR (1 HBAR is 10^8 tinybar). */
+export const HBAR_PER_USDC = Number((1_000_000n * TINYBAR_PER_MICRO_USDC) / 100_000_000n);
 
 /** A vault amount without its unit ("2.575"), for a figure whose unit is set beside it. */
 const figure = (v: bigint | string) => usdc(v).replace(/ USDC$/, '');
@@ -177,7 +185,7 @@ function NumberInput(f: { id: string; label: string; value: string; hint: ReactN
 
 /** Your numbers: the fields beside the estimate they give. Every constant is read from /v1/params or labelled. */
 export function NumbersCard({ input, onChange, p, token, failed = false }: { input: NumbersInput; onChange: (next: NumbersInput) => void; p: BondParams | null; token: VaultToken | undefined; failed?: boolean }) {
-  const unit = token?.symbol ?? 'USDC';
+  const unit = token?.symbol ?? UNIT;
   const own = inUnit(unit);
   const c = p?.params.claims;
   const v = p?.params.vault;
@@ -190,7 +198,8 @@ export function NumbersCard({ input, onChange, p, token, failed = false }: { inp
     <section className="card bond-numbers" id="bond-numbers" aria-labelledby="bond-numbers-h">
       <h2 id="bond-numbers-h">Your numbers</h2>
       <p className="bond-intro">
-        How large a deposit your agent company might post: what the claims it loses could cost in a month. The figures filled in are an example; type your own.
+        How large a deposit your agent company might post: what the claims it loses could cost in a month. Each lost claim pays the shop its loss on the order plus handling, the claims contract's allowance for the
+        shop's costs of a claim. The figures filled in are an example; type your own.
       </p>
       <div className="bond-numbers-in">
         <form className="bond-form" noValidate onSubmit={(e) => e.preventDefault()}>
@@ -203,7 +212,7 @@ export function NumbersCard({ input, onChange, p, token, failed = false }: { inp
               value={input.order}
               onChange={set('order')}
               problem={problems.order}
-              hint={`Orders here are paid in HBAR (this deployment's price setting: 1 HBAR per 1 USDC of list price); claims and deposits count in ${unit}.`}
+              hint={`Orders in this demo are paid in HBAR, at its fixed rate of ${HBAR_PER_USDC} HBAR per 1 USDC of list price (the shop's price unit); claims and deposits count in ${unit}.`}
             />
             <NumberInput
               id="bn-share"
@@ -302,7 +311,7 @@ export function NumbersCard({ input, onChange, p, token, failed = false }: { inp
 
 export function TermsCard({ p, token }: { p: BondParams | null; token: VaultToken | undefined }) {
   const c = p?.params.claims;
-  const own = inUnit(token?.symbol ?? 'USDC');
+  const own = inUnit(token?.symbol ?? UNIT);
   return (
     <section className="card" id="bond-terms" aria-labelledby="bond-terms-h">
       <h2 id="bond-terms-h">What you agree to</h2>
@@ -349,7 +358,11 @@ export function markPill(mark: BondedMark, read: PartyDeposit | null): { tone: '
 
 /** One agent company as a shop sees it: the mark, its state, and the vault's figures behind them. */
 export function SeenCard({ m, read, failed, token }: { m: Pick<CastMember, 'address' | 'displayName'>; read: PartyRead | null; failed: boolean; token: VaultToken | undefined }) {
-  const mark = bondedMark(read, token);
+  // the section says once that the amounts are in the testnet mock, so each card names the symbol alone
+  const unit = token?.symbol ?? UNIT;
+  const amount = (v: string | null) => (v === null ? 'not read' : inUnit(unit)(v));
+  // usdc() prints the label as given; the symbol stands in for it here (the type lists only the two full labels)
+  const mark = bondedMark(read, { label: unit } as Pick<VaultToken, 'label'>);
   // before the first read lands, the pill says it is reading rather than "not read"
   const pill = !read && !failed ? { tone: 'plain' as const, text: 'Reading' } : markPill(mark, read);
   const name = m.displayName;
@@ -367,8 +380,8 @@ export function SeenCard({ m, read, failed, token }: { m: Pick<CastMember, 'addr
         <>
           <p className="seen-words">{mark.state === 'unknown' ? 'Its deposit could not be read from the vault just now.' : mark.words}</p>
           <dl>
-            <Row label="Deposit held">{usdc(read.balance, token)}</Row>
-            <Row label="Required (set by the operator)">{usdc(read.required, token)}</Row>
+            <Row label="Deposit held">{amount(read.balance)}</Row>
+            <Row label="Required (set by the operator)">{amount(read.required)}</Row>
             {mark.state === 'top-up' && <Row label="Top-up by">{when(read.topUpDeadline)}</Row>}
             <Row label="Shops accept its orders">{read.inGoodStanding === null ? 'not read' : read.inGoodStanding ? 'yes' : 'no'}</Row>
           </dl>
@@ -389,13 +402,15 @@ function Seen({ m, token }: { m: CastMember; token: VaultToken | undefined }) {
 }
 
 export function SeenSection({ cast, castError, token, v }: { cast: CastBody | null; castError: ApiFailure | null; token: VaultToken | undefined; v: BondParams['params']['vault'] | undefined }) {
+  const unit = token?.symbol ?? UNIT;
   const companies = cast?.members.filter((m) => m.role === 'platform') ?? [];
   return (
     <section className="card" id="bond-seen" aria-labelledby="bond-seen-h">
       <h2 id="bond-seen-h">What a shop sees</h2>
       <p className="bond-intro">
         Before it accepts an order, a shop asks the vault whether the agent's company is in good standing (inGoodStanding): a required deposit is set, no exit is pending, and the deposit meets it or its top-up window
-        {v ? ` (${duration(v.topUpWindow)})` : ''} is still open. Shops accept orders only from companies in good standing. Here is each agent company in this demo's party map, as the vault reads it now.
+        {v ? ` (${duration(v.topUpWindow)})` : ''} is still open. Shops accept orders only from companies in good standing. Here is each agent company in this demo's party map, as the vault reads it now; amounts
+        are in {unit}, the vault's testnet mock token. Each card links to the company's worklist: its claims, and what waits on it.
       </p>
       {!cast && !castError && <Loading what="the agent companies" />}
       {!cast && castError && <p className="empty">The status service did not return the list of agent companies, so no mark is shown.</p>}
@@ -411,15 +426,21 @@ export function SeenSection({ cast, castError, token, v }: { cast: CastBody | nu
   );
 }
 
-/** The three steps only the operator can take, stated where a new company meets them. */
+/** The three steps only the operator can take, stated where a new company meets them; a bold lead word each, as Join states its own. */
 export function OperatorSteps() {
   return (
     <section className="card bond-ops" aria-labelledby="bond-ops-h">
       <h2 id="bond-ops-h">Steps only the operator can take</h2>
       <ul>
-        <li>{OPERATOR_STEPS.partyMap}</li>
-        <li>{OPERATOR_STEPS.mint}</li>
-        <li>{OPERATOR_STEPS.required}</li>
+        <li>
+          <b>Party map:</b> {OPERATOR_STEPS.partyMap}
+        </li>
+        <li>
+          <b>mUSDC:</b> {OPERATOR_STEPS.mint}
+        </li>
+        <li>
+          <b>Required deposits:</b> {OPERATOR_STEPS.required}
+        </li>
       </ul>
     </section>
   );
@@ -472,12 +493,12 @@ export function RegisteredView({ r, hash }: { r: Registered | null; hash: Hash |
           <p>
             <strong>Registered: ERC-8004 id {r.agentId}.</strong> The registry gives its owner as <span className="mono">{r.owner}</span>, and its registration is inline in the registry.
           </p>
-          {!r.matches && <p>The owner or registration the registry gives now differs from the one the transaction recorded; look it up on HashScan.</p>}
+          {!r.matches && <p>The owner or registration the registry gives now differs from the one the transaction recorded; look it up on HashScan, Hedera's public block explorer.</p>}
         </>
       ) : (
         <p>
           Mined, but the new id could not be read back from the receipt just now.{' '}
-          {hash && <ExtLink href={txLink(HEDERA_CHAIN_ID, hash)}>See the transaction on HashScan</ExtLink>}
+          {hash && <ExtLink href={txLink(HEDERA_CHAIN_ID, hash)}>See the transaction on HashScan, Hedera's public block explorer</ExtLink>}
         </p>
       )}
       <p className="small">{OPERATOR_STEPS.partyMap}</p>
@@ -590,11 +611,14 @@ export interface DepositArgs {
 export function depositPlan(a: DepositArgs, provider: EIP1193Provider | null, onTarget?: (platform: Address) => void): (from: Address) => Promise<LocalPlan> {
   return async (from) => {
     const platform = a.platform ?? from;
-    const amount = usdc(a.amount, a.vaultToken);
+    const amount = usdc(a.amount, labelled(a.vaultToken));
     if (provider) {
       await walletOps(provider).ensureChain(HEDERA_CHAIN_ID);
-      const held = await walletHolds(provider, a.token, from);
-      if (held < a.amount) throw new Error(`Your wallet holds ${usdc(held, a.vaultToken)}, less than the ${amount} deposit, so the vault could not take it. ${OPERATOR_STEPS.mint}`);
+      // a failed read says so in a sentence, not as the RPC client's error dump
+      const held = await walletHolds(provider, a.token, from).catch(() => {
+        throw new Error("Your wallet's mUSDC balance could not be read on Hedera testnet just now; try again.");
+      });
+      if (held < a.amount) throw new Error(`Your wallet holds ${usdc(held, labelled(a.vaultToken))}, less than the ${amount} deposit, so the vault could not take it. ${OPERATOR_STEPS.mint}`);
     }
     onTarget?.(platform);
     const self = platform.toLowerCase() === from.toLowerCase();
@@ -602,7 +626,7 @@ export function depositPlan(a: DepositArgs, provider: EIP1193Provider | null, on
     return {
       transactions: [buildApprove(a.token, a.vault, a.amount), buildPostDeposit(a.vault, platform, a.amount)],
       summary: `Post ${amount} from your wallet into the deposit vault, as the deposit of ${who}.`,
-      amounts: [{ name: 'Deposit', amount: a.amount.toString(), decimals: 6, symbol: a.vaultToken?.symbol ?? 'mUSDC', display: '', movement: 'deposit', account: platform }],
+      amounts: [{ name: 'Deposit', amount: a.amount.toString(), decimals: 6, symbol: a.vaultToken?.symbol ?? UNIT, display: '', movement: 'deposit', account: platform }],
       changes: [
         `The vault holds ${amount} more for ${who}. It leaves the deposit only as payouts on claims or when the company exits.`,
         ...(self ? [] : [`The deposit is ${who}'s from then on: only that company can take it out, by exiting.`]),
@@ -612,13 +636,24 @@ export function depositPlan(a: DepositArgs, provider: EIP1193Provider | null, on
   };
 }
 
+/** The agent company the deposit is typed for: its address, or why it cannot take one. Empty posts for the signer itself. */
+export function platformOf(text: string): { platform: Address | null; problem: string | null } {
+  const typed = text.trim();
+  if (!typed) return { platform: null, problem: null };
+  if (!isAddress(typed, { strict: false })) return { platform: null, problem: 'That is not an address. Leave it empty to post for your own account.' };
+  const platform = getAddress(typed);
+  // the vault refuses a deposit for the zero address, but only once approve has mined and its gas is spent
+  if (platform === zeroAddress) return { platform: null, problem: "That is the zero address; type the agent company's account, or leave it empty for your own." };
+  return { platform, problem: null };
+}
+
 /** What the vault says once the deposit mined, read straight from the chain. */
 export function DepositedView({ read, who, token }: { read: PartyDeposit | null; who: string; token: VaultToken | undefined }) {
   return (
     <div className="next bond-after" role="status">
       {read ? (
         <p>
-          <strong>Posted.</strong> As the vault reads it now, for {who}: {bondedMark(read, token).words}
+          <strong>Posted.</strong> As the vault reads it now, for {who}: {bondedMark(read, labelled(token)).words}
         </p>
       ) : (
         <p>Mined. The vault could not be read back just now; the deposit shows here once the status service reads it.</p>
@@ -658,19 +693,18 @@ function DepositCard({ p, token, suggested, names }: { p: BondParams | null; tok
   const [amountText, setAmount] = useState('');
   const [platformText, setPlatform] = useState('');
   const target = useRef<Address | null>(null);
-  const own = inUnit(token?.symbol ?? 'USDC');
+  const own = inUnit(token?.symbol ?? UNIT);
   const vault = p?.addresses.vault && isAddress(p.addresses.vault) ? getAddress(p.addresses.vault) : null;
   const tokenAddr = p?.addresses.usdc && isAddress(p.addresses.usdc) ? getAddress(p.addresses.usdc) : null;
   const floor = p?.params.vault ? BigInt(p.params.vault.minDeposit) : null;
   const amount = parseUsdc(amountText);
   const typed = platformText.trim();
-  const platform = typed && isAddress(typed, { strict: false }) ? getAddress(typed) : null;
+  const { platform, problem: platformProblem } = platformOf(platformText);
   const held = useWalletHolds(tokenAddr, wallet.account, wallet.chainId);
   const shown = platform ?? wallet.account;
   const standing = usePoll<PartyRead>(shown ? READS.party(shown) : null, 30_000);
 
   const amountProblem = amountText.trim() && (amount === null || amount <= 0n) ? 'Enter an amount above 0, like 5.00.' : null;
-  const platformProblem = typed && !platform ? 'That is not an address. Leave it empty to post for your own account.' : null;
   const ready = vault !== null && tokenAddr !== null && amount !== null && amount > 0n && (!typed || platform !== null);
   const plan = ready
     ? depositPlan({ vault, token: tokenAddr, amount, platform, vaultToken: token, names }, injectedProvider(), (t) => {
@@ -695,16 +729,19 @@ function DepositCard({ p, token, suggested, names }: { p: BondParams | null; tok
         after={after}
         names={names}
       >
-        <p className="small bond-held">
-          {!wallet.account
-            ? `${OPERATOR_STEPS.mint} Connect a wallet that holds some to post a deposit.`
-            : held !== null
-              ? `Your wallet holds ${usdc(held, token)}. ${OPERATOR_STEPS.mint}`
-              : wallet.chainId === HEDERA_CHAIN_ID
-                ? `Reading your wallet's mUSDC… ${OPERATOR_STEPS.mint}`
-                : `Your wallet's mUSDC is read once it is on Hedera testnet; the next step asks it to switch. ${OPERATOR_STEPS.mint}`}
-        </p>
-        <label htmlFor="dp-amount">Amount ({token?.symbol ?? 'USDC'})</label>
+        <div className="bond-held">
+          <p className="small">
+            {!wallet.account
+              ? 'Connect a wallet that holds some mUSDC to post a deposit.'
+              : held !== null
+                ? `Your wallet holds ${usdc(held, labelled(token))}.`
+                : wallet.chainId === HEDERA_CHAIN_ID
+                  ? "Reading your wallet's mUSDC…"
+                  : "Your wallet's mUSDC is read once it is on Hedera testnet; the next step asks it to switch."}
+          </p>
+          <p className="small">{OPERATOR_STEPS.mint}</p>
+        </div>
+        <label htmlFor="dp-amount">Amount ({token?.symbol ?? UNIT})</label>
         <input
           id="dp-amount"
           inputMode="decimal"
@@ -763,7 +800,7 @@ function DepositCard({ p, token, suggested, names }: { p: BondParams | null; tok
           <div className="bond-now">
             <h3>Now, as the status service reads it</h3>
             <p className="small">
-              {standing.data ? bondedMark(standing.data, token).words : standing.error ? 'The status service did not answer just now.' : 'Reading…'}
+              {standing.data ? bondedMark(standing.data, labelled(token)).words : standing.error ? 'The status service did not answer just now.' : 'Reading…'}
             </p>
           </div>
         )}
@@ -785,8 +822,9 @@ export function BondView({ p, pError, cast, castError }: { p: BondParams | null;
         <p className="eyebrow">For agent companies</p>
         <h1>I run a shopping agent</h1>
         <p className="lead">
-          An agent company is the business that runs a shopping agent. It registers an ERC-8004 identity on Hedera testnet and posts a deposit in the vault, its bond. When an order's records show the agent got it
-          wrong, the shop is paid from that deposit.
+          An agent company is the business that runs a shopping agent. It registers an ERC-8004 identity on Hedera testnet (ERC-8004 is a standard public registry of identities for agents and the businesses
+          behind them) and posts a deposit, its bond, in the vault: the contract that holds the deposits and pays claims from them. When an order's records show the agent got it wrong, the shop is paid from that
+          deposit.
         </p>
       </div>
       <Banner fresh={p ?? undefined} error={pError} token={token} />
