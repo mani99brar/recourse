@@ -122,7 +122,7 @@ describe('at court', () => {
     });
   });
 
-  it('caseDeadline: open one second before, stuck at equality', () => {
+  it('caseDeadline after receivedAt when expiresAt is unknown: open one second before, stuck at equality', () => {
     const c = kase({ state: CaseState.Received });
     const deadline = c.receivedAt + LOCKED.caseDeadline;
     expect(deriveStatus(atCourt, c, [msg({})], LOCKED, deadline - 1n)).toEqual({
@@ -303,29 +303,37 @@ describe('at court', () => {
     expect(deriveStatus(atCourt, null, [], LOCKED, expiry + 1n).nextCall).toBe('expireClaim');
   });
 
-  it("Arbitrum's expiresAt ends open and refile at that second; without it only caseDeadline counts", () => {
-    const arbExpires = atCourt.filedAt + LOCKED.claimTimeout;
-    const received = kase({ state: CaseState.Received, receivedAt: arbExpires - 600n, expiresAt: arbExpires });
-    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, arbExpires - 1n)).toEqual({
+  it("with Arbitrum's expiresAt, open and refile end caseDeadline before it (openBy), however early the case arrived", () => {
+    // The case's claimTimeout is Hedera's less the 2 h relay budget.
+    const arbExpires = atCourt.filedAt + LOCKED.claimTimeout - 7_200n;
+    const openBy = arbExpires - LOCKED.caseDeadline;
+    const received = kase({ state: CaseState.Received, expiresAt: arbExpires });
+    // Long past receivedAt + caseDeadline the case still waits to open (a full cap or a short pool).
+    expect(openBy).toBeGreaterThan(received.receivedAt + LOCKED.caseDeadline);
+    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, received.receivedAt + LOCKED.caseDeadline)).toEqual({
       statusKey: 'at_court',
       nextActor: 'keeper',
       nextCall: 'openCase',
-      deadline: arbExpires,
+      deadline: openBy,
     });
-    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, arbExpires)).toEqual({
+    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, openBy - 1n)).toMatchObject({ statusKey: 'at_court', nextCall: 'openCase' });
+    expect(deriveStatus(atCourt, received, [msg({})], LOCKED, openBy)).toEqual({
       statusKey: 'stuck',
       nextActor: 'anyone',
       nextCall: 'expireClaim',
       deadline: expiry,
     });
+    // A case that arrives after openBy can only go Stale.
+    const late = kase({ state: CaseState.Received, receivedAt: openBy + 60n, expiresAt: arbExpires });
+    expect(deriveStatus(atCourt, late, [msg({})], LOCKED, openBy + 61n)).toMatchObject({ statusKey: 'stuck', nextCall: 'expireClaim' });
     const noExpiry = { ...received, expiresAt: 0n };
-    expect(deriveStatus(atCourt, noExpiry, [msg({})], LOCKED, arbExpires)).toMatchObject({
+    expect(deriveStatus(atCourt, noExpiry, [msg({})], LOCKED, received.receivedAt)).toMatchObject({
       nextCall: 'openCase',
       deadline: received.receivedAt + LOCKED.caseDeadline,
     });
-    const pending = kase({ state: CaseState.RefilePending, attempts: 1, ruledAt: arbExpires - 60n, expiresAt: arbExpires });
-    expect(deriveStatus(atCourt, pending, [msg({})], LOCKED, arbExpires - 1n)).toMatchObject({ nextCall: 'refile', deadline: arbExpires });
-    expect(deriveStatus(atCourt, pending, [msg({})], LOCKED, arbExpires).statusKey).toBe('stuck');
+    const pending = kase({ state: CaseState.RefilePending, attempts: 1, ruledAt: T0 + 5_000n, expiresAt: arbExpires });
+    expect(deriveStatus(atCourt, pending, [msg({})], LOCKED, T0 + 5_000n + LOCKED.caseDeadline)).toMatchObject({ nextCall: 'refile', deadline: openBy });
+    expect(deriveStatus(atCourt, pending, [msg({})], LOCKED, openBy).statusKey).toBe('stuck');
     const opened = kase({ state: CaseState.Opened, attempts: 1, expiresAt: arbExpires });
     expect(deriveStatus(atCourt, opened, [msg({})], LOCKED, arbExpires + 1n)).toMatchObject({ statusKey: 'at_court', nextActor: 'court' });
   });

@@ -44,7 +44,7 @@ export interface StatusView {
   statusKey: StatusKey;
   nextActor: NextActor;
   nextCall: NextCall | null;
-  /** Unix seconds; inclusive (the action is still open at that second) except caseDeadline ones, which are exclusive. */
+  /** Unix seconds; inclusive (the action is still open at that second) except openBy ones (openCase, refile), which are exclusive. */
   deadline: bigint | null;
 }
 
@@ -62,9 +62,10 @@ export interface CaseView {
   lastSendAt: bigint;
   lastMessageId: Hex;
   /**
-   * `RecourseCase.expiresAt(claimId)`: filedAt + Arbitrum's claimTimeout (0 when unknown). From this
-   * second on the case cannot open or refile and anyone may `markStale` it. Optional: when absent,
-   * only the caseDeadline rules apply.
+   * `RecourseCase.expiresAt(claimId)`: filedAt + Arbitrum's claimTimeout (0 when unknown). From
+   * `expiresAt` - caseDeadline on (openBy) an openCase or refile only marks the case Stale, and from
+   * `expiresAt` on anyone may `markStale` it. Optional: when absent, open and refile count
+   * caseDeadline from receivedAt (or ruledAt), as the case contract deployed before openBy did.
    */
   expiresAt?: bigint;
   /** KlerosCore dispute period (0 evidence, 1 commit, 2 vote, 3 appeal, 4 execution). */
@@ -146,18 +147,21 @@ function arbExpiry(c: CaseView): bigint | null {
   return c.expiresAt !== undefined && c.expiresAt > 0n ? c.expiresAt : null;
 }
 
-/** Earlier of an exclusive caseDeadline and Arbitrum's (also exclusive) expiresAt. */
-function openBy(deadline: bigint, c: CaseView): bigint {
+/**
+ * The (exclusive) second from which openCase or refile no longer opens a round: caseDeadline before
+ * Arbitrum's expiresAt when it is known, else caseDeadline after `from` (receivedAt or ruledAt).
+ */
+function openBy(from: bigint, c: CaseView, p: LiveParams): bigint {
   const e = arbExpiry(c);
-  return e !== null && e < deadline ? e : deadline;
+  return e !== null ? e - p.caseDeadline : from + p.caseDeadline;
 }
 
 /** True when the Arbitrum case can no longer move: Stale, or its open/refile window has closed. */
 function caseDead(c: CaseView | null, p: LiveParams, now: bigint): boolean {
   if (c === null) return false;
   if (c.state === CaseState.Stale) return true;
-  if (c.state === CaseState.Received && now >= openBy(c.receivedAt + p.caseDeadline, c)) return true;
-  if (c.state === CaseState.RefilePending && now >= openBy(c.ruledAt + p.caseDeadline, c)) return true;
+  if (c.state === CaseState.Received && now >= openBy(c.receivedAt, c, p)) return true;
+  if (c.state === CaseState.RefilePending && now >= openBy(c.ruledAt, c, p)) return true;
   return false;
 }
 
@@ -251,9 +255,9 @@ export function deriveStatus(
       caseView.state === CaseState.RefilePending || caseView.attempts === 2 ? 'refused_once' : 'at_court';
     switch (caseView.state) {
       case CaseState.Received:
-        return view(key, 'keeper', 'openCase', openBy(caseView.receivedAt + p.caseDeadline, caseView));
+        return view(key, 'keeper', 'openCase', openBy(caseView.receivedAt, caseView, p));
       case CaseState.RefilePending:
-        return view(key, 'anyone', 'refile', openBy(caseView.ruledAt + p.caseDeadline, caseView));
+        return view(key, 'anyone', 'refile', openBy(caseView.ruledAt, caseView, p));
       case CaseState.Ruled:
         return view(key, 'keeper', 'relayRuling');
       case CaseState.Relayed:
