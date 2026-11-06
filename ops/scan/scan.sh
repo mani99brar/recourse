@@ -33,9 +33,11 @@ pat 'RPC url with key' i 'https?://[^ "]*(alchemy\.com/v2|infura\.io/v3|quiknode
 pat 'reference to an outside planning folder' i '(agent-workflow|recourse-prds|docs/prd|\bPRDs?\b|\b(SPEC|PLAN|CF|SM|TC|LS|RPT|I5|PR):[0-9]|round1[0-9]/|recourse-homepage)'
 FORBIDDEN='(^|/)(node_modules(/|$)|[^/]*\.env$|\.env\.[^e]|.*\.pass$)'
 
-redact() { # the text of a hit, without the secret in it: a value given to a key word goes whatever its length or shape
+redact() { # the text of a hit, without the secret in it: a value given to a key word and a URL's user info go
+  # whatever their length or shape
   sed -E -e 's/((key|secret|token|password|mnemonic|seed)[A-Za-z0-9_-]*["'"'"']?[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1<redacted>/gI' \
     -e 's/(0x)?[0-9a-fA-F]{32,}/<hex>/g' \
+    -e 's,(://)[^/?#@[:space:]"'"'"']*@,\1,g' \
     -e 's#(https?://[^/[:space:]"'"'"']+)/[^[:space:]"'"'"']*#\1/<path>#g' \
     -e 's/[A-Za-z0-9_+/=-]{20,}/<redacted>/g' | cut -c1-160
 }

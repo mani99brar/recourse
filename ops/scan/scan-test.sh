@@ -67,6 +67,11 @@ echo "const auth = { token: '$A.$B!' };" > tok.ts; git add -A; git commit -qm to
 NAME="a quoted token literal is blocked"; LABEL="api key literal"; expect_push_blocked main
 if printed "$A" "$B"; then bad "part of the token is printed"; else ok "no part of the token is printed"; fi
 reset_to_remote
+A=$(openssl rand -hex 4); B=$(openssl rand -hex 3)
+echo "const rpc = 'https://user:$A!$B@x.quiknode.pro/$(openssl rand -hex 10)';" > rpcauth.ts; git add -A; git commit -qm rpcauth
+NAME="a keyed RPC URL with a password in its user info is blocked"; LABEL="RPC url with key"; expect_push_blocked main
+if printed "$A" "$B"; then bad "part of the user-info password is printed"; else ok "no part of the user-info password is printed"; fi
+reset_to_remote
 
 echo "DEPLOYER_PRIVATE_KEY=0x$(hex)" > untracked-leak.txt
 echo more >> a.txt; git commit -qam "clean change"
