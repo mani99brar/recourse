@@ -15,9 +15,12 @@ import {IHRC719} from "./interfaces/IHRC719.sol";
 /// @notice Holds every USDC unit of the scheme on Hedera: platform deposits, the shop's court-fee
 ///         escrow per claim, and withdrawable credits. The bound claims contract is the only caller
 ///         that can open or close an escrow, and it can only move money along the settle table it
-///         implements. The owner can never move deposits, escrow or credits.
-/// @dev Invariant: `usdc.balanceOf(this) >= totalDeposits + totalEscrow + totalCredits`, with equality
-///      unless someone transfers USDC to the vault directly (that excess is never counted or recoverable).
+///         implements. The owner can never move deposits, escrow or credits. Each open claim can reserve
+///         what it may be owed out of the part of the platform's deposit no earlier open claim reserved,
+///         so a later claim (from any filer) can never take what an earlier one may still be paid.
+/// @dev Invariants: `usdc.balanceOf(this) >= totalDeposits + totalEscrow + totalCredits`, with equality
+///      unless someone transfers USDC to the vault directly (that excess is never counted or recoverable);
+///      and for every platform `reservedOf <= depositOf`, the reserved sum being that of its open claims.
 ///      Accounting never reads the token balance. No function accepts native value.
 contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     /// @dev Hedera Token Service system contract.
@@ -51,6 +54,8 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     mapping(address account => uint256) internal _credit;
     mapping(address shop => uint256) internal _shopEscrow;
     mapping(bytes32 claimId => Escrow) internal _escrows;
+    mapping(address platform => uint256) internal _reserved;
+    mapping(bytes32 claimId => uint256) internal _reservation;
 
     modifier onlyClaims() {
         if (msg.sender != claims || claims == address(0)) revert OnlyClaims();
@@ -160,7 +165,8 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         if (!_succeeded(ok, ret)) revert NotAssociated(msg.sender);
     }
 
-    /// @notice Starts the caller's exit clock. New claims against the platform stay allowed meanwhile.
+    /// @notice Starts the caller's exit clock. New claims against the platform stay allowed until the exit
+    ///         is due; the platform is out of good standing from the request on.
     function requestExit() external nonReentrant {
         if (_deposit[msg.sender] == 0) revert NoDeposit();
         if (_exitRequestedAt[msg.sender] != 0) revert ExitPending();
@@ -189,14 +195,42 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         _clearClock(msg.sender);
     }
 
+    /// @notice Withdraws the caller's pending exit request: claims can be filed against it again and its
+    ///         standing is derived from its deposit again.
+    function cancelExit() external {
+        if (_exitRequestedAt[msg.sender] == 0) revert ExitNotRequested();
+        _exitRequestedAt[msg.sender] = 0;
+        emit ExitCancelled(msg.sender);
+    }
+
     // =================================================================== claims contract only
 
-    /// @notice Pulls `amount` from `shop` into a new escrow for `claimId`.
+    /// @notice Pulls `amount` from `shop` into a new escrow for `claimId`. Reserves nothing.
     function escrowFee(address shop, address platform, uint256 amount, bytes32 claimId)
         external
         onlyClaims
         nonReentrant
     {
+        _escrowFee(shop, platform, amount, claimId);
+    }
+
+    /// @notice Pulls `amount` from `shop` into a new escrow for `claimId` and reserves for the claim up to
+    ///         `maxPayout` of the platform's deposit that no other open claim has reserved.
+    function escrowAndReserve(address shop, address platform, uint256 amount, bytes32 claimId, uint256 maxPayout)
+        external
+        onlyClaims
+        nonReentrant
+        returns (uint256 reserved)
+    {
+        uint256 total = _reserved[platform];
+        uint256 free = _deposit[platform] - total;
+        reserved = maxPayout < free ? maxPayout : free;
+        _reserved[platform] = total + reserved;
+        _reservation[claimId] = reserved;
+        _escrowFee(shop, platform, amount, claimId);
+    }
+
+    function _escrowFee(address shop, address platform, uint256 amount, bytes32 claimId) private {
         if (!usdcAssociated) revert NotAssociatedYet();
         if (amount == 0) revert AmountZero();
         // Once a platform's exit is due, no new claim can keep it open; claims already open run out.
@@ -217,9 +251,10 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         _pull(shop, amount);
     }
 
-    /// @notice Closes `claimId`'s escrow. Pays `toShop` from the platform's deposit, capped at what it
-    ///         holds, refunds `refundToShop` of the escrow to the shop and gives the rest of the escrow
-    ///         to the pool. Everything lands as credit; nothing is transferred out here.
+    /// @notice Closes `claimId`'s escrow. Pays `toShop` from the platform's deposit, capped at the claim's
+    ///         own reservation plus the deposit no open claim has reserved, releases the reservation,
+    ///         refunds `refundToShop` of the escrow to the shop and gives the rest of the escrow to the
+    ///         pool. Everything lands as credit; nothing is transferred out here.
     /// @return paid The part of `toShop` the deposit covered.
     function applyOutcome(bytes32 claimId, address platform, address shop, uint256 toShop, uint256 refundToShop)
         external
@@ -233,7 +268,8 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         if (refundToShop > fee) revert RefundAboveEscrow(refundToShop, fee);
 
         uint256 held = _deposit[platform];
-        paid = toShop < held ? toShop : held;
+        uint256 available = _release(claimId, platform, held);
+        paid = toShop < available ? toShop : available;
         uint256 remaining = held - paid;
         uint256 toPool = fee - refundToShop;
 
@@ -310,9 +346,18 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
         return _exitRequestedAt[platform];
     }
 
-    /// @notice Derived on every read: a requirement exists, and the deposit meets it or the platform
-    ///         is still inside its top-up window.
+    function reservedOf(address platform) external view returns (uint256) {
+        return _reserved[platform];
+    }
+
+    function reservationOf(bytes32 claimId) external view returns (uint256) {
+        return _reservation[claimId];
+    }
+
+    /// @notice Derived on every read: no exit is pending, a requirement exists, and the deposit meets it
+    ///         or the platform is still inside its top-up window.
     function inGoodStanding(address platform) external view returns (bool) {
+        if (_exitRequestedAt[platform] != 0) return false;
         uint256 req = _required[platform];
         if (req == 0) return false;
         if (_deposit[platform] >= req) return true;
@@ -321,6 +366,16 @@ contract DepositVault is IDepositVault, Ownable2Step, ReentrancyGuard {
     }
 
     // =================================================================== internal
+
+    /// @dev Releases the claim's reservation and returns what its payout may draw on: the reservation
+    ///      plus the part of the platform's deposit `held` that no open claim has reserved.
+    function _release(bytes32 claimId, address platform, uint256 held) private returns (uint256 available) {
+        uint256 own = _reservation[claimId];
+        uint256 reservedTotal = _reserved[platform];
+        available = own + (held - reservedTotal);
+        _reservation[claimId] = 0;
+        _reserved[platform] = reservedTotal - own;
+    }
 
     function _startClock(address platform) private {
         _topUpStart[platform] = uint64(block.timestamp);

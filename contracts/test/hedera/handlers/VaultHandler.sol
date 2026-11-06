@@ -90,7 +90,8 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
         vault.setRequired(p, amount);
     }
 
-    function escrow(uint256 sSeed, uint256 pSeed, uint256 amount) external creditsOnlyRise {
+    /// @dev Every third escrow reserves nothing (`escrowFee`); the others reserve a fuzzed maximum payout.
+    function escrow(uint256 sSeed, uint256 pSeed, uint256 amount, uint256 maxPayout) external creditsOnlyRise {
         address s = shops[sSeed % shops.length];
         address p = platforms[pSeed % platforms.length];
         uint256 exitAt = vault.exitRequestedAt(p);
@@ -98,7 +99,14 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
         if (exitAt != 0 && block.timestamp >= exitAt + delay) return; // refused once the exit is due
         amount = bound(amount, 1, 10e6);
         bytes32 id = keccak256(abi.encode("claim", claimIds.length));
-        vault.escrowFee(s, p, amount, id);
+        if (maxPayout % 3 == 0) {
+            vault.escrowFee(s, p, amount, id);
+        } else {
+            uint256 free = vault.depositOf(p) - vault.reservedOf(p);
+            maxPayout = bound(maxPayout, 0, 20_000e6);
+            uint256 got = vault.escrowAndReserve(s, p, amount, id, maxPayout);
+            require(got == (maxPayout < free ? maxPayout : free), "reserved more or less than the free deposit");
+        }
         claimIds.push(id);
         claimPlatform[id] = p;
         claimShop[id] = s;
@@ -120,7 +128,9 @@ contract VaultHandler is CommonBase, StdCheats, StdUtils {
         uint256 fee = vault.escrowOf(id).amount;
         toShop = bound(toShop, 0, 20_000e6);
         refund = bound(refund, 0, fee);
-        vault.applyOutcome(id, p, s, toShop, refund);
+        uint256 cap = vault.reservationOf(id) + vault.depositOf(p) - vault.reservedOf(p);
+        uint256 paid = vault.applyOutcome(id, p, s, toShop, refund);
+        require(paid == (toShop < cap ? toShop : cap), "paid past its own reservation and the unreserved rest");
         ghostOpen[id] = false;
         appliedCount[id] += 1;
         ghostOpenClaims[p] -= 1;

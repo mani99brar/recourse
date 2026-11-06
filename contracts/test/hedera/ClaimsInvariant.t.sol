@@ -82,6 +82,20 @@ contract ClaimsInvariantTest is ClaimsBase {
             }
         }
         assertEq(openEscrow, escrow, "escrow total");
+
+        // Every open claim's reservation is backed by its platform's deposit.
+        for (uint256 j; j < open.length; ++j) {
+            address p = handler.platforms(j);
+            uint256 reserved;
+            for (uint256 i; i < handler.claimCount(); ++i) {
+                bytes32 id = handler.claimIds(i);
+                if (_live(claims.getClaim(id).status) && claims.getClaim(id).platform == p) {
+                    reserved += vault.reservationOf(id);
+                }
+            }
+            assertEq(vault.reservedOf(p), reserved, "reserved total");
+            assertLe(reserved, vault.depositOf(p), "reserved above the deposit");
+        }
         for (uint256 j; j < open.length; ++j) {
             assertEq(vault.openClaimsOf(handler.platforms(j)), open[j], "open claims");
         }

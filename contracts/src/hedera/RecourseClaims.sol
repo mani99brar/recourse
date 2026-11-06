@@ -32,16 +32,30 @@ import {SettleMath} from "./SettleMath.sol";
 ///         side the finding goes against may contest within the window; otherwise anyone closes
 ///         the claim. A contested claim goes to court on Arbitrum over CCIP, and the ruling comes
 ///         back the same way (or, in the one-leg modes, through a disclosed relayer). Anyone then
-///         settles it. Every USDC movement goes through the vault, as credit.
-/// @dev The owner can configure the bridge and parameters until `lockConfig`, and can always change
-///      the CCIP extra args and fee token. The owner can never move USDC, settle a claim or set a
-///      ruling. `_ccipReceive` never reverts: every rejected message emits `RulingIgnored`.
+///         settles it. Every USDC movement goes through the vault, as credit. Each claim fixes its
+///         contest window, claim timeout and handling at filing, and reserves what it may be owed
+///         against the platform's deposit until it ends.
+/// @dev Owner powers before `lockConfig` are wide, so lock before real deposits are taken:
+///      `setBridgeMode` names the ruling relayer, which records any ruling it likes on a claim at court
+///      in the one-leg modes (OutOnly, None); `setPeer` names the only contract whose CCIP rulings are
+///      applied; `setPreCheckSigner` names who records findings; `setParams` sets the terms of claims
+///      filed afterwards (a filed claim keeps its own); `sweepLink` and `sweepNative` empty the CCIP fee
+///      balances. After the lock only `setExtraArgs` (GenericExtraArgsV2 within the lane's gas bounds)
+///      and `setFeeToken` remain, and the owner can no longer set a ruling or change a claim's terms.
+///      The owner never moves USDC or settles a claim itself. `_ccipReceive` never reverts: every
+///      rejected message emits `RulingIgnored`.
 contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @dev Amount ceiling for baskets and amount parameters, so settle sums can never overflow.
     uint256 internal constant MAX_AMOUNT = type(uint128).max;
     uint256 internal constant DEFAULT_GAS_LIMIT = 150_000;
+    /// @dev Receive gas bounds for ClaimToCourt on Arbitrum: above the measured worst case (95,364) and at
+    ///      most the lane's gas cap. `getFee` reverts outside the lane's bounds, which would stop every send.
+    uint256 internal constant MIN_GAS_LIMIT = 100_000;
+    uint256 internal constant MAX_GAS_LIMIT = 3_000_000;
+    /// @dev GenericExtraArgsV2: tag, gas limit word, allowOutOfOrderExecution word.
+    uint256 internal constant EXTRA_ARGS_V2_LEN = 68;
 
     address public immutable link;
     address public immutable vault;
@@ -57,6 +71,7 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
     Params internal _params;
 
     mapping(bytes32 claimId => Claim) internal _claims;
+    mapping(bytes32 claimId => ClaimTerms) internal _terms;
 
     modifier notLocked() {
         if (configLocked) revert ConfigIsLocked();
@@ -122,9 +137,15 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         c.netLossUsdc = netLossUsdc;
         c.filedAt = uint64(block.timestamp);
         c.status = ClaimStatus.Filed;
+        Params storage p = _params;
+        uint256 handling = _handling(basketUsdc);
+        _terms[claimId] = ClaimTerms({contestWindow: p.contestWindow, claimTimeout: p.claimTimeout, handling: handling});
         emit ClaimFiled(claimId, orderId, msg.sender, platform, refs, basketUsdc, netLossUsdc, uint64(block.timestamp));
 
-        IDepositVault(vault).escrowFee(msg.sender, platform, _params.courtFeeUsdc, claimId);
+        // The most this claim can be owed from the deposit: a ruling against the platform pays
+        // net loss + handling + an amount equal to the fee.
+        uint256 fee = p.courtFeeUsdc;
+        IDepositVault(vault).escrowAndReserve(msg.sender, platform, fee, claimId, netLossUsdc + handling + fee);
     }
 
     /// @notice Records the pre-check finding. Gap 255 with answer 0 means "not enough record";
@@ -150,7 +171,7 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
     function contest(bytes32 claimId) external {
         Claim storage c = _claims[claimId];
         if (c.status != ClaimStatus.PreChecked) revert WrongStatus(c.status);
-        uint256 closesAt = uint256(c.preCheckedAt) + _params.contestWindow;
+        uint256 closesAt = uint256(c.preCheckedAt) + _terms[claimId].contestWindow;
         if (block.timestamp > closesAt) revert WindowClosed(closesAt);
         address contester = c.answer == Codes.ANSWER_PLATFORM ? c.platform : c.shop;
         if (msg.sender != contester) revert NotContester();
@@ -165,11 +186,12 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
     function closeUncontested(bytes32 claimId) external nonReentrant {
         Claim storage c = _claims[claimId];
         if (c.status != ClaimStatus.PreChecked) revert WrongStatus(c.status);
-        uint256 closesAt = uint256(c.preCheckedAt) + _params.contestWindow;
+        ClaimTerms storage t = _terms[claimId];
+        uint256 closesAt = uint256(c.preCheckedAt) + t.contestWindow;
         if (block.timestamp <= closesAt) revert WindowOpen(closesAt);
 
         uint256 fee = _escrowed(claimId);
-        uint256 toShop = SettleMath.uncontested(c.answer, c.netLossUsdc, _handling(c.basketUsdc));
+        uint256 toShop = SettleMath.uncontested(c.answer, c.netLossUsdc, t.handling);
         c.status = ClaimStatus.Closed;
         emit ClosedUncontested(claimId, c.answer, toShop);
 
@@ -209,15 +231,18 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
     }
 
     /// @notice Frees a claim that never reached a ruling, refunding the fee in full. A Filed claim
-    ///         expires once `claimTimeout` has passed since filing; a Contested or AtCourt claim once
-    ///         `claimTimeout` has passed since its pre-check, so a late pre-check or contest never
-    ///         shortens the court's time. PreChecked claims do not expire: they close uncontested.
+    ///         expires once its `claimTimeout` (fixed at filing) has passed since filing; a Contested or
+    ///         AtCourt claim once it has passed since its pre-check. PreChecked claims do not expire:
+    ///         they close uncontested. The court on Arbitrum stops taking rulings earlier, at
+    ///         `filedAt` + its own shorter timeout, so a ruling it accepts still has at least the
+    ///         difference (the relay budget) to land here; a late pre-check shortens the court's time
+    ///         there, and the court then spends nothing on a case that cannot finish.
     function expireClaim(bytes32 claimId) external nonReentrant {
         Claim storage c = _claims[claimId];
         ClaimStatus s = c.status;
         if (s != ClaimStatus.Filed && s != ClaimStatus.Contested && s != ClaimStatus.AtCourt) revert WrongStatus(s);
         uint256 from = s == ClaimStatus.Filed ? c.filedAt : c.preCheckedAt;
-        uint256 expiresAfter = from + _params.claimTimeout;
+        uint256 expiresAfter = from + _terms[claimId].claimTimeout;
         if (block.timestamp <= expiresAfter) revert NotExpired(expiresAfter);
 
         uint256 fee = _escrowed(claimId);
@@ -245,7 +270,7 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         if (c.status != ClaimStatus.Ruled) revert WrongStatus(c.status);
         uint256 fee = _escrowed(claimId);
         (uint8 outcome, uint256 toShop) =
-            SettleMath.ruled(c.ruling, c.gap, c.answer, c.netLossUsdc, _handling(c.basketUsdc), fee);
+            SettleMath.ruled(c.ruling, c.gap, c.answer, c.netLossUsdc, _terms[claimId].handling, fee);
         c.status = ClaimStatus.Settled;
         emit Settled(claimId, outcome, toShop, fee);
 
@@ -370,10 +395,18 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         emit ConfigLocked();
     }
 
-    /// @notice CCIP extra args for later sends (gas limit, ordering, finality). Always available,
-    ///         so a wrong gas limit can be corrected after the lock.
+    /// @notice CCIP extra args for later sends. Always available, so a gas limit can be corrected after
+    ///         the lock, but only to what the lane accepts: GenericExtraArgsV2 (68 bytes) with a gas limit
+    ///         from `MIN_GAS_LIMIT` to `MAX_GAS_LIMIT` and out-of-order execution on.
     function setExtraArgs(bytes calldata extraArgs_) external onlyOwner {
-        if (extraArgs_.length < 4) revert BadParams();
+        if (extraArgs_.length != EXTRA_ARGS_V2_LEN || bytes4(extraArgs_[:4]) != BridgeCodec.GENERIC_EXTRA_ARGS_V2_TAG)
+        {
+            revert BadParams();
+        }
+        uint256 gasLimit = uint256(bytes32(extraArgs_[4:36]));
+        if (gasLimit < MIN_GAS_LIMIT || gasLimit > MAX_GAS_LIMIT || uint256(bytes32(extraArgs_[36:68])) != 1) {
+            revert BadParams();
+        }
         _extraArgs = extraArgs_;
         emit ExtraArgsSet(extraArgs_);
     }
@@ -401,18 +434,23 @@ contract RecourseClaims is IRecourseClaims, CCIPReceiver, Ownable2Step, Reentran
         Claim storage c = _claims[claimId];
         if (c.status == ClaimStatus.Ruled) {
             uint256 fee = _escrowed(claimId);
-            (, toShop) = SettleMath.ruled(c.ruling, c.gap, c.answer, c.netLossUsdc, _handling(c.basketUsdc), fee);
+            (, toShop) = SettleMath.ruled(c.ruling, c.gap, c.answer, c.netLossUsdc, _terms[claimId].handling, fee);
             return (toShop, 0, fee);
         }
         if (c.status == ClaimStatus.PreChecked) {
             uint256 fee = _escrowed(claimId);
-            toShop = SettleMath.uncontested(c.answer, c.netLossUsdc, _handling(c.basketUsdc));
+            toShop = SettleMath.uncontested(c.answer, c.netLossUsdc, _terms[claimId].handling);
             return (toShop, fee, 0);
         }
     }
 
+    /// @notice H for a claim filed now with this basket. A filed claim keeps its own (`claimTermsOf`).
     function handlingOf(uint256 basketUsdc) external view returns (uint256) {
         return _handling(basketUsdc);
+    }
+
+    function claimTermsOf(bytes32 claimId) external view returns (ClaimTerms memory) {
+        return _terms[claimId];
     }
 
     /// @notice The fee for sending this claim now, in the current fee token's units. 0 for an

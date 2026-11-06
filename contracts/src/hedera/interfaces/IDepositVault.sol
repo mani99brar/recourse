@@ -41,6 +41,7 @@ interface IDepositVault {
     event TopUpClockStarted(address indexed platform, uint256 deadline);
     event TopUpCleared(address indexed platform);
     event ExitRequested(address indexed platform, uint256 availableAt);
+    event ExitCancelled(address indexed platform);
     event Exited(address indexed platform, uint256 amount);
     event ParamsSet(uint64 topUpWindow, uint64 exitDelay, uint256 minDeposit);
     event ConfigLocked();
@@ -92,9 +93,19 @@ interface IDepositVault {
 
     function exit() external returns (uint256 amount);
 
+    /// @notice Withdraws the caller's pending exit request, so it can be in good standing again.
+    function cancelExit() external;
+
     // ------------------------------------------------------------------ claims contract only
 
     function escrowFee(address shop, address platform, uint256 amount, bytes32 claimId) external;
+
+    /// @notice `escrowFee`, then reserves up to `maxPayout` of the platform's unreserved deposit for
+    ///         the claim until its escrow closes.
+    /// @return reserved The part of `maxPayout` the unreserved deposit covered.
+    function escrowAndReserve(address shop, address platform, uint256 amount, bytes32 claimId, uint256 maxPayout)
+        external
+        returns (uint256 reserved);
 
     function applyOutcome(bytes32 claimId, address platform, address shop, uint256 toShop, uint256 refundToShop)
         external
@@ -123,6 +134,12 @@ interface IDepositVault {
     function openClaimsOf(address platform) external view returns (uint256);
 
     function exitRequestedAt(address platform) external view returns (uint64);
+
+    /// @notice Sum of the reservations of the platform's open claims; never above its deposit.
+    function reservedOf(address platform) external view returns (uint256);
+
+    /// @notice The deposit reserved for an open claim; 0 once its escrow has closed.
+    function reservationOf(bytes32 claimId) external view returns (uint256);
 
     function inGoodStanding(address platform) external view returns (bool);
 

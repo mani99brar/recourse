@@ -39,6 +39,14 @@ interface IRecourseClaims {
         uint8 maxSends;
     }
 
+    /// @notice The terms a claim was filed under, fixed for its whole life: a later `setParams` never
+    ///         reopens, shortens or reprices it. `handling` is H for the claim's basket, in micro-USDC.
+    struct ClaimTerms {
+        uint64 contestWindow;
+        uint64 claimTimeout;
+        uint256 handling;
+    }
+
     /// @notice Batch draw record. The draw is not built in this version, so every read is empty.
     struct Batch {
         uint16 pBps;
@@ -168,6 +176,10 @@ interface IRecourseClaims {
     function previewSettle(bytes32 claimId) external view returns (uint256 toShop, uint256 refund, uint256 toPool);
 
     function handlingOf(uint256 basketUsdc) external view returns (uint256);
+
+    /// @notice The contest window, claim timeout and handling fixed when the claim was filed; zeros for an
+    ///         unknown claim.
+    function claimTermsOf(bytes32 claimId) external view returns (ClaimTerms memory);
 
     function quoteSend(bytes32 claimId) external view returns (uint256 fee);
 

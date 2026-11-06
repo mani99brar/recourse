@@ -80,6 +80,23 @@ contract VaultInvariantTest is HederaBase {
     /// forge-config: default.invariant.runs = 256
     /// forge-config: default.invariant.depth = 64
     /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_reservationsAreBackedAndOwnedByOpenClaims() public view {
+        for (uint256 i; i < handler.platformCount(); ++i) {
+            address p = handler.platforms(i);
+            uint256 sum;
+            for (uint256 j; j < handler.claimCount(); ++j) {
+                bytes32 id = handler.claimIds(j);
+                if (!handler.ghostOpen(id)) assertEq(vault.reservationOf(id), 0, "closed claim keeps a reservation");
+                else if (handler.claimPlatform(id) == p) sum += vault.reservationOf(id);
+            }
+            assertEq(vault.reservedOf(p), sum, "reserved total");
+            assertLe(vault.reservedOf(p), vault.depositOf(p), "reserved above the deposit");
+        }
+    }
+
+    /// forge-config: default.invariant.runs = 256
+    /// forge-config: default.invariant.depth = 64
+    /// forge-config: default.invariant.fail-on-revert = true
     function invariant_standingIsDerived() public view {
         (uint64 window,,) = vault.params();
         for (uint256 i; i < handler.platformCount(); ++i) {
@@ -88,7 +105,8 @@ contract VaultInvariantTest is HederaBase {
             uint256 dep = vault.depositOf(p);
             uint256 start = vault.topUpStartedAt(p);
             bool expected;
-            if (req == 0) expected = false;
+            if (vault.exitRequestedAt(p) != 0) expected = false;
+            else if (req == 0) expected = false;
             else if (dep >= req) expected = true;
             else if (start == 0) expected = false;
             else expected = block.timestamp <= start + window;
