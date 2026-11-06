@@ -2,11 +2,15 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { addressBook } from '@recourse/shared';
 import { DeploymentMissingError, readHederaDeployment } from '../src/chain.js';
 
-const CLAIMS = '0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C';
-const VAULT = '0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8';
-const FACADE = '0x0000000000000000000000000000000000068cDa';
+// Fixture addresses: the records here are written by the tests, so no deployed contract is named.
+const CLAIMS = '0x00000000000000000000000000000000000c1a1a';
+const VAULT = '0x0000000000000000000000000000000000005a01';
+// Circle's USDC on Hedera testnet, from the shared address book (the loader refuses it as a mock).
+const FACADE = addressBook.hedera.usdc.facade;
+const CIRCLE_ID = addressBook.hedera.usdc.tokenId;
 const MOCK = '0x1111111111111111111111111111111111111111';
 const LOCAL_MOCK = '0x2222222222222222222222222222222222222222';
 const base = { chainId: 296, contracts: { claims: { address: CLAIMS }, vault: { address: VAULT } } };
@@ -29,12 +33,12 @@ function thrown(f: () => unknown): Error {
 describe('hedera deployment, vault token', () => {
   it('is Circle USDC for a record with no usdc key', () => {
     const d = readHederaDeployment({ env: deployments({ 'hedera.json': base }) });
-    expect(d.token).toMatchObject({ mode: 'circle', tokenId: '0.0.429274', label: 'USDC' });
+    expect(d.token).toMatchObject({ mode: 'circle', tokenId: CIRCLE_ID, label: 'USDC' });
     expect(d.usdc).toBe(FACADE);
   });
 
   it('reads circle mode from the record', () => {
-    const usdc = { mode: 'circle', address: FACADE, decimals: 6, tokenId: '0.0.429274' };
+    const usdc = { mode: 'circle', address: FACADE, decimals: 6, tokenId: CIRCLE_ID };
     const d = readHederaDeployment({ env: deployments({ 'hedera.json': { ...base, usdc } }) });
     expect(d.token.mode).toBe('circle');
     expect(d.usdc).toBe(FACADE);
@@ -48,7 +52,7 @@ describe('hedera deployment, vault token', () => {
   });
 
   it('refuses a record whose usdc object does not validate', () => {
-    const env = deployments({ 'hedera.json': { ...base, usdc: { mode: 'mock', address: MOCK, decimals: 6, tokenId: '0.0.429274' } } });
+    const env = deployments({ 'hedera.json': { ...base, usdc: { mode: 'mock', address: MOCK, decimals: 6, tokenId: CIRCLE_ID } } });
     expect(() => readHederaDeployment({ env })).toThrow('tokenId must be null');
     const atFacade = deployments({ 'hedera.json': { ...base, usdc: { mode: 'mock', address: FACADE, decimals: 6, tokenId: null } } });
     expect(() => readHederaDeployment({ env: atFacade })).toThrow("cannot name Circle's facade");

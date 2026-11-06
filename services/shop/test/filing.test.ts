@@ -3,16 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, keccak256, parseTransaction, type Address, type Hex } from 'viem';
-import { claimIdOf, orderIdOf, type RecordRefs } from '@recourse/shared';
+import { addressBook, claimIdOf, orderIdOf, type RecordRefs } from '@recourse/shared';
 import { Journal } from '@recourse/records';
 import type { ChainClients } from '../src/chain.js';
 import { ClaimFiler, FilingError, type FilingJournalRow } from '../src/filing.js';
 import { devAccount } from '../src/local-chain.js';
 
-const CLAIMS = getAddress('0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C');
-const VAULT = getAddress('0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8');
+// Fixture addresses: the chain here is a fake, so no deployed contract is named.
+const CLAIMS = getAddress('0x00000000000000000000000000000000000c1a1a');
+const VAULT = getAddress('0x0000000000000000000000000000000000005a01');
 const MOCK = getAddress('0x1111111111111111111111111111111111111111');
-const FACADE = getAddress('0x0000000000000000000000000000000000068cDa');
+const FACADE = getAddress(addressBook.hedera.usdc.facade);
 const SHOP = getAddress('0x00000000000000000000000000000000000000b2');
 const PLATFORM = getAddress('0x00000000000000000000000000000000000000a1');
 const NONCE: Hex = `0x${'01'.repeat(32)}`;
