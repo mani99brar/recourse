@@ -1,0 +1,195 @@
+{
+  "v": 1,
+  "note": "The demo cast: three more shops and three more agent companies beside agents 149 and 150, run on the existing shop and agent code with configuration only. Every name and brand is fictional. Prices are micro-USDC (1 USDC = 1000000; with PRICE_ASSET=hbar an order is paid at 1 HBAR per USDC). ops/cast/setup.ts creates and registers the identities, ops/cast/orders.sh places the planned orders. See README.md.",
+  "existing": [
+    {
+      "agentId": "149",
+      "name": "Parcel Minds",
+      "recourse": {
+        "role": "platform",
+        "kind": "personal-shopper",
+        "label": "Personal shopping agent",
+        "summary": "Buys clothing for its users within a spend limit; above it the buyer signs."
+      }
+    },
+    {
+      "agentId": "150",
+      "name": "Halden Supply",
+      "recourse": {
+        "role": "shop",
+        "kind": "apparel-sizes",
+        "label": "Physical goods with sizes",
+        "summary": "Sells tees, caps and hoodies in sizes over x402 and records what it packs."
+      }
+    }
+  ],
+  "shops": [
+    {
+      "id": "kestrel",
+      "name": "Kestrel Outfitters",
+      "description": "Outdoor clothing shop that sells over x402 on Hedera and records each order on the Recourse HCS topic.",
+      "recourse": {
+        "role": "shop",
+        "kind": "apparel-sizes",
+        "label": "Physical goods with sizes",
+        "summary": "Resells Northwind outerwear in sizes M and L and its own knitwear; a wrong size is a claim the rule can answer."
+      },
+      "port": 8731,
+      "hbar": "3",
+      "usdc": "3000000",
+      "catalogue": [
+        { "sku": "shell-navy-m", "title": "Packable rain shell", "brand": "Northwind", "size": "M", "colour": "Navy", "unitUsdc": "2000000" },
+        { "sku": "shell-navy-l", "title": "Packable rain shell", "brand": "Northwind", "size": "L", "colour": "Navy", "unitUsdc": "2000000" },
+        { "sku": "jacket-navy-m", "title": "Lined work jacket", "brand": "Northwind", "size": "M", "colour": "Navy", "unitUsdc": "3000000" },
+        { "sku": "beanie-moss", "title": "Merino beanie", "brand": "Kestrel", "size": "One size", "colour": "Moss", "unitUsdc": "1000000" }
+      ]
+    },
+    {
+      "id": "fernhill",
+      "name": "Fernhill Market",
+      "description": "Fresh flowers and bread for a named delivery day, sold over x402 on Hedera with each order recorded on the Recourse HCS topic.",
+      "recourse": {
+        "role": "shop",
+        "kind": "perishable-timed",
+        "label": "Perishable, time-bound goods",
+        "summary": "Sells goods for one delivery day; a late delivery is refunded by the shop itself, since lateness is not a recorded attribute."
+      },
+      "port": 8732,
+      "hbar": "3",
+      "usdc": "1000000",
+      "catalogue": [
+        { "sku": "tulips-white-10", "title": "Tulip bunch for a delivery day", "brand": "Fernhill Growers", "size": "Bunch of 10", "colour": "White", "unitUsdc": "1500000" },
+        { "sku": "tulips-red-10", "title": "Tulip bunch for a delivery day", "brand": "Fernhill Growers", "size": "Bunch of 10", "colour": "Red", "unitUsdc": "1500000" },
+        { "sku": "sourdough-800g", "title": "Sourdough loaf baked on the delivery day", "brand": "Fernhill Bakehouse", "size": "800 g", "colour": "Plain", "unitUsdc": "1000000" }
+      ]
+    },
+    {
+      "id": "quillon",
+      "name": "Quillon Data",
+      "description": "Weather data API sold in prepaid batches of calls over x402 on Hedera, each purchase recorded on the Recourse HCS topic.",
+      "recourse": {
+        "role": "shop",
+        "kind": "api-pay-per-call",
+        "label": "Digital or API service, pay per call",
+        "summary": "Sells batches of API calls; the plan and data set are recorded, a failed call is re-run rather than claimed."
+      },
+      "port": 8733,
+      "hbar": "3",
+      "usdc": "1000000",
+      "catalogue": [
+        { "sku": "forecast-100", "title": "Hourly forecast API, 100 calls", "brand": "Quillon Forecast API", "size": "Standard plan, 100 calls", "colour": "Hourly forecast", "unitUsdc": "1000000" },
+        { "sku": "forecast-500", "title": "Hourly forecast API, 500 calls", "brand": "Quillon Forecast API", "size": "Standard plan, 500 calls", "colour": "Hourly forecast", "unitUsdc": "4000000" },
+        { "sku": "history-100", "title": "Historical observations API, 100 calls", "brand": "Quillon Forecast API", "size": "Standard plan, 100 calls", "colour": "Historical observations", "unitUsdc": "1500000" }
+      ]
+    }
+  ],
+  "agentCompanies": [
+    {
+      "id": "wren",
+      "name": "Wren Errands",
+      "agentName": "Wren Errands Shopping Agent",
+      "description": "Personal shopping agent that pays over x402 on Hedera within its spend limit, records what it was asked, shown and approved, and posts a deposit that covers its mistakes.",
+      "recourse": {
+        "role": "platform",
+        "kind": "personal-shopper",
+        "label": "Personal shopping agent",
+        "summary": "Buys small everyday orders on its own mandate, all under its 5 USDC spend limit."
+      },
+      "limits": { "AGENT_SPEND_LIMIT_USDC": "5000000", "AGENT_MAX_ORDER_USDC": "10000000", "AGENT_DAILY_CAP_USDC": "20000000" },
+      "hbar": { "platform": "2", "agent": "3" },
+      "depositUsdc": "10000000"
+    },
+    {
+      "id": "tallyhouse",
+      "name": "Tallyhouse Procurement",
+      "agentName": "Tallyhouse Procurement Agent",
+      "description": "Procurement agent that pays over x402 on Hedera, asks the buyer to sign any order above its spend limit, and posts a deposit that covers its mistakes.",
+      "recourse": {
+        "role": "platform",
+        "kind": "procurement-approval",
+        "label": "Procurement agent with buyer approval",
+        "summary": "Buys work supplies; above its 1 USDC spend limit an order waits for the buyer's signed approval."
+      },
+      "limits": { "AGENT_SPEND_LIMIT_USDC": "1000000", "AGENT_MAX_ORDER_USDC": "10000000", "AGENT_DAILY_CAP_USDC": "30000000", "AGENT_APPROVAL_TTL_SEC": "3600" },
+      "hbar": { "platform": "2", "agent": "3" },
+      "depositUsdc": "10000000"
+    },
+    {
+      "id": "lumen",
+      "name": "Lumen Metrics",
+      "agentName": "Lumen Metrics Data Agent",
+      "description": "Data agent that buys API calls over x402 on Hedera, records each purchase, and posts a deposit that covers its mistakes.",
+      "recourse": {
+        "role": "platform",
+        "kind": "data-api-buyer",
+        "label": "Data agent buying API calls",
+        "summary": "Buys batches of weather API calls with x402 on its own mandate for the models it runs."
+      },
+      "limits": { "AGENT_SPEND_LIMIT_USDC": "5000000", "AGENT_MAX_ORDER_USDC": "5000000", "AGENT_DAILY_CAP_USDC": "15000000" },
+      "hbar": { "platform": "2", "agent": "3" },
+      "depositUsdc": "10000000"
+    }
+  ],
+  "orders": [
+    {
+      "id": "wren-kestrel-payout",
+      "company": "wren",
+      "shop": "kestrel",
+      "sku": "shell-navy-m",
+      "fault": "ordered-size=S",
+      "through": "claim",
+      "asked": { "brand": "Northwind", "size": "M", "colour": "Navy", "price": "2.00" },
+      "arrived": { "brand": "Northwind", "size": "S", "colour": "Navy" },
+      "outcome": "claim-closes-paid",
+      "shows": "The agent's ordered record says size S though the buyer asked for M and was shown M (a staged agent-company mistake). The shop ships S, the buyer reports it, the pre-check answers 1 (agent company) at step 2a-ii, nobody contests, and the claim closes after the contest window: the shop is paid from Wren Errands' deposit and withdraws its credit."
+    },
+    {
+      "id": "wren-kestrel-neither",
+      "company": "wren",
+      "shop": "kestrel",
+      "sku": "shell-navy-l",
+      "fault": null,
+      "through": "claim",
+      "asked": { "brand": "Northwind", "size": "M", "colour": "Navy", "price": "2.00" },
+      "arrived": { "brand": "Northwind", "size": "L", "colour": "Navy" },
+      "outcome": "precheck-neither",
+      "shows": "The buyer asked for M, the screen showed L and flagged the change, the agent approved it on its mandate, and L was packed and arrived. The shop files on the complaint, the pre-check answers neither (step 11, an approved change), and nothing is paid from the deposit."
+    },
+    {
+      "id": "tallyhouse-kestrel-approval",
+      "company": "tallyhouse",
+      "shop": "kestrel",
+      "sku": "jacket-navy-m",
+      "fault": null,
+      "through": "pack",
+      "asked": { "brand": "Northwind", "size": "M", "colour": "Navy", "price": "2.00" },
+      "arrived": null,
+      "outcome": "awaiting-approval",
+      "shows": "A 3 USDC order above Tallyhouse's 1 USDC spend limit waits for the buyer: orders.sh approve tallyhouse-kestrel-approval signs it (pnpm --filter @recourse/agent approve <id> --yes), then a rerun pays and the shop packs. No claim."
+    },
+    {
+      "id": "wren-fernhill-no-claim",
+      "company": "wren",
+      "shop": "fernhill",
+      "sku": "tulips-white-10",
+      "fault": null,
+      "through": "pack",
+      "asked": { "brand": "Fernhill Growers", "size": "Bunch of 10", "colour": "White", "price": "1.50" },
+      "arrived": null,
+      "outcome": "no-claim",
+      "shows": "A paid and packed order with no claim. If it arrives after the delivery day, Fernhill refunds it itself: lateness is not one of the six attributes, so the rule has nothing to answer."
+    },
+    {
+      "id": "lumen-quillon-calls",
+      "company": "lumen",
+      "shop": "quillon",
+      "sku": "forecast-100",
+      "fault": null,
+      "through": "pack",
+      "asked": { "brand": "Quillon Forecast API", "size": "Standard plan, 100 calls", "colour": "Hourly forecast", "price": "1.00" },
+      "arrived": null,
+      "outcome": "no-claim",
+      "shows": "The data agent pays for a batch of 100 calls with x402 and the shop records the plan it delivered. No claim: a call that fails is re-run by the shop."
+    }
+  ]
+}
