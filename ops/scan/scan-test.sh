@@ -55,6 +55,19 @@ reset_to_remote
 echo "ARKIV_ACCESS_KEY=$(openssl rand -hex 12)" > cli.env.sample; git add -A; git commit -qm ak
 NAME="an unquoted secret in an env-style line is blocked"; LABEL="secret assigned in an env file"; expect_push_blocked main; reset_to_remote
 
+# A value too short, or too broken up by punctuation, to look like a long token: no part of it is printed.
+printed() { local p; for p in "$@"; do grep -qF "$p" "$W/out" && return 0; done; return 1; }
+A=$(openssl rand -hex 4); B=$(openssl rand -hex 4); C=$(openssl rand -hex 3)
+echo "DB_PASSWORD=$A!$B@$C" > db.env.sample; git add -A; git commit -qm pw
+NAME="a short punctuated secret in an env-style line is blocked"; LABEL="secret assigned in an env file"; expect_push_blocked main
+if printed "$A" "$B" "$C"; then bad "part of the short secret is printed"; else ok "no part of the short secret is printed"; fi
+reset_to_remote
+A=$(openssl rand -hex 12); B=$(openssl rand -hex 4)
+echo "const auth = { token: '$A.$B!' };" > tok.ts; git add -A; git commit -qm tok
+NAME="a quoted token literal is blocked"; LABEL="api key literal"; expect_push_blocked main
+if printed "$A" "$B"; then bad "part of the token is printed"; else ok "no part of the token is printed"; fi
+reset_to_remote
+
 echo "DEPLOYER_PRIVATE_KEY=0x$(hex)" > untracked-leak.txt
 echo more >> a.txt; git commit -qam "clean change"
 NAME="a key only in the working tree does not block a clean push"; expect_push_ok main

@@ -6,7 +6,8 @@
 #     against its first parent, so a line its resolution adds (in neither parent) is scanned too. The files those
 #     commits add, merges included, and the tree of each pushed tip are checked against the forbidden paths.
 #   By hand (no ref lines on stdin, or --tree): scans the tracked files of the working tree.
-# A hit prints its place (path:line, or commit and path) with keys, keyed URL paths and long tokens redacted.
+# A hit prints its place (path:line, or commit and path) with keys, values given to a key word, keyed URL paths and
+# long tokens redacted.
 # A published test vector is allowed by a line "<path> <sha256 of the line>" in ops/scan/allow.txt.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -32,8 +33,9 @@ pat 'RPC url with key' i 'https?://[^ "]*(alchemy\.com/v2|infura\.io/v3|quiknode
 pat 'reference to an outside planning folder' i '(agent-workflow|recourse-prds|docs/prd|\bPRDs?\b|\b(SPEC|PLAN|CF|SM|TC|LS|RPT|I5|PR):[0-9]|round1[0-9]/|recourse-homepage)'
 FORBIDDEN='(^|/)(node_modules(/|$)|[^/]*\.env$|\.env\.[^e]|.*\.pass$)'
 
-redact() { # the text of a hit, without the secret in it
-  sed -E -e 's/(0x)?[0-9a-fA-F]{32,}/<hex>/g' \
+redact() { # the text of a hit, without the secret in it: a value given to a key word goes whatever its length or shape
+  sed -E -e 's/((key|secret|token|password|mnemonic|seed)[A-Za-z0-9_-]*["'"'"']?[[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1<redacted>/gI' \
+    -e 's/(0x)?[0-9a-fA-F]{32,}/<hex>/g' \
     -e 's#(https?://[^/[:space:]"'"'"']+)/[^[:space:]"'"'"']*#\1/<path>#g' \
     -e 's/[A-Za-z0-9_+/=-]{20,}/<redacted>/g' | cut -c1-160
 }
