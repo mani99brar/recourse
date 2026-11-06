@@ -49,8 +49,11 @@ BUDGET_MS=5000
 
 now(){ date -u +%H:%M:%S; }
 ms(){ echo $(( $(date +%s%N) / 1000000 )); }
-host(){ local u=${1#*://}; echo "${u%%/*}"; }
-row(){ printf '| %s | %s | %s | %s | %s |\n' "$1" "$2" "$3" "$4" "$(now)"; }
+host(){ local u=${1#*://}; u=${u%%[/?#]*}; echo "${u##*@}"; }
+# Every row goes out with each URL in it cut to its host, so the error text of a failed call (cast quotes the
+# endpoint it could not reach) never prints a key from the user info, path or query.
+nourl(){ sed -E -e 's,(://)[^/?#@[:space:]]*@,\1,g' -e 's,(://[^/?#[:space:]]+)[/?#][^[:space:]]*,\1/<path>,g'; }
+row(){ printf '| %s | %s | %s | %s | %s |\n' "$1" "$2" "$3" "$4" "$(now)" | nourl; }
 cl(){ tr '\n' ' ' | sed 's/|/\\|/g; s/  */ /g' | cut -c1-${1:-160}; }
 
 # cc <label-for-errors> cast-call-args...  -> stdout value (first line) ; rc 0/1
@@ -197,7 +200,8 @@ set -- $r
 row KLEROS "court 8 courts(8): parent, hiddenVotes, minStake, alpha, feeForJuror, jurorsForCourtJump" "${1:-?}, ${2:-?}, ${3:-?}, ${4:-?}, ${5:-?}, ${6:-?}" "$([[ ${1:-} == 7 && ${2:-} == true && ${3:-} == 11000000000000000000000 && ${5:-} == 270000000000000 ]] && echo 'PASS (parent 7, hidden votes, minStake 11,000 PNK, fee/juror 0.00027 ETH)' || echo 'FAIL (differs from expected)')"
 for pair in "KlerosCore:$KC:0x02F607722749CECd32db07AA0b0755281FE9D13c" "DisputeTemplateRegistry:$DTR:0xf97791DA66e0A8Ff8Ee4908872CfCAcc641829Ec" "EvidenceModule:$EVM:0xC4e64e6E949936a18269937FC1e18cb11E3db14D" "DisputeKitClassic:$DK:0xA122856B3B4C5fBcA129088af3CEb204509805f0"; do
   IFS=: read -r n a exp <<<"$pair"
-  v=$(timeout 25 cast storage "$a" $IMPL_SLOT --rpc-url "$A1" 2>&1 | head -c 100); v=0x${v: -40}
+  v=$(timeout 25 cast storage "$a" $IMPL_SLOT --rpc-url "$A1" 2>&1 | head -c 100)
+  if [[ $v =~ ^0x[0-9a-fA-F]{64}$ ]]; then v=0x${v: -40}; else v=$(echo "$v" | cl 100); fi
   row KLEROS-IMPL "$n $a: EIP-1967 implementation slot" "$v" "$([[ ${v,,} == "${exp,,}" ]] && echo 'PASS (matches expected)' || echo 'FAIL (implementation changed)')"
 done
 r=$(cc 0xed31bEE8b1F7cE89E93033C0d3B2ccF4cEb27652 "arbitrator()(address)" --rpc-url "$A1" 2>&1 | head -c 100)
