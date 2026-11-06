@@ -14,7 +14,7 @@ How to start, stop, check and recover each service on this host. The unit files,
 | `recourse-intake` | 8716 | tags public feedback text | `~/.local/state/recourse/intake` |
 | `recourse-web` | 8788 | serves `apps/web/dist`, forwards `/api/*` to 8787; public through a tunnel | none |
 | `recourse-tunnel-web`, `-shop` | 8789, 8721 (metrics) | quick tunnels to 8788 and 8720; random names | none (the name is in the journal) |
-| `recourse-tunnel-named` | 8790 (metrics) | fixed hostnames for both, once the operator has set it up | `~/.config/recourse/cloudflared.yml`, `.token` |
+| `recourse-tunnel-named` | 8790 (metrics) | fixed hostnames for both, once the operator has set it up | `~/.config/recourse/cloudflared.yml`, `.token`; optional `tunnel.env` (token or credentials) |
 | `recourse-watch.timer` | none | every 2 minutes: alerts and down/up changes to the operator | `~/.local/state/recourse/watch` |
 
 The buying agent has no unit: it is a command-line tool that runs one order and exits (`pnpm --filter @recourse/agent order`, ...); its journals are in `services/agent/state`. Documents of the local content store are in `~/.local/state/recourse/ipfs`. Every service binds `127.0.0.1`; only the web server and the shop are reachable from outside, through their tunnels.

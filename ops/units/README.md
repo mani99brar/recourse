@@ -129,7 +129,7 @@ Each service gets only the key paths, secrets and keyed URLs its own code reads;
 | intake | none | `LLM_API_KEY`, `IPFS_PIN_API_KEY`, `IPFS_PIN_API_SECRET` |
 | web | none: it reads no shared env file, only the optional `web.env`, and the unit sets `STATUS_API_PORT=8787` itself | none |
 | tunnel-web, tunnel-shop | none (no env file) | none |
-| tunnel-named | none (no env file) | its tunnel token, read by cloudflared from `~/.config/recourse/cloudflared.token` (`--token-file`), never in the environment |
+| tunnel-named | none (only the optional `tunnel.env`, for `RECOURSE_TUNNEL_AUTH=token\|credentials`) | its tunnel token, read by cloudflared from `~/.config/recourse/cloudflared.token` (`--token-file`), never in the environment: the unit removes `TUNNEL_TOKEN`, `TUNNEL_TOKEN_FILE` and `TUNNEL_CRED_CONTENTS` after `tunnel.env`. With `credentials`, the credentials file `cloudflared.yml` names instead (ops/tunnel/README.md, The switch) |
 | watch | none (reads only the optional `watch.env`) | none |
 
 `KEYSTORE_DIR` is removed everywhere: only the shell scripts use it. If the status API's port is ever changed in `recourse.env`, set the same `STATUS_API_PORT` in `web.env`. `node --test ops/units/units-env.test.mjs` checks this table against the unit files, against the names each service's source reads, and (with `RECOURSE_TEST_SYSTEMD_RUN=1`, which starts throwaway transient units) against what `systemd-run --user` actually passes on this host.

@@ -203,11 +203,24 @@ test('the watch is a oneshot run by its timer every two minutes, with a cap and 
   assert.match(timer, /^WantedBy=timers\.target$/m);
 });
 
+// The unit runs ops/tunnel/run.sh, which picks the token (default) or the credentials file and execs
+// cloudflared; ops/tunnel/run.test.mjs runs that script against a fake cloudflared.
 test('the named tunnel reads its token from a file, never from a command-line value or the environment', () => {
   const text = readFileSync(join(unitsDir, 'recourse-tunnel-named.service'), 'utf8');
-  const exec = text.split('\n').find((l) => l.startsWith('ExecStart='));
-  assert.match(exec, / run --token-file %h\/\.config\/recourse\/cloudflared\.token$/);
-  assert.match(exec, / --config %h\/\.config\/recourse\/cloudflared\.yml /);
-  assert.doesNotMatch(text, /--token[ =](?!file)|TUNNEL_TOKEN=|EnvironmentFile=/);
-  assert.doesNotMatch(text, /^ExecStart=.*\.cloudflared\/config\.yml/m, 'the quick tunnels read ~/.cloudflared/config.yml');
+  const lines = text.split('\n');
+  assert.ok(lines.includes('ExecStartPre=/bin/bash @REPO@/ops/tunnel/run.sh --check'), 'ExecStartPre checks the files first');
+  assert.ok(lines.includes('ExecStart=/bin/bash @REPO@/ops/tunnel/run.sh'));
+  assert.ok(lines.includes('Environment=RECOURSE_TUNNEL_AUTH=token'), 'the token is the default');
+  // Its only env file is the switch, and cloudflared's own token and credentials names are removed after it.
+  const unit = parseUnit('tunnel-named');
+  assert.deepEqual(unit.envFiles, ['%h/.config/recourse/tunnel.env']);
+  for (const n of ['TUNNEL_TOKEN', 'TUNNEL_TOKEN_FILE', 'TUNNEL_CRED_CONTENTS']) assert.ok(unit.unset.includes(n), `recourse-tunnel-named keeps ${n}`);
+  const script = readFileSync(join(repo, 'ops/tunnel/run.sh'), 'utf8');
+  for (const t of [text, script]) assert.doesNotMatch(t, /--token[ =](?!file)|TUNNEL_TOKEN=/);
+  assert.match(script, /^unset TUNNEL_TOKEN TUNNEL_TOKEN_FILE TUNNEL_CRED_CONTENTS$/m);
+  assert.match(script, /^CONF=\$\{RECOURSE_CONFIG_DIR:-\$HOME\/\.config\/recourse\}$/m);
+  assert.match(script, /^YML=\$CONF\/cloudflared\.yml$/m, 'the quick tunnels read ~/.cloudflared/config.yml');
+  assert.match(script, /^TOKEN=\$CONF\/cloudflared\.token$/m);
+  assert.match(script, /args=\(run --token-file "\$TOKEN"\)/);
+  assert.match(script, /^exec "\$CF" tunnel --no-autoupdate --metrics 127\.0\.0\.1:8790 --config "\$YML" "\$\{args\[@\]\}"$/m);
 });

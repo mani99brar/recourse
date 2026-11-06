@@ -7,9 +7,10 @@ A named tunnel on a Cloudflare account keeps two fixed hostnames, one for the we
 | File | What it does |
 |---|---|
 | `ops/tunnel/setup.sh` | Dry run by default; `--apply` creates the tunnel and DNS routes (option 1) and writes the two files below. Never prints the token, and never replaces a token file that exists without `--force`. |
-| `ops/units/recourse-tunnel-named.service` | `cloudflared tunnel --config ~/.config/recourse/cloudflared.yml run --token-file ~/.config/recourse/cloudflared.token`, metrics and `/ready` on `127.0.0.1:8790`. Restart on failure, 96M cap. |
+| `ops/units/recourse-tunnel-named.service` | Runs `ops/tunnel/run.sh`: `--check` first (ExecStartPre, which fails naming the missing file), then `cloudflared tunnel --config ~/.config/recourse/cloudflared.yml run --token-file ~/.config/recourse/cloudflared.token`, metrics and `/ready` on `127.0.0.1:8790`. Restart on failure, 96M cap. |
 | `~/.config/recourse/cloudflared.yml` | Written by setup.sh: the ingress (option 1) or no ingress (option 2). |
 | `~/.config/recourse/cloudflared.token` | The tunnel token, mode 600. Read by cloudflared from the file, so it is never on a command line, in a unit's environment or in a log. |
+| `~/.config/recourse/tunnel.env` | Optional, one line: `RECOURSE_TUNNEL_AUTH=credentials` runs the tunnel with the credentials file instead of the token (option 1 only, see The switch). No file, or `token`, is the default. The unit removes `TUNNEL_TOKEN`, `TUNNEL_TOKEN_FILE` and `TUNNEL_CRED_CONTENTS` after reading it, so no token or credentials can come in through it. |
 
 `ctl.sh health tunnel-named` and `ctl.sh urls` know the unit; the watch reports it going down once it has been up.
 
@@ -43,7 +44,15 @@ bash ops/units/ctl.sh health tunnel-named        # up: /ready on 127.0.0.1:8790 
 curl -s https://shop.<domain>/health; curl -s https://app.<domain>/api/health
 ```
 
-The quick tunnels keep running beside it until they are stopped, so nothing breaks while the new names are checked. Option 1 runs the tunnel with its token and this config's ingress; that pairing has not been run on this host yet (no tunnel exists), so check both hostnames before stopping the quick tunnels. If they answer 404 or 503, the token is not picking up the local ingress: `cloudflared tunnel --config ~/.config/recourse/cloudflared.yml run` uses the credentials file the config names instead.
+The quick tunnels keep running beside it until they are stopped, so nothing breaks while the new names are checked. Option 1 runs the tunnel with its token and this config's ingress; that pairing has not been run on this host yet (no tunnel exists), so check both hostnames before stopping the quick tunnels. If they answer 404 or 503, the token is not picking up the local ingress. Then run the unit with the credentials file the config names (`cloudflared tunnel --config ~/.config/recourse/cloudflared.yml run`) instead:
+
+```
+echo RECOURSE_TUNNEL_AUTH=credentials > ~/.config/recourse/tunnel.env
+bash ops/units/ctl.sh restart tunnel-named
+journalctl --user -u recourse-tunnel-named -n 20   # "ready to run with the credentials", then cloudflared's own lines
+```
+
+`ExecStartPre` (`run.sh --check`) stops the start and says what is missing: no `credentials-file:` in the config (an option 2 tunnel, which runs only with its token), or no such file in `~/.cloudflared`. Delete `tunnel.env` (or set `token`) and restart to go back to the token. The token file can stay; it is not read in this mode. `node --test ops/tunnel/run.test.mjs` runs `run.sh` against a fake cloudflared.
 
 ## After the switch
 
