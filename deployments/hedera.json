@@ -2,21 +2,27 @@
   "chainId": 296,
   "contracts": {
     "claims": {
-      "address": "0x6088dd5B97C7b77F00a5357cCc4f599deA412c5C",
-      "id": "0.0.11329717"
+      "address": "0xc4d457991eE42438EA433773e491ba8F2B27dDee",
+      "id": "0.0.11336130"
     },
     "vault": {
-      "address": "0xd7f11FA06A97a45a6Af03c71d7eB3219C1a703B8",
-      "id": "0.0.11329716"
+      "address": "0xA22fB188b49eddecc4f9DE22607e70E1d07Aea2e",
+      "id": "0.0.11336129"
     }
+  },
+  "usdc": {
+    "mode": "mock",
+    "address": "0x6D6fb82e82E525B9c30619189EA8aF17117C3c73",
+    "decimals": 6,
+    "tokenId": null
   },
   "deployOrder": [
     "DepositVault",
     "RecourseClaims"
   ],
-  "startTimestamp": "1793910486.965508789",
-  "startBlock": 42710610,
-  "associationTx": "0x8114b74ea1e1d7a96f987806654cd3e8ca1350e2d58d7f7374439ef64f590fa6",
+  "startTimestamp": "1793951429.469214105",
+  "startBlock": 42730642,
+  "associationTx": "0xe3035672e6556503fde7eaf7aee63c42b8f2e6318fff10bd8e7492f53dae6fbc",
   "mode": 0,
   "batch": false,
   "params": {
@@ -58,7 +64,8 @@
   },
   "gas": {},
   "dpTx": {
-    "dp1": "0x8114b74ea1e1d7a96f987806654cd3e8ca1350e2d58d7f7374439ef64f590fa6"
+    "dp1": "0xe3035672e6556503fde7eaf7aee63c42b8f2e6318fff10bd8e7492f53dae6fbc",
+    "dp2": "0x4706351763568e936671b8b6abd562184612ec6ff2e40251d4eef7bdb2867653"
   },
   "sourcify": null,
   "roles": {
