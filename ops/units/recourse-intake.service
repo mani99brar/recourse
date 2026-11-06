@@ -12,6 +12,10 @@ EnvironmentFile=-%h/.config/recourse/intake.env
 Environment=INTAKE_PORT=8716
 Environment=INTAKE_STATE_DIR=%h/.local/state/recourse/intake
 Environment=NODE_OPTIONS=--max-old-space-size=112
+# Key paths, secrets and keyed URLs this service never reads. UnsetEnvironment is applied after every
+# EnvironmentFile, so <service>.env cannot bring them back; edit this list if the code starts using one.
+UnsetEnvironment=KEYSTORE_DIR DEPLOYER_KEY_FILE OPS_HEDERA_KEY_FILE OPS_ARB_KEY_FILE PRECHECK_SIGNER_KEY_FILE PLATFORM_KEY_FILE AGENT_KEY_FILE SHOP_KEY_FILE SCHEME_KEY_FILE BUYER_KEY_FILE FACILITATOR_KEY_FILE
+UnsetEnvironment=ARKIV_ACCESS_KEY ALERT_URL HEDERA_RPC_URL_1 HEDERA_RPC_URL_2 ARB_RPC_URL ARKIV_RPC_URL SSH_AUTH_SOCK
 ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/intake
 ExecStart=@NODE@ --import tsx src/main.ts
 Restart=on-failure

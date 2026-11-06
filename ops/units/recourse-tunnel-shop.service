@@ -10,6 +10,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 Environment=GOMEMLIMIT=64MiB
+UnsetEnvironment=SSH_AUTH_SOCK
 ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:8721 --url http://127.0.0.1:8720
 Restart=on-failure
 RestartSec=5

@@ -12,6 +12,10 @@ EnvironmentFile=-%h/.config/recourse/keeper.env
 Environment=KEEPER_PORT=8706
 Environment=KEEPER_STATE_DIR=%h/.local/state/recourse/keeper
 Environment=NODE_OPTIONS=--max-old-space-size=144
+# Key paths, secrets and keyed URLs this service never reads. UnsetEnvironment is applied after every
+# EnvironmentFile, so <service>.env cannot bring them back; edit this list if the code starts using one.
+UnsetEnvironment=KEYSTORE_DIR DEPLOYER_KEY_FILE PRECHECK_SIGNER_KEY_FILE PLATFORM_KEY_FILE AGENT_KEY_FILE SHOP_KEY_FILE SCHEME_KEY_FILE BUYER_KEY_FILE FACILITATOR_KEY_FILE
+UnsetEnvironment=ARKIV_ACCESS_KEY LLM_API_KEY IPFS_PIN_API_KEY IPFS_PIN_API_SECRET ARKIV_RPC_URL SSH_AUTH_SOCK
 ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/keeper
 ExecStart=@NODE@ --import tsx src/main.ts
 Restart=on-failure

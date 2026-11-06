@@ -10,7 +10,15 @@ WorkingDirectory=@REPO@/services/shop
 EnvironmentFile=%h/.config/recourse/recourse.env
 EnvironmentFile=-%h/.config/recourse/shop.env
 Environment=SHOP_PORT=8720
+Environment=SHOP_STATE_DIR=%h/.local/state/recourse/shop
 Environment=NODE_OPTIONS=--max-old-space-size=144
+# Key paths, secrets and keyed URLs this service never reads. UnsetEnvironment is applied after every
+# EnvironmentFile, so <service>.env cannot bring them back; edit this list if the code starts using one.
+UnsetEnvironment=KEYSTORE_DIR DEPLOYER_KEY_FILE OPS_HEDERA_KEY_FILE OPS_ARB_KEY_FILE PRECHECK_SIGNER_KEY_FILE PLATFORM_KEY_FILE AGENT_KEY_FILE SCHEME_KEY_FILE BUYER_KEY_FILE
+UnsetEnvironment=ARKIV_ACCESS_KEY LLM_API_KEY IPFS_PIN_API_KEY IPFS_PIN_API_SECRET ALERT_URL HEDERA_RPC_URL_2 ARB_RPC_URL ARKIV_RPC_URL SSH_AUTH_SOCK
+# The journals (paid orders, filed claims, records) used to live in services/shop/state. Refuse to start on an
+# empty state directory while they are still there, so a restart cannot forget paid orders. Move them first.
+ExecStartPre=/bin/sh -c 'if [ -s @REPO@/services/shop/state/journal.jsonl ] && [ ! -e %h/.local/state/recourse/shop/journal.jsonl ]; then echo "recourse-shop: the journals are still in services/shop/state; move them to %h/.local/state/recourse/shop first (ops/units/README.md)" >&2; exit 1; fi'
 ExecStartPre=/usr/bin/mkdir -p %h/.local/state/recourse/shop
 ExecStart=@NODE@ --import tsx src/main.ts
 Restart=on-failure

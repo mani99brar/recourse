@@ -7,11 +7,14 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=@REPO@/ops/units
-EnvironmentFile=%h/.config/recourse/recourse.env
+# Public through the web tunnel, and it needs only its port, the status API's port and the dist folder,
+# so it reads no shared env file (no keyed URL, key path or API key reaches it). Override in web.env.
 EnvironmentFile=-%h/.config/recourse/web.env
 Environment=WEB_PORT=8788
+Environment=STATUS_API_PORT=8787
 Environment=WEB_DIST_DIR=@REPO@/apps/web/dist
 Environment=NODE_OPTIONS=--max-old-space-size=32
+UnsetEnvironment=SSH_AUTH_SOCK
 ExecStart=@NODE@ web-server.mjs
 Restart=on-failure
 RestartSec=5
