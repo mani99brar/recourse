@@ -1,8 +1,10 @@
 // The shop packs a paid order: writes the packed record to the records topic from the shop's
 // account and journals it. Dry run by default: shows the document that would be written.
 //
-//   pnpm --filter @recourse/shop pack --order <orderId> [--brand B --size S --colour C --quantity N --price P] [--send]
-//                                     [--state <shop state dir>]
+//   pnpm --filter @recourse/shop run pack --order <orderId> [--brand B --size S --colour C --quantity N --price P] [--send]
+//                                         [--state <shop state dir>]
+//
+// `run` is needed: without it pnpm runs its own `pack` command (a package tarball), not this script.
 //
 // Without attribute flags the packed record states the catalogue item and the price charged. A rerun
 // after a failed commit commits the document journaled the first time, so attribute flags that
