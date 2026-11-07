@@ -4,7 +4,8 @@
 `DOCKET_STORE=arkiv` (`GET /health` on port 8707 says `"store":"arkiv"`). On switching it replayed the
 claims from Hedera and wrote dispute 212's ruled case as entity
 `0x53b34e252b3f329dbe2df1a45cb686f191b98a011fe1a0166db839296491bd02`, and November's counts as
-`monthly-count` entities, so the query below returns that case. Cases ruled later are written as they settle.
+`monthly-count` entities. Dispute 213's case followed when it settled at 23:23 UTC, as entity
+`0x0dac6604619852eed08edccbaed9c1a979af627cc62b97cd581830828b6c4053`, so the query below returns both cases. Cases ruled later are written as they settle.
 
 Every ruled claim becomes a public, de-identified `case` entity on the Arkiv testnet (Rabdi, chain id
 7794095), and each month's filings are summarised in a `monthly-count` entity. The docket page reads
