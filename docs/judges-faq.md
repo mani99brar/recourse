@@ -263,6 +263,17 @@ court. The repository records no external audit, and human review has not been l
 
 Evidence: `docs/decisions.md:9`, `:34`, `:41`, `:63`, `:66`; README "How each technology is used" (`circle` mode); `docs/ai-use.md:22`; `docs/keys.md:57` ("Testnet only"); `ops/verify/README.md` (re-run after a redeploy).
 
+### Does every contested claim have to go to court? That will not scale.
+
+Not in the design, but in this version it does. The design sends only a random share of contested claims to court
+(p = 0.25, drawn with Hedera's PRNG system contract), closes the rest with the court fee refunded, and has the docket weight
+each sampled ruling by 1/p, so lowering p cannot make an agent company's rate look better. An agent company would then be
+billed for the claims the draw left out, at its sampled fault rate. The draw and the bill are designed, not built: on the
+deployed `RecourseClaims`, `batchOf` always returns 0 ("no claim is ever batched"), so every contested claim goes to
+court. The docket's rate maths already takes the weights (each is 1 today), and the draw's probability is a parameter.
+
+Evidence: `contracts/src/hedera/RecourseClaims.sol:474-481`; `contracts/src/hedera/interfaces/IPrngSystemContract.sol`; `packages/shared/src/params.ts:39` (`pBps`, 2,500); `services/docket/src/rates.ts:4-6`; README Known limits R65.
+
 ### What is the biggest open risk?
 
 Trust before the lock. Until then the deployer key can decide any claim, and it sits on the host that runs the public
